@@ -69,6 +69,7 @@ pub enum Action {
     CustomRotate,
     RemoveBackground,
     ToggleThumbnail,
+    Print,
 }
 
 pub enum Dialog {
@@ -79,6 +80,15 @@ pub enum Dialog {
     About,
     Message(String),
     CustomRotate { angle: f32 },
+    Print(PrintState),
+}
+
+pub struct PrintState {
+    pub printers: Vec<String>,
+    pub printer: usize,
+    pub copies: u32,
+    pub fit: bool,
+    pub landscape: bool,
 }
 
 pub struct ResizeState {
@@ -623,7 +633,41 @@ impl PaintApp {
             Action::CustomRotate => self.dialog = Some(Dialog::CustomRotate { angle: 0.0 }),
             Action::RemoveBackground => self.doc.apply_active(&s, pixels::remove_background),
             Action::ToggleThumbnail => self.show_thumbnail = !self.show_thumbnail,
+            Action::Print => {
+                self.doc.commit_overlay(&s);
+                match list_printers() {
+                    Some((printers, default)) if !printers.is_empty() => {
+                        let landscape = self.doc.width() > self.doc.height();
+                        self.dialog = Some(Dialog::Print(PrintState { printers, printer: default, copies: 1, fit: true, landscape }));
+                    }
+                    Some(_) => self.dialog = Some(Dialog::Message("No printers are set up. Add one in System Settings → Printers.".into())),
+                    None => {
+                        self.dialog = Some(Dialog::Message(
+                            "Printing needs CUPS (the lp and lpstat commands), which Kubuntu installs by default.".into(),
+                        ))
+                    }
+                }
+            }
         }
+    }
+
+    /// Send the flattened picture to a CUPS printer with `lp`.
+    fn print(&mut self, st: &PrintState) -> Result<(), String> {
+        let dir = std::env::temp_dir().join("mspaint-linux-print");
+        let _ = std::fs::create_dir_all(&dir);
+        let name = self.doc.name();
+        let stem = std::path::Path::new(&name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Untitled".into());
+        let path = dir.join(format!("{stem}.png"));
+        pixels::save(&self.doc.flattened(), &path)?;
+        let mut cmd = std::process::Command::new("lp");
+        cmd.arg("-d").arg(&st.printers[st.printer]).arg("-n").arg(st.copies.to_string());
+        cmd.arg("-t").arg(self.doc.name());
+        if st.fit {
+            cmd.arg("-o").arg("fit-to-page");
+        }
+        cmd.arg("-o").arg(if st.landscape { "landscape" } else { "portrait" });
+        let out = cmd.arg(&path).output().map_err(|e| e.to_string())?;
+        if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).into_owned()) }
     }
 
     /// KDE Plasma: set the image as desktop background.
@@ -725,6 +769,7 @@ impl PaintApp {
             (cs, Key::H, A::ToggleBackground),
             (cs, Key::B, A::BackgroundColour),
             (cs, Key::C, A::CopyVisible),
+            (cmd, Key::P, A::Print),
             (cmd, Key::N, A::New),
             (cmd, Key::O, A::Open),
             (cmd, Key::S, A::Save),
@@ -1058,6 +1103,9 @@ impl PaintApp {
                 }
             }
         });
+        if item(ui, "Print", "Ctrl+P") {
+            self.push(Action::Print);
+        }
         ui.separator();
         ui.menu_button("Set as desktop background", |ui| {
             for (label, mode) in [("Fill", "fill"), ("Tile", "tile"), ("Centre", "centre")] {
@@ -1461,6 +1509,56 @@ impl PaintApp {
                         let a = *angle;
                         let s = self.s.clone();
                         self.doc.transform(&s, move |p| pixels::rotate_any(p, a));
+                    }
+                }
+            }
+            Dialog::Print(st) => {
+                let mut result = None;
+                modal("print", ctx, &mut |ui| {
+                    ui.set_width(360.0);
+                    ui.heading("Print");
+                    ui.add_space(6.0);
+                    egui::Grid::new("print_grid").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
+                        ui.label("Printer");
+                        egui::ComboBox::from_id_salt("printer").selected_text(st.printers[st.printer].clone()).width(220.0).show_ui(ui, |ui| {
+                            for (i, p) in st.printers.iter().enumerate() {
+                                ui.selectable_value(&mut st.printer, i, p);
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("Copies");
+                        ui.add(egui::DragValue::new(&mut st.copies).range(1..=99));
+                        ui.end_row();
+                        ui.label("Orientation");
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut st.landscape, false, "Portrait");
+                            ui.radio_value(&mut st.landscape, true, "Landscape");
+                        });
+                        ui.end_row();
+                        ui.label("Scaling");
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut st.fit, true, "Fit to page");
+                            ui.radio_value(&mut st.fit, false, "Actual size");
+                        });
+                        ui.end_row();
+                    });
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.add(primary_button("Print", pal)).clicked() {
+                            result = Some(true);
+                        }
+                        if ui.add(Button::new("Cancel").min_size(vec2(100.0, 30.0))).clicked() {
+                            result = Some(false);
+                        }
+                    });
+                });
+                if let Some(ok) = result {
+                    keep = false;
+                    if ok {
+                        let msg = self.print(st);
+                        if let Err(e) = msg {
+                            self.dialog = Some(Dialog::Message(format!("Could not print.\n\n{e}")));
+                        }
                     }
                 }
             }
@@ -1869,6 +1967,20 @@ fn check_item(ui: &mut egui::Ui, pal: &Palette, label: &str, shortcut: &str, che
         ui.close();
     }
     resp.clicked()
+}
+
+/// CUPS printers and the index of the default one. None if CUPS isn't installed.
+fn list_printers() -> Option<(Vec<String>, usize)> {
+    let out = std::process::Command::new("lpstat").arg("-e").output().ok()?;
+    let printers: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+    let default = std::process::Command::new("lpstat")
+        .arg("-d")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).rsplit(':').next().map(|s| s.trim().to_string()))
+        .and_then(|d| printers.iter().position(|p| *p == d))
+        .unwrap_or(0);
+    Some((printers, default))
 }
 
 /// Paint's single-letter tool shortcuts.
