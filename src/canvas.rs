@@ -193,12 +193,16 @@ impl PaintApp {
                 self.push(a);
             }
         }
+        if ui.button("Copy visible layers").clicked() {
+            self.push(Action::CopyVisible);
+        }
         ui.separator();
         ui.menu_button("Rotate", |ui| {
             for (label, a) in [
                 ("Rotate right 90°", Action::RotateRight),
                 ("Rotate left 90°", Action::RotateLeft),
                 ("Rotate 180°", Action::Rotate180),
+                ("Custom rotate…", Action::CustomRotate),
                 ("Flip vertical", Action::FlipVertical),
                 ("Flip horizontal", Action::FlipHorizontal),
             ] {
@@ -212,6 +216,9 @@ impl PaintApp {
         }
         if ui.button("Invert colour").clicked() {
             self.push(Action::InvertColors);
+        }
+        if ui.button("Remove background").clicked() {
+            self.push(Action::RemoveBackground);
         }
     }
 
@@ -793,7 +800,7 @@ impl PaintApp {
         let icon = match self.s.tool {
             Tool::Text => CursorIcon::Text,
             Tool::Magnifier => CursorIcon::ZoomIn,
-            Tool::Eraser | Tool::Brush if self.s.size() * self.zoom >= 4.0 => CursorIcon::None,
+            Tool::Eraser | Tool::Brush | Tool::Pencil if self.s.size() * self.zoom >= 4.0 => CursorIcon::None,
             Tool::Fill | Tool::Picker => CursorIcon::Default,
             _ => CursorIcon::Crosshair,
         };
@@ -926,7 +933,7 @@ impl PaintApp {
 
         // Brush / eraser footprint.
         if let Some(c) = self.cursor_img
-            && matches!(self.s.tool, Tool::Brush | Tool::Eraser)
+            && matches!(self.s.tool, Tool::Brush | Tool::Eraser | Tool::Pencil)
             && matches!(self.drag, None | Some(Drag::Stroke { .. }))
             && matches!(self.doc.overlay, Overlay::None | Overlay::Stroke)
             && self.s.size() * z >= 4.0

@@ -57,6 +57,8 @@ pub enum Icon {
     Eye,
     EyeOff,
     Plus,
+    Flip,
+    RemoveBg,
 }
 
 fn g(r: Rect, x: f32, y: f32) -> Pos2 {
@@ -196,6 +198,16 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
         Icon::Plus => {
             pl(p, r, &[(12.0, 5.0), (12.0, 19.0)], s);
             pl(p, r, &[(5.0, 12.0), (19.0, 12.0)], s);
+        }
+        Icon::Flip => {
+            closed(p, r, &[(3.0, 5.0), (3.0, 19.0), (10.0, 19.0)], s);
+            filled(p, r, &[(21.0, 5.0), (21.0, 19.0), (14.0, 19.0)], accent);
+            p.extend(Shape::dashed_line(&[g(r, 12.0, 2.0), g(r, 12.0, 22.0)], s, 2.0, 2.0));
+        }
+        Icon::RemoveBg => {
+            dashed_rect(p, r, 2.5, 2.5, 21.5, 21.5, s);
+            p.circle_filled(g(r, 12.0, 9.0), r.width() / 24.0 * 3.2, accent);
+            filled(p, r, &[(6.0, 20.0), (7.5, 15.0), (12.0, 13.5), (16.5, 15.0), (18.0, 20.0)], accent);
         }
         Icon::Crop => {
             pl(p, r, &[(7.0, 2.0), (7.0, 17.0), (22.0, 17.0)], s);

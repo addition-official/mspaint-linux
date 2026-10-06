@@ -914,6 +914,25 @@ impl Document {
         self.transform_all(|p, _| f(p));
     }
 
+    /// Apply a pixel operation to the selection, or to the active layer only.
+    pub fn apply_active(&mut self, s: &Settings, f: impl Fn(&mut Pixmap)) {
+        if matches!(self.overlay, Overlay::Shape(_) | Overlay::Text(_) | Overlay::Stroke) {
+            self.commit_overlay(s);
+        }
+        if self.floating().is_some() {
+            self.lift(s);
+            let fl = self.floating_mut().unwrap();
+            f(&mut fl.pix);
+            fl.changed = true;
+            fl.tex_dirty = true;
+            return;
+        }
+        self.begin_edit();
+        let mut img = self.image.clone();
+        f(&mut img);
+        self.replace_image(img);
+    }
+
     pub fn crop_to_selection(&mut self, s: &Settings) {
         let Some(mut p) = self.effective_float(s) else { return };
         let f = self.floating().unwrap();

@@ -198,7 +198,7 @@ impl PaintApp {
     }
 
     fn image_group(&mut self, ui: &mut Ui) {
-        self.with_group(ui, "Image", 96.0, |app, ui, c| {
+        self.with_group(ui, "Image", 180.0, |app, ui, c| {
             // Selection: big split button.
             let icon = if app.s.select_mode == SelectMode::FreeForm { Icon::SelectFree } else { Icon::SelectRect };
             let (main, chev) = app.split_btn_at(ui, r(c.min.x + 2.0, c.min.y + 2.0, 44.0, 62.0), "select", icon, app.s.tool == Tool::Select, "Selection");
@@ -231,25 +231,34 @@ impl PaintApp {
                     app.s.transparent_selection = !app.s.transparent_selection;
                 }
             });
-            // Crop / Resize / Rotate column.
+            // Crop / Rotate on top, Resize / Flip below (as in Win11), then Remove background.
             let x = c.min.x + 50.0;
             let has_sel = app.doc.floating().is_some();
             if app
-                .btn_at_enabled(ui, r(x, c.min.y + 2.0, 44.0, 20.0), "crop", Icon::Crop, false, "Crop (Ctrl+Shift+X)", has_sel)
+                .btn_at_enabled(ui, r(x, c.min.y + 4.0, 36.0, 28.0), "crop", Icon::Crop, false, "Crop (Ctrl+Shift+X)", has_sel)
                 .clicked()
             {
                 app.push(Action::Crop);
             }
-            if app.btn_at(ui, r(x, c.min.y + 23.0, 44.0, 20.0), "resize", Icon::Resize, false, "Resize and skew (Ctrl+W)").clicked() {
+            if app.btn_at(ui, r(x, c.min.y + 34.0, 36.0, 28.0), "resize", Icon::Resize, false, "Resize and skew (Ctrl+W)").clicked() {
                 app.push(Action::ResizeDialog);
             }
-            let rot = app.dropdown_at(ui, r(x, c.min.y + 44.0, 44.0, 20.0), "rotate", Icon::Rotate, "Rotate");
+            let rot = app.dropdown_at(ui, r(x + 38.0, c.min.y + 4.0, 46.0, 28.0), "rotate", Icon::Rotate, "Rotate");
             egui::Popup::menu(&rot).width(200.0).show(|ui| {
                 for (icon, label, a) in [
                     (Icon::RotateRight, "Rotate right 90°", Action::RotateRight),
                     (Icon::RotateLeft, "Rotate left 90°", Action::RotateLeft),
                     (Icon::Rotate180, "Rotate 180°", Action::Rotate180),
                     (Icon::Rotate, "Custom rotate…", Action::CustomRotate),
+                ] {
+                    if app.menu_item_icon(ui, icon, label, false) {
+                        app.push(a);
+                    }
+                }
+            });
+            let flip = app.dropdown_at(ui, r(x + 38.0, c.min.y + 34.0, 46.0, 28.0), "flip", Icon::Flip, "Flip");
+            egui::Popup::menu(&flip).width(190.0).show(|ui| {
+                for (icon, label, a) in [
                     (Icon::FlipV, "Flip vertical", Action::FlipVertical),
                     (Icon::FlipH, "Flip horizontal", Action::FlipHorizontal),
                 ] {
@@ -258,6 +267,12 @@ impl PaintApp {
                     }
                 }
             });
+            if app
+                .btn_at(ui, r(x + 88.0, c.min.y + 4.0, 40.0, 58.0), "removebg", Icon::RemoveBg, false, "Remove background")
+                .clicked()
+            {
+                app.push(Action::RemoveBackground);
+            }
         });
     }
 

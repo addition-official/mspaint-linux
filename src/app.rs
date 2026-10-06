@@ -67,12 +67,15 @@ pub enum Action {
     CopyVisible,
     SetTool(Tool),
     CustomRotate,
+    RemoveBackground,
+    ToggleThumbnail,
 }
 
 pub enum Dialog {
     Unsaved(Action),
     Resize(ResizeState),
-    Properties { w: u32, h: u32 },
+    /// Size in pixels; `unit`: 0 = pixels, 1 = inches, 2 = centimetres.
+    Properties { w: u32, h: u32, unit: u8, bw: bool },
     About,
     Message(String),
     CustomRotate { angle: f32 },
@@ -151,7 +154,6 @@ pub struct PaintApp {
     pub show_status: bool,
     pub show_grid: bool,
     pub show_rulers: bool,
-    pub fullscreen: bool,
     pub dialog: Option<Dialog>,
     pub show_edit_colors: bool,
     pub edit_color: Color32,
@@ -179,6 +181,8 @@ pub struct PaintApp {
     pub rotate_base: Option<tiny_skia::Pixmap>,
     pub brush_preview_tex: Vec<TextureHandle>,
     pub brush_preview_dark: Option<bool>,
+    pub show_thumbnail: bool,
+    pub edit_hsv: bool,
 }
 
 impl PaintApp {
@@ -220,7 +224,6 @@ impl PaintApp {
             show_status: !p.hide_status,
             show_grid: p.grid,
             show_rulers: p.rulers,
-            fullscreen: false,
             dialog: None,
             show_edit_colors: false,
             edit_color: Color32::BLACK,
@@ -245,6 +248,8 @@ impl PaintApp {
             rotate_base: None,
             brush_preview_tex: Vec::new(),
             brush_preview_dark: None,
+            show_thumbnail: false,
+            edit_hsv: false,
             system_checked: 0.0,
         };
         if let Some(path) = open {
@@ -576,7 +581,7 @@ impl PaintApp {
             }),
             Action::Properties => {
                 self.doc.commit_overlay(&s);
-                self.dialog = Some(Dialog::Properties { w: self.doc.width(), h: self.doc.height() });
+                self.dialog = Some(Dialog::Properties { w: self.doc.width(), h: self.doc.height(), unit: 0, bw: false });
             }
             Action::ZoomIn => self.zoom_step(1, None),
             Action::ZoomOut => self.zoom_step(-1, None),
@@ -586,8 +591,9 @@ impl PaintApp {
             Action::ToggleRulers => self.show_rulers = !self.show_rulers,
             Action::ToggleStatus => self.show_status = !self.show_status,
             Action::Fullscreen => {
-                self.fullscreen = !self.fullscreen;
-                ctx.send_viewport_cmd(ViewportCommand::Fullscreen(self.fullscreen));
+                // Use the window's real state: eframe restores fullscreen across restarts.
+                let full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                ctx.send_viewport_cmd(ViewportCommand::Fullscreen(!full));
             }
             Action::Wallpaper(mode) => self.set_wallpaper(mode),
             Action::EditColors => {
@@ -615,6 +621,8 @@ impl PaintApp {
             Action::CopyVisible => self.copy_visible(),
             Action::SetTool(t) => self.set_tool(t),
             Action::CustomRotate => self.dialog = Some(Dialog::CustomRotate { angle: 0.0 }),
+            Action::RemoveBackground => self.doc.apply_active(&s, pixels::remove_background),
+            Action::ToggleThumbnail => self.show_thumbnail = !self.show_thumbnail,
         }
     }
 
@@ -761,7 +769,7 @@ impl PaintApp {
                     self.push(Action::SetTool(tool_for_key(key).unwrap()));
                 }
                 egui::Event::Key { key: Key::Escape, pressed: true, .. } => {
-                    if self.fullscreen {
+                    if ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
                         self.push(Action::Fullscreen);
                     } else {
                         self.doc.commit_overlay(&self.s);
@@ -1087,14 +1095,16 @@ impl PaintApp {
             }
         });
         ui.menu_button("Show", |ui| {
-            if ui.add(Button::new("Rulers").selected(self.show_rulers).shortcut_text("Ctrl+R")).clicked() {
-                self.push(Action::ToggleRulers);
-            }
-            if ui.add(Button::new("Gridlines").selected(self.show_grid).shortcut_text("Ctrl+G")).clicked() {
-                self.push(Action::ToggleGrid);
-            }
-            if ui.add(Button::new("Status bar").selected(self.show_status)).clicked() {
-                self.push(Action::ToggleStatus);
+            ui.set_min_width(200.0);
+            for (label, sc, on, a) in [
+                ("Rulers", "Ctrl+R", self.show_rulers, Action::ToggleRulers),
+                ("Gridlines", "Ctrl+G", self.show_grid, Action::ToggleGrid),
+                ("Status bar", "", self.show_status, Action::ToggleStatus),
+                ("Thumbnail", "", self.show_thumbnail, Action::ToggleThumbnail),
+            ] {
+                if check_item(ui, &self.pal, label, sc, on) {
+                    self.push(a);
+                }
             }
         });
         if ui.add(Button::new("Full screen").shortcut_text("F11")).clicked() {
@@ -1306,16 +1316,24 @@ impl PaintApp {
                     }
                 }
             }
-            Dialog::Properties { w, h } => {
+            Dialog::Properties { w, h, unit, bw } => {
                 let mut result = None;
                 let doc = &self.doc;
+                let last_saved = doc
+                    .path
+                    .as_ref()
+                    .and_then(|p| std::fs::metadata(p).ok())
+                    .and_then(|m| m.modified().ok())
+                    .map(format_time)
+                    .unwrap_or_else(|| "Not available".into());
                 modal("props", ctx, &mut |ui| {
-                    ui.set_width(340.0);
+                    ui.set_width(380.0);
                     ui.heading("Image properties");
                     ui.add_space(6.0);
-                    egui::Grid::new("props_grid").num_columns(2).spacing([16.0, 6.0]).show(ui, |ui| {
-                        ui.label("File");
-                        ui.label(doc.path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "Not saved".into()));
+                    ui.label(RichText::new("File attributes").strong());
+                    egui::Grid::new("props_info").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
+                        ui.label("Last saved");
+                        ui.label(&last_saved);
                         ui.end_row();
                         ui.label("Size on disk");
                         ui.label(doc.file_size.map(human_size).unwrap_or_else(|| "Not available".into()));
@@ -1323,12 +1341,44 @@ impl PaintApp {
                         ui.label("Resolution");
                         ui.label("96 DPI");
                         ui.end_row();
-                        ui.label("Width (px)");
-                        ui.add(egui::DragValue::new(w).range(1..=20000));
-                        ui.end_row();
-                        ui.label("Height (px)");
-                        ui.add(egui::DragValue::new(h).range(1..=20000));
-                        ui.end_row();
+                    });
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Units").strong());
+                    ui.horizontal(|ui| {
+                        ui.radio_value(unit, 1, "Inches");
+                        ui.radio_value(unit, 2, "Centimetres");
+                        ui.radio_value(unit, 0, "Pixels");
+                    });
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Colour").strong());
+                    ui.horizontal(|ui| {
+                        ui.radio_value(bw, true, "Black and white");
+                        ui.radio_value(bw, false, "Colour");
+                    });
+                    ui.add_space(8.0);
+                    // Show the size in the chosen unit; store pixels.
+                    let per_px = match *unit {
+                        1 => 1.0 / 96.0,
+                        2 => 2.54 / 96.0,
+                        _ => 1.0,
+                    };
+                    let (suffix, speed, decimals) = match *unit {
+                        1 => (" in", 0.01, 2),
+                        2 => (" cm", 0.02, 2),
+                        _ => (" px", 1.0, 0),
+                    };
+                    egui::Grid::new("props_size").num_columns(2).spacing([16.0, 6.0]).show(ui, |ui| {
+                        for (label, v) in [("Width", &mut *w), ("Height", &mut *h)] {
+                            ui.label(label);
+                            let mut val = *v as f64 * per_px;
+                            if ui
+                                .add(egui::DragValue::new(&mut val).speed(speed).fixed_decimals(decimals).suffix(suffix).range(per_px..=20000.0 * per_px))
+                                .changed()
+                            {
+                                *v = (val / per_px).round().clamp(1.0, 20000.0) as u32;
+                            }
+                            ui.end_row();
+                        }
                     });
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
@@ -1338,6 +1388,10 @@ impl PaintApp {
                         if ui.add(Button::new("Cancel").min_size(vec2(100.0, 30.0))).clicked() {
                             result = Some(false);
                         }
+                        if ui.add(Button::new("Default").min_size(vec2(90.0, 30.0))).clicked() {
+                            *w = DEFAULT_W;
+                            *h = DEFAULT_H;
+                        }
                     });
                 });
                 if let Some(ok) = result {
@@ -1345,6 +1399,13 @@ impl PaintApp {
                     if ok {
                         let s = self.s.clone();
                         self.doc.resize_canvas(&s, *w, *h);
+                        if *bw {
+                            self.doc.transform(&s, |p| {
+                                let mut p = p.clone();
+                                pixels::black_and_white(&mut p);
+                                p
+                            });
+                        }
                     }
                 }
             }
@@ -1429,6 +1490,44 @@ impl PaintApp {
         }
     }
 
+    /// View > Thumbnail: a small overview of the whole picture; click to scroll there.
+    fn thumbnail_window(&mut self, ctx: &egui::Context) {
+        if !self.show_thumbnail {
+            return;
+        }
+        let mut open = true;
+        let (w, h) = (self.doc.width() as f32, self.doc.height() as f32);
+        let scale = (240.0 / w).min(180.0 / h);
+        let size = vec2(w * scale, h * scale);
+        let mut jump = None;
+        egui::Window::new("Thumbnail")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .default_pos(egui::pos2(self.viewport.max.x - size.x - 40.0, self.viewport.min.y + 20.0))
+            .show(ctx, |ui| {
+                let (r, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
+                self.paint_checker(ui.painter(), r);
+                if let Some(t) = &self.tex {
+                    ui.painter().image(t.id(), r, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                }
+                // The part of the picture currently visible.
+                let vis_min = ((self.viewport.min - self.image_rect.min) / self.zoom).max(Vec2::ZERO);
+                let vis_max = ((self.viewport.max - self.image_rect.min) / self.zoom).min(vec2(w, h));
+                let vr = Rect::from_min_max(r.min + vis_min * scale, r.min + vis_max * scale);
+                ui.painter().rect_stroke(vr, 0.0, egui::Stroke::new(1.5, self.pal.accent), egui::StrokeKind::Inside);
+                if (resp.clicked() || resp.dragged())
+                    && let Some(p) = resp.interact_pointer_pos()
+                {
+                    jump = Some(((p - r.min) / scale).to_pos2());
+                }
+            });
+        if let Some(img_pt) = jump {
+            self.pending_zoom_anchor = Some((img_pt, self.viewport.center()));
+        }
+        self.show_thumbnail = open;
+    }
+
     fn edit_colors_window(&mut self, ctx: &egui::Context) {
         if !self.show_edit_colors {
             return;
@@ -1441,6 +1540,35 @@ impl PaintApp {
             .open(&mut open)
             .show(ctx, |ui| {
                 egui::widgets::color_picker::color_picker_color32(ui, &mut self.edit_color, egui::color_picker::Alpha::Opaque);
+                // Numeric fields: RGB or HSV, as in Paint's Edit colours dialog.
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.edit_hsv, false, "RGB");
+                    ui.selectable_value(&mut self.edit_hsv, true, "HSV");
+                });
+                if self.edit_hsv {
+                    let hsv = egui::ecolor::Hsva::from(self.edit_color);
+                    let (mut h, mut sat, mut v) = (hsv.h * 360.0, hsv.s * 100.0, hsv.v * 100.0);
+                    let mut changed = false;
+                    ui.horizontal(|ui| {
+                        changed |= ui.add(egui::DragValue::new(&mut h).range(0.0..=360.0).prefix("H ").suffix("°").fixed_decimals(0)).changed();
+                        changed |= ui.add(egui::DragValue::new(&mut sat).range(0.0..=100.0).prefix("S ").suffix("%").fixed_decimals(0)).changed();
+                        changed |= ui.add(egui::DragValue::new(&mut v).range(0.0..=100.0).prefix("V ").suffix("%").fixed_decimals(0)).changed();
+                    });
+                    if changed {
+                        self.edit_color = egui::ecolor::Hsva::new(h / 360.0, sat / 100.0, v / 100.0, 1.0).into();
+                    }
+                } else {
+                    let [mut r, mut g, mut b, _] = self.edit_color.to_array();
+                    let mut changed = false;
+                    ui.horizontal(|ui| {
+                        changed |= ui.add(egui::DragValue::new(&mut r).prefix("R ")).changed();
+                        changed |= ui.add(egui::DragValue::new(&mut g).prefix("G ")).changed();
+                        changed |= ui.add(egui::DragValue::new(&mut b).prefix("B ")).changed();
+                    });
+                    if changed {
+                        self.edit_color = Color32::from_rgb(r, g, b);
+                    }
+                }
                 ui.horizontal(|ui| {
                     ui.label("Hex");
                     let mut hex = self.edit_color.to_hex()[..7].to_string();
@@ -1610,9 +1738,21 @@ impl eframe::App for PaintApp {
                 )
                 .show(ui, |ui| self.layers_panel(ui));
         }
-        let bottom = if self.show_status { 0 } else { self.corner };
+        // Without the status bar, a thin rounded strip keeps canvas content out of the
+        // rounded bottom corners.
+        if !self.show_status && self.corner > 0 {
+            egui::Panel::bottom("corner_pad")
+                .exact_size(self.corner as f32)
+                .frame(egui::Frame::new().fill(pal.workspace).corner_radius(egui::CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: self.corner,
+                    se: self.corner,
+                }))
+                .show(ui, |_| {});
+        }
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(pal.workspace).corner_radius(egui::CornerRadius { nw: 0, ne: 0, sw: bottom, se: bottom }))
+            .frame(egui::Frame::new().fill(pal.workspace))
             .show(ui, |ui| self.canvas(ui));
 
         self.tool_sliders(&ctx);
@@ -1636,6 +1776,7 @@ impl eframe::App for PaintApp {
         self.dialogs(&ctx);
         self.edit_colors_window(&ctx);
         self.background_picker(&ctx);
+        self.thumbnail_window(&ctx);
 
         for a in std::mem::take(&mut self.actions) {
             self.run_action(&ctx, a);
@@ -1680,9 +1821,54 @@ impl eframe::App for PaintApp {
     }
 }
 
+/// Local date and time for display (falls back to UTC).
+fn format_time(t: std::time::SystemTime) -> String {
+    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    // The system's `date` knows the local time zone and the user's locale.
+    if let Ok(out) = std::process::Command::new("date").arg("-d").arg(format!("@{secs}")).arg("+%x %H:%M").output()
+        && out.status.success()
+    {
+        return String::from_utf8_lossy(&out.stdout).trim().to_string();
+    }
+    // Civil-from-days (Howard Hinnant), UTC.
+    let days = secs.div_euclid(86400);
+    let rem = secs.rem_euclid(86400);
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{d:02}/{m:02}/{y} {:02}:{:02} UTC", rem / 3600, rem % 3600 / 60)
+}
+
 fn primary_button(label: &str, pal: Palette) -> Button<'static> {
     let fg = if pal.dark { Color32::BLACK } else { Color32::WHITE };
     Button::new(RichText::new(label).color(fg)).fill(pal.accent).min_size(vec2(100.0, 30.0))
+}
+
+/// Menu entry with a check mark in the left gutter (Win11 style toggles).
+fn check_item(ui: &mut egui::Ui, pal: &Palette, label: &str, shortcut: &str, checked: bool) -> bool {
+    let width = ui.available_width().max(190.0);
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, 4.0, pal.hover);
+    }
+    let p = ui.painter();
+    if checked {
+        p.text(egui::pos2(rect.min.x + 10.0, rect.center().y), egui::Align2::LEFT_CENTER, "✔", egui::FontId::proportional(13.0), pal.text);
+    }
+    p.text(egui::pos2(rect.min.x + 30.0, rect.center().y), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(13.5), pal.text);
+    if !shortcut.is_empty() {
+        p.text(egui::pos2(rect.max.x - 8.0, rect.center().y), egui::Align2::RIGHT_CENTER, shortcut, egui::FontId::proportional(12.5), pal.text_dim);
+    }
+    if resp.clicked() {
+        ui.close();
+    }
+    resp.clicked()
 }
 
 /// Paint's single-letter tool shortcuts.

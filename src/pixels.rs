@@ -443,6 +443,102 @@ pub fn rotate_any(src: &Pixmap, deg: f32) -> Pixmap {
     out
 }
 
+/// Background removal without a neural network: estimate the background colour from
+/// the image border, flood it in from every border pixel with a colour tolerance and
+/// make it transparent, softening the edge by one pixel. Works well for objects on
+/// plain or gently varying backgrounds (Paint's AI version handles busy scenes).
+pub fn remove_background(p: &mut Pixmap) {
+    let (w, h) = (p.width() as i32, p.height() as i32);
+    if w < 3 || h < 3 {
+        return;
+    }
+    let d = p.data().to_vec();
+    let px = |x: i32, y: i32| {
+        let i = ((y * w + x) * 4) as usize;
+        [d[i] as i32, d[i + 1] as i32, d[i + 2] as i32, d[i + 3] as i32]
+    };
+    let mut border = Vec::new();
+    for x in 0..w {
+        border.push((x, 0));
+        border.push((x, h - 1));
+    }
+    for y in 1..h - 1 {
+        border.push((0, y));
+        border.push((w - 1, y));
+    }
+    // Median border colour per channel.
+    let mut chans: [Vec<i32>; 4] = Default::default();
+    for &(x, y) in &border {
+        let c = px(x, y);
+        for k in 0..4 {
+            chans[k].push(c[k]);
+        }
+    }
+    let bg: Vec<i32> = chans
+        .iter_mut()
+        .map(|v| {
+            v.sort_unstable();
+            v[v.len() / 2]
+        })
+        .collect();
+    let dist = |a: [i32; 4], b: &[i32]| (0..4).map(|k| (a[k] - b[k]).abs()).max().unwrap();
+    let tol = 40;
+    let mut bgmask = vec![false; (w * h) as usize];
+    let mut stack: Vec<(i32, i32)> = border.into_iter().filter(|&(x, y)| dist(px(x, y), &bg) <= tol).collect();
+    while let Some((x, y)) = stack.pop() {
+        let i = (y * w + x) as usize;
+        if bgmask[i] {
+            continue;
+        }
+        let c = px(x, y);
+        // Grow through pixels close to the background colour or to their neighbour.
+        if dist(c, &bg) > tol * 2 {
+            continue;
+        }
+        bgmask[i] = true;
+        for (nx, ny) in [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)] {
+            if nx >= 0 && ny >= 0 && nx < w && ny < h && !bgmask[(ny * w + nx) as usize] && dist(px(nx, ny), &c) <= tol / 2 + 8 {
+                stack.push((nx, ny));
+            }
+        }
+    }
+    let out = p.data_mut();
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) as usize;
+            let keep = if bgmask[i] {
+                0.0
+            } else {
+                // Feather pixels touching the background.
+                let edge = [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
+                    .iter()
+                    .any(|&(nx, ny)| nx >= 0 && ny >= 0 && nx < w && ny < h && bgmask[(ny * w + nx) as usize]);
+                if edge { 0.6 } else { 1.0 }
+            };
+            if keep < 1.0 {
+                for k in 0..4 {
+                    out[i * 4 + k] = (out[i * 4 + k] as f32 * keep) as u8;
+                }
+            }
+        }
+    }
+}
+
+/// Classic "Black and white" image attribute: threshold to pure black/white.
+pub fn black_and_white(p: &mut Pixmap) {
+    for px in p.data_mut().chunks_exact_mut(4) {
+        let a = px[3];
+        if a == 0 {
+            continue;
+        }
+        let l = (px[0] as u32 * 299 + px[1] as u32 * 587 + px[2] as u32 * 114) / 1000;
+        let v = if l * 255 >= 128 * a as u32 { a } else { 0 };
+        px[0] = v;
+        px[1] = v;
+        px[2] = v;
+    }
+}
+
 pub fn invert_colors(p: &mut Pixmap) {
     for px in p.data_mut().chunks_exact_mut(4) {
         let a = px[3];
@@ -600,6 +696,24 @@ impl Rng {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remove_background_keeps_the_subject() {
+        let mut p = new_pixmap(60, 40, Color32::from_rgb(240, 240, 235));
+        // Slight noise in the background.
+        for x in (0..60).step_by(7) {
+            set_pixel(&mut p, x, 3, Color32::from_rgb(232, 236, 230).to_array());
+        }
+        for y in 10..30 {
+            for x in 20..40 {
+                set_pixel(&mut p, x, y, Color32::from_rgb(200, 30, 30).to_array());
+            }
+        }
+        remove_background(&mut p);
+        assert_eq!(get_pixel(&p, 2, 2).unwrap().a(), 0);
+        assert_eq!(get_pixel(&p, 7, 3).unwrap().a(), 0, "noisy background pixel removed");
+        assert_eq!(get_pixel(&p, 30, 20).unwrap(), Color32::from_rgb(200, 30, 30), "subject kept");
+    }
 
     #[test]
     fn rotate_any_grows_and_keeps_content() {
