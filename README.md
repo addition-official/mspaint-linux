@@ -44,10 +44,10 @@ included.
 
 ### Easiest: install the .deb (no Rust needed)
 
-Needs Kubuntu 24.04 or newer (64-bit). Download `mspaint-linux_0.1.0-1_amd64.deb`, then:
+Needs Kubuntu 24.04 or newer (64-bit). Download `mspaint-linux_0.2.0-1_amd64.deb`, then:
 
 ```bash
-sudo apt install ./mspaint-linux_0.1.0-1_amd64.deb
+sudo apt install ./mspaint-linux_0.2.0-1_amd64.deb
 ```
 
 Paint then shows up in the application launcher. To remove it: `sudo apt remove mspaint-linux`.
