@@ -104,30 +104,39 @@ impl PaintApp {
                 } else if resp.clicked() {
                     self.doc.set_active_layer(&s, i);
                 }
+                // Apply menu actions after the menu closes: they can remove this row's layer.
+                let mut op: Option<&str> = None;
                 resp.context_menu(|ui| {
-                    self.doc.set_active_layer(&s, i);
                     let n = self.doc.layers.len();
-                    if ui.button("Duplicate layer").clicked() {
-                        self.doc.duplicate_layer(&s);
-                    }
-                    if ui.add_enabled(i > 0, egui::Button::new("Merge down")).clicked() {
-                        self.doc.merge_down(&s);
-                    }
-                    if ui.add_enabled(i + 1 < n, egui::Button::new("Move up")).clicked() {
-                        self.doc.move_layer(&s, 1);
-                    }
-                    if ui.add_enabled(i > 0, egui::Button::new("Move down")).clicked() {
-                        self.doc.move_layer(&s, -1);
-                    }
-                    let vis = if self.doc.layers[i].visible { "Hide layer" } else { "Show layer" };
-                    if ui.button(vis).clicked() {
-                        self.doc.toggle_layer_visible(&s, i);
+                    for (label, key, enabled) in [
+                        ("Duplicate layer", "dup", true),
+                        ("Merge down", "merge", i > 0),
+                        ("Move up", "up", i + 1 < n),
+                        ("Move down", "down", i > 0),
+                        (if self.doc.layers[i].visible { "Hide layer" } else { "Show layer" }, "vis", true),
+                    ] {
+                        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                            op = Some(key);
+                        }
                     }
                     ui.separator();
                     if ui.add_enabled(n > 1, egui::Button::new("Delete layer")).clicked() {
-                        self.doc.delete_layer(&s);
+                        op = Some("delete");
                     }
                 });
+                if let Some(op) = op {
+                    self.doc.set_active_layer(&s, i);
+                    match op {
+                        "dup" => self.doc.duplicate_layer(&s),
+                        "merge" => self.doc.merge_down(&s),
+                        "up" => self.doc.move_layer(&s, 1),
+                        "down" => self.doc.move_layer(&s, -1),
+                        "vis" => self.doc.toggle_layer_visible(&s, i),
+                        _ => self.doc.delete_layer(&s),
+                    }
+                    ui.close();
+                    break;
+                }
                 ui.add_space(4.0);
             }
             self.background_tile(ui);

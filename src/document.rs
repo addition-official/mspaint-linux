@@ -283,8 +283,8 @@ impl Document {
         let (w, h) = (self.width(), self.height());
         let below: Vec<&Pixmap> = self.layers[..self.active].iter().filter(|l| l.visible).map(|l| &l.pix).collect();
         let above: Vec<&Pixmap> = self.layers[self.active + 1..].iter().filter(|l| l.visible).map(|l| &l.pix).collect();
-        let bg = self.background_visible.then(|| new_pixmap(w, h, self.background));
-        self.below = (!below.is_empty() || bg.is_some()).then(|| pixels::flatten(w, h, bg.iter().chain(below)));
+        // The Background tile is applied as a solid colour in `refresh`, not cached.
+        self.below = (!below.is_empty()).then(|| pixels::flatten(w, h, below.into_iter()));
         self.above = (!above.is_empty()).then(|| pixels::flatten(w, h, above.into_iter()));
         if self.display.width() != w || self.display.height() != h {
             self.display = new_pixmap(w, h, Color32::TRANSPARENT);
@@ -335,18 +335,19 @@ impl Document {
     pub fn flattened(&self) -> Pixmap {
         let (w, h) = (self.width(), self.height());
         let active = self.active;
-        let bg = self.background_visible.then(|| new_pixmap(w, h, self.background));
-        pixels::flatten(
+        let mut out = pixels::flatten(
             w,
             h,
-            bg.iter().chain(
-                self.layers
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, l)| l.visible)
-                    .map(|(i, l)| if i == active { &self.image } else { &l.pix }),
-            ),
-        )
+            self.layers
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| l.visible)
+                .map(|(i, l)| if i == active { &self.image } else { &l.pix }),
+        );
+        if self.background_visible {
+            pixels::under_color_region(&mut out, self.background, self.bounds());
+        }
+        out
     }
 
     /// What erasing / clearing leaves behind: since Paint gained layers, erasing truly
@@ -404,9 +405,11 @@ impl Document {
     pub fn duplicate_layer(&mut self, s: &Settings) {
         self.commit_overlay(s);
         self.begin_edit();
+        // The copy goes above the original and becomes the active layer, as in Paint.
         let name = format!("{} copy", self.layers[self.active].name);
-        let copy = Layer { name, visible: self.layers[self.active].visible, pix: self.image.clone() };
-        self.layers.insert(self.active, copy);
+        let visible = self.layers[self.active].visible;
+        self.layers[self.active].pix = self.image.clone();
+        self.layers.insert(self.active + 1, Layer { name, visible, pix: placeholder() });
         self.active += 1;
         self.rebuild();
     }
@@ -437,6 +440,8 @@ impl Document {
         let mut below = std::mem::replace(&mut self.layers[self.active].pix, placeholder());
         if top_visible {
             below.draw_pixmap(0, 0, top.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+            // The merged result shows what was visible on top.
+            self.layers[self.active].visible = true;
         }
         self.image = below;
         self.rebuild();
@@ -497,8 +502,12 @@ impl Document {
         if r.is_empty() {
             return;
         }
+        // Nothing being drawn in this region: a plain copy is much faster than blending.
+        let stroke_here = self.layer_bbox.is_some_and(|b| !b.intersect(&r).is_empty());
         if !self.layers[self.active].visible {
             pixels::clear_region(&mut self.display, r);
+        } else if !stroke_here {
+            pixels::copy_region(&mut self.display, &self.image, r);
         } else if self.layer_erase {
             pixels::erase_region(&mut self.display, &self.image, &self.layer, r);
         } else {
@@ -509,6 +518,10 @@ impl Document {
         }
         if let Some(a) = &self.above {
             pixels::over_region(&mut self.display, a, r);
+        }
+        self.layers_rev += 1;
+        if self.background_visible {
+            pixels::under_color_region(&mut self.display, self.background, r);
         }
         self.dirty_tex = pixels::union_opt(self.dirty_tex, r);
     }
@@ -812,13 +825,13 @@ impl Document {
     pub fn stamp_float(&mut self, s: &Settings, record: bool) {
         let Some(f) = self.floating() else { return };
         if !f.origin_cleared {
-            // The pixels are still in the canvas: leaving them there *is* the copy.
+            // The pixels are still in the canvas: leaving them there *is* the copy. The
+            // selection only gets stamped again once it is actually moved.
             if record {
                 self.begin_edit();
             }
             let f = self.floating_mut().unwrap();
             f.origin_cleared = true;
-            f.changed = true;
             return;
         }
         let Some(p) = self.effective_float(s) else { return };
@@ -1140,6 +1153,22 @@ mod tests {
         d.set_active_layer(&s, 0);
         d.toggle_layer_visible(&s, 0);
         assert_eq!(get_pixel(&d.flattened(), 0, 0).unwrap(), Color32::TRANSPARENT);
+    }
+
+    #[test]
+    fn duplicate_goes_above_and_ctrl_click_is_a_no_op() {
+        let s = Settings::default();
+        let mut d = Document::new(10, 10);
+        d.duplicate_layer(&s);
+        assert_eq!((d.active, d.layers[1].name.as_str()), (1, "Layer 1 copy"));
+        // Ctrl+click on a selection without moving must not composite it over itself.
+        let mut img = d.image.clone();
+        pixels::set_pixel(&mut img, 2, 2, Color32::from_rgba_premultiplied(60, 0, 0, 128).to_array());
+        d.image = img;
+        d.select_rect(&s, IRect::new(0, 0, 5, 5));
+        d.stamp_float(&s, true);
+        d.commit_overlay(&s);
+        assert_eq!(px(&d, 2, 2).a(), 128, "semi-transparent pixel unchanged");
     }
 
     #[test]

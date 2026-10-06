@@ -425,7 +425,12 @@ impl PaintApp {
     /// Ctrl+Shift+C: copy what's visible (all visible layers) under the selection,
     /// or the whole canvas.
     fn copy_visible(&mut self) {
-        let flat = self.doc.flattened();
+        // The display already holds visible layers, background and any pending
+        // shape or text; add a floating (moved) selection on top.
+        let mut flat = self.doc.display.clone();
+        if let (Some(f), Some(p)) = (self.doc.floating(), self.doc.effective_float(&self.s)) {
+            pixels::draw_scaled(&mut flat, &p, f.rect.min.x, f.rect.min.y, f.rect.width(), f.rect.height());
+        }
         let pix = match self.doc.floating() {
             Some(f) => {
                 let r = crate::pixels::IRect::new(
@@ -584,11 +589,7 @@ impl PaintApp {
             Action::Rotate180 => self.doc.transform(&s, pixels::rotate_180),
             Action::FlipVertical => self.doc.transform(&s, pixels::flip_v),
             Action::FlipHorizontal => self.doc.transform(&s, pixels::flip_h),
-            Action::InvertColors => self.doc.transform(&s, |p| {
-                let mut p = p.clone();
-                pixels::invert_colors(&mut p);
-                p
-            }),
+            Action::InvertColors => self.doc.apply_active(&s, pixels::invert_colors),
             Action::Properties => {
                 self.doc.commit_overlay(&s);
                 self.dialog = Some(Dialog::Properties { w: self.doc.width(), h: self.doc.height(), unit: 0, bw: false });
@@ -1352,7 +1353,7 @@ impl PaintApp {
                         };
                         let (nw, nh) = (nw.round().max(1.0) as u32, nh.round().max(1.0) as u32);
                         let (sx, sy) = (st.skew_x, st.skew_y);
-                        let bg = if self.doc.floating().is_some() { Color32::TRANSPARENT } else { self.s.color2 };
+                        let bg = Color32::TRANSPARENT;
                         let s = self.s.clone();
                         self.doc.transform(&s, move |p| {
                             let mut out = if (nw, nh) != (p.width(), p.height()) { pixels::resize(p, nw, nh) } else { p.clone() };

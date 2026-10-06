@@ -156,6 +156,22 @@ pub fn region_color_image(p: &Pixmap, r: IRect) -> egui::ColorImage {
 }
 
 /// `dst[r] = base[r] (src-over) layer[r] * opacity`
+/// Copy `src[r]` into `dst[r]` row by row.
+pub fn copy_region(dst: &mut Pixmap, src: &Pixmap, r: IRect) {
+    let r = r.clamp_to(dst.width(), dst.height());
+    if r.is_empty() {
+        return;
+    }
+    let w = dst.width() as usize;
+    let sd = src.data();
+    let dd = dst.data_mut();
+    for y in r.y0..r.y1 {
+        let s = (y as usize * w + r.x0 as usize) * 4;
+        let e = s + r.width() as usize * 4;
+        dd[s..e].copy_from_slice(&sd[s..e]);
+    }
+}
+
 pub fn composite_region(dst: &mut Pixmap, base: &Pixmap, layer: &Pixmap, opacity: f32, r: IRect) {
     let r = r.clamp_to(dst.width(), dst.height());
     if r.is_empty() {
@@ -247,11 +263,41 @@ fn blend_region(dst: &mut Pixmap, src: &Pixmap, r: IRect, under: bool) {
     }
 }
 
+/// `dst[r] = dst[r] over <solid colour>` (a solid, opaque background underneath).
+pub fn under_color_region(dst: &mut Pixmap, c: Color32, r: IRect) {
+    let r = r.clamp_to(dst.width(), dst.height());
+    if r.is_empty() {
+        return;
+    }
+    let bg = c.to_array();
+    let w = dst.width() as usize;
+    let dd = dst.data_mut();
+    for y in r.y0..r.y1 {
+        let row = y as usize * w;
+        for x in r.x0..r.x1 {
+            let i = (row + x as usize) * 4;
+            let a = dd[i + 3] as u32;
+            if a == 255 {
+                continue;
+            }
+            let inv = 255 - a;
+            for k in 0..4 {
+                dd[i + k] = (dd[i + k] as u32 + (bg[k] as u32 * inv + 127) / 255).min(255) as u8;
+            }
+        }
+    }
+}
+
 /// Composite `layers` (bottom first) into one pixmap.
-pub fn flatten<'a>(w: u32, h: u32, layers: impl Iterator<Item = &'a Pixmap>) -> Pixmap {
-    let mut out = new_pixmap(w, h, Color32::TRANSPARENT);
+pub fn flatten<'a>(w: u32, h: u32, mut layers: impl Iterator<Item = &'a Pixmap>) -> Pixmap {
+    // The first layer is copied rather than blended onto nothing.
+    let mut out = match layers.next() {
+        Some(first) => first.clone(),
+        None => return new_pixmap(w, h, Color32::TRANSPARENT),
+    };
+    let all = IRect::from_size(w, h);
     for l in layers {
-        out.draw_pixmap(0, 0, l.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+        over_region(&mut out, l, all);
     }
     out
 }

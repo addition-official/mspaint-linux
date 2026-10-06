@@ -12,17 +12,20 @@ included.
 
 | Area | What's there |
 | --- | --- |
-| **Tools** | Pencil, Fill with colour, Text, Eraser, Colour picker, Magnifier |
-| **Brushes** | Brush, Calligraphy 1 and 2, Airbrush, Oil, Crayon, Marker, Natural pencil, Watercolour |
+| **Tools** | Pencil, Fill with colour (with tolerance), Text, Eraser, Colour picker, Magnifier |
+| **Brushes** | Brush, Calligraphy brush, Calligraphy pen, Airbrush, Oil, Crayon, Marker, Natural pencil, Watercolour. The menu shows each brush's stroke, and oil and watercolour run out of paint over a long stroke |
+| **Sliders** | Size (pencil, brushes, eraser) and opacity (pencil, brushes) beside the canvas, with a live size preview; tolerance for the fill tool |
 | **Shapes** | Line, Curve (two bends), Oval, Rectangle, Rounded rectangle, Polygon, Triangle, Right triangle, Diamond, Pentagon, Hexagon, 4 arrows, 4-, 5- and 6-point stars, 3 callouts, Heart, Lightning |
-| **Shape styles** | Outline and fill: none, solid, crayon, marker, oil, natural pencil, watercolour. Shapes stay editable (move or resize with handles) until you click away. Hold Shift for squares, circles and 45° lines. |
-| **Selection** | Rectangle and free-form, select all, invert selection, delete, transparent selection, move, resize with handles, nudge with the arrow keys |
-| **Image** | Crop to selection, Resize and skew (percent or pixels), Rotate 90°/180°, Flip, Invert colours, drag-to-resize canvas |
-| **Text** | Any installed font, size, bold, italic, underline, strikethrough, left/centre/right alignment, background fill, word wrap |
-| **Colours** | Colour 1 / Colour 2 (right-click draws with Colour 2), the classic 20-colour palette, 10 custom colours, Edit colours (picker + hex) |
-| **View** | Zoom 10% to 800% (Ctrl+wheel, slider, magnifier), fit to window, rulers, gridlines, status bar, full screen |
-| **Files** | Open / Save / Save as PNG, JPEG, BMP, GIF, TIFF, WEBP and ICO. Also opens TGA, PNM, QOI, HDR and more. Recent files, Import to canvas, drag and drop, open from the command line |
-| **Clipboard** | Paste, Paste from file, Cut and Copy, shared with other apps (Wayland and X11). Pasting a larger image grows the canvas, as in Paint |
+| **Shape styles** | Outline and fill: none, solid, crayon, marker, oil, natural pencil, watercolour. Shapes stay editable (move or resize with handles) until you click away. Hold Shift for squares, circles and 45° lines |
+| **Selection** | Rectangle and free-form, select all, invert, delete (Delete or Backspace), transparent selection, move, resize (Shift keeps the aspect ratio), **free rotation** with the handle above it, Ctrl+drag to copy, Shift+drag to smear, nudge with the arrow keys |
+| **Layers** | Layers panel with thumbnails: add, duplicate, merge down, delete, show/hide, drag to reorder. A Background tile (any colour, or hidden for a transparent canvas). Transparent areas show a checkerboard, and the eraser erases to transparency |
+| **Image** | Crop, Resize and skew, Rotate 90°/180° or Custom rotate (any angle), Flip, Invert colours, Remove background, drag-to-resize canvas |
+| **Text** | Any installed font, size, bold, italic, underline, strikethrough (Ctrl+B/I/U), left/centre/right alignment, background fill, word wrap |
+| **Colours** | Colour 1 / Colour 2 (right-click or Shift+click a swatch for Colour 2), the classic 20-colour palette, 10 custom colours, Edit colours (picker, RGB or HSV, hex) |
+| **View** | Zoom 10% to 800% (Ctrl+wheel, Ctrl+PageUp/PageDown, slider, magnifier), fit to window, rulers, gridlines, status bar, thumbnail, full screen |
+| **Files** | Open / Save / Save as PNG, JPEG, BMP, GIF, TIFF, WEBP and ICO (layers are flattened); also opens TGA, PNM, QOI, HDR and more. Recent files, Import to canvas, Print, drag and drop, open from the command line |
+| **Clipboard** | Paste, Paste from file, Cut, Copy and Copy visible layers (Ctrl+Shift+C), shared with other apps (Wayland and X11). Pasting a larger image grows the canvas |
+| **Image properties** | Size in pixels, inches or centimetres; Colour or Black and white; last saved, size on disk |
 | **History** | Undo / redo (up to 100 steps) |
 
 ### KDE / Kubuntu integration
@@ -35,6 +38,7 @@ included.
 - Native Wayland and X11 support, with a `.desktop` entry so Paint shows up in the launcher and under "Open with" for images.
 - Opens files in your XDG Pictures folder by default.
 - Asks to save unsaved work when you close the window.
+- Prints through CUPS (Ctrl+P): pick a printer, copies, orientation and fit-to-page.
 
 ## Install on Kubuntu
 
@@ -93,22 +97,29 @@ standard Kubuntu install already has them.
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+N / Ctrl+O / Ctrl+S | New / Open / Save |
+| Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+P | New / Open / Save / Print |
 | Ctrl+Shift+S or F12 | Save as |
 | Ctrl+Z / Ctrl+Y | Undo / Redo |
 | Ctrl+X / Ctrl+C / Ctrl+V | Cut / Copy / Paste |
+| Ctrl+Shift+C | Copy visible layers |
 | Ctrl+A | Select all |
-| Delete | Delete selection |
+| Delete or Backspace | Delete selection |
 | Ctrl+Shift+X | Crop to selection |
 | Ctrl+W | Resize and skew |
-| Ctrl+E | Image properties (canvas size) |
+| Ctrl+E | Image properties |
 | Ctrl+Shift+I | Invert colours |
-| Ctrl++ / Ctrl+- / Ctrl+wheel | Zoom in / out |
+| Ctrl++ / Ctrl+- | Bigger / smaller brush, line or eraser |
+| Ctrl+PageUp / Ctrl+PageDown / Ctrl+wheel | Zoom in / out |
 | Ctrl+1 / Ctrl+0 | Zoom to 100% / Fit to window |
 | Ctrl+R / Ctrl+G | Rulers / Gridlines |
+| Ctrl+Shift+N | New layer |
+| Ctrl+Shift+H / Ctrl+Shift+B | Show or hide the background / Background colour |
+| P, E, B, I, T, Z, S | Pencil, Eraser, Fill, Colour picker, Text, Magnifier, Select |
+| Ctrl+B / Ctrl+I / Ctrl+U | Bold / Italic / Underline (in a text box) |
 | F11 | Full screen |
 | Middle-drag | Pan the canvas |
 | Shift (while drawing shapes) | Squares, circles, 45° lines |
+| Ctrl+drag / Shift+drag a selection | Copy / smear it |
 | Enter / Esc | Finish the current shape, text or selection |
 
 ## Development
@@ -125,7 +136,9 @@ Source layout:
 | `src/app.rs` | App state, menus, shortcuts, files, dialogs, status bar |
 | `src/ribbon.rs` | The Windows 11 style toolbar |
 | `src/canvas.rs` | Canvas view, zoom/scroll, rulers, gridlines, mouse interaction |
-| `src/document.rs` | Image, stroke layer, undo history, selection, pending shapes and text |
+| `src/layers_panel.rs` | Layers panel and Background tile |
+| `src/tool_sliders.rs` | Size, opacity and tolerance sliders beside the canvas |
+| `src/document.rs` | Layers, stroke layer, undo history, selection, pending shapes and text |
 | `src/brush.rs` | Pencil, eraser and the artistic brushes |
 | `src/shapes.rs` | Shape geometry and rasterization |
 | `src/text.rs` | System font discovery and text layout and rendering |
@@ -133,10 +146,14 @@ Source layout:
 | `src/icons.rs` | Vector toolbar icons |
 | `src/theme.rs` | Fluent-style light and dark themes |
 
-## Not included (yet)
+## Not included
 
-Windows 11 Paint's cloud features (Image Creator, Cocreator, generative erase), layers, background
-removal and printing.
+- Windows 11 Paint's AI and cloud features (Cocreator, Image Creator, generative fill and erase, object
+  select, stickers, restyle). Remove background uses a simple non-AI method that works best on plain
+  backgrounds.
+- Paint's `.paint` project format (layers are flattened when saving).
+- Free rotation of shapes and text (selections can be rotated freely; you can select a shape after
+  drawing it and rotate that).
 
 ## Disclaimer
 
