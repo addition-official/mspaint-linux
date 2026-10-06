@@ -38,6 +38,18 @@ included.
 
 ## Install on Kubuntu
 
+### Easiest: install the .deb (no Rust needed)
+
+Needs Kubuntu 24.04 or newer (64-bit). Download `mspaint-linux_0.1.0-1_amd64.deb`, then:
+
+```bash
+sudo apt install ./mspaint-linux_0.1.0-1_amd64.deb
+```
+
+Paint then shows up in the application launcher. To remove it: `sudo apt remove mspaint-linux`.
+
+## Build from source
+
 ### 1. Install Rust (one time)
 
 Kubuntu's packaged `rustc` is too old, so use rustup:
