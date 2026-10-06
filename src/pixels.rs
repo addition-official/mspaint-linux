@@ -1,0 +1,502 @@
+//! Low-level pixel operations on premultiplied RGBA `tiny_skia::Pixmap`s.
+
+use egui::Color32;
+use tiny_skia::{
+    BlendMode, Color, FilterQuality, IntSize, Paint, Pixmap, PixmapPaint, Transform,
+};
+
+/// Integer rectangle, half-open: `[x0, x1) x [y0, y1)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IRect {
+    pub x0: i32,
+    pub y0: i32,
+    pub x1: i32,
+    pub y1: i32,
+}
+
+impl IRect {
+    pub fn new(x0: i32, y0: i32, x1: i32, y1: i32) -> Self {
+        Self { x0, y0, x1, y1 }
+    }
+    pub fn from_size(w: u32, h: u32) -> Self {
+        Self::new(0, 0, w as i32, h as i32)
+    }
+    pub fn from_points(a: (f32, f32), b: (f32, f32), pad: f32) -> Self {
+        Self::new(
+            (a.0.min(b.0) - pad).floor() as i32,
+            (a.1.min(b.1) - pad).floor() as i32,
+            (a.0.max(b.0) + pad).ceil() as i32 + 1,
+            (a.1.max(b.1) + pad).ceil() as i32 + 1,
+        )
+    }
+    pub fn width(&self) -> i32 {
+        self.x1 - self.x0
+    }
+    pub fn height(&self) -> i32 {
+        self.y1 - self.y0
+    }
+    pub fn is_empty(&self) -> bool {
+        self.x1 <= self.x0 || self.y1 <= self.y0
+    }
+    pub fn union(&self, o: &IRect) -> IRect {
+        if self.is_empty() {
+            return *o;
+        }
+        if o.is_empty() {
+            return *self;
+        }
+        IRect::new(
+            self.x0.min(o.x0),
+            self.y0.min(o.y0),
+            self.x1.max(o.x1),
+            self.y1.max(o.y1),
+        )
+    }
+    pub fn intersect(&self, o: &IRect) -> IRect {
+        IRect::new(
+            self.x0.max(o.x0),
+            self.y0.max(o.y0),
+            self.x1.min(o.x1),
+            self.y1.min(o.y1),
+        )
+    }
+    pub fn clamp_to(&self, w: u32, h: u32) -> IRect {
+        self.intersect(&IRect::from_size(w, h))
+    }
+}
+
+pub fn union_opt(a: Option<IRect>, b: IRect) -> Option<IRect> {
+    Some(match a {
+        Some(a) => a.union(&b),
+        None => b,
+    })
+}
+
+pub fn sk_color(c: Color32) -> Color {
+    let [r, g, b, a] = c.to_srgba_unmultiplied();
+    Color::from_rgba8(r, g, b, a)
+}
+
+pub fn paint_for(c: Color32, anti_alias: bool) -> Paint<'static> {
+    let mut p = Paint::default();
+    p.set_color(sk_color(c));
+    p.anti_alias = anti_alias;
+    p
+}
+
+pub fn new_pixmap(w: u32, h: u32, fill: Color32) -> Pixmap {
+    let mut p = Pixmap::new(w.max(1), h.max(1)).expect("valid pixmap size");
+    if fill != Color32::TRANSPARENT {
+        p.fill(sk_color(fill));
+    }
+    p
+}
+
+/// Premultiplied RGBA of an (opaque or not) egui color.
+pub fn premul(c: Color32) -> [u8; 4] {
+    c.to_array()
+}
+
+#[inline]
+pub fn idx(p: &Pixmap, x: i32, y: i32) -> Option<usize> {
+    if x < 0 || y < 0 || x >= p.width() as i32 || y >= p.height() as i32 {
+        None
+    } else {
+        Some((y as usize * p.width() as usize + x as usize) * 4)
+    }
+}
+
+/// Unpremultiplied color at a pixel.
+pub fn get_pixel(p: &Pixmap, x: i32, y: i32) -> Option<Color32> {
+    let i = idx(p, x, y)?;
+    let d = p.data();
+    Some(Color32::from_rgba_premultiplied(d[i], d[i + 1], d[i + 2], d[i + 3]))
+}
+
+#[inline]
+pub fn set_pixel(p: &mut Pixmap, x: i32, y: i32, c: [u8; 4]) {
+    if let Some(i) = idx(p, x, y) {
+        p.data_mut()[i..i + 4].copy_from_slice(&c);
+    }
+}
+
+/// Write `c` (premultiplied, alpha = full color alpha) scaled to `alpha`, keeping the max coverage.
+#[inline]
+pub fn max_pixel(p: &mut Pixmap, x: i32, y: i32, c: Color32, alpha: f32) {
+    if let Some(i) = idx(p, x, y) {
+        let a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
+        let d = p.data_mut();
+        if a > d[i + 3] {
+            let s = a as f32 / 255.0;
+            d[i] = (c.r() as f32 * s) as u8;
+            d[i + 1] = (c.g() as f32 * s) as u8;
+            d[i + 2] = (c.b() as f32 * s) as u8;
+            d[i + 3] = a;
+        }
+    }
+}
+
+pub fn to_color_image(p: &Pixmap) -> egui::ColorImage {
+    egui::ColorImage::from_rgba_premultiplied([p.width() as usize, p.height() as usize], p.data())
+}
+
+pub fn region_color_image(p: &Pixmap, r: IRect) -> egui::ColorImage {
+    let w = r.width() as usize;
+    let h = r.height() as usize;
+    let pw = p.width() as usize;
+    let d = p.data();
+    let mut out = Vec::with_capacity(w * h * 4);
+    for y in r.y0..r.y1 {
+        let s = (y as usize * pw + r.x0 as usize) * 4;
+        out.extend_from_slice(&d[s..s + w * 4]);
+    }
+    egui::ColorImage::from_rgba_premultiplied([w, h], &out)
+}
+
+/// `dst[r] = base[r] (src-over) layer[r] * opacity`
+pub fn composite_region(dst: &mut Pixmap, base: &Pixmap, layer: &Pixmap, opacity: f32, r: IRect) {
+    let r = r.clamp_to(dst.width(), dst.height());
+    if r.is_empty() {
+        return;
+    }
+    let w = dst.width() as usize;
+    let op = (opacity.clamp(0.0, 1.0) * 256.0) as u32;
+    let bd = base.data();
+    let ld = layer.data();
+    let dd = dst.data_mut();
+    for y in r.y0..r.y1 {
+        let row = y as usize * w;
+        for x in r.x0..r.x1 {
+            let i = (row + x as usize) * 4;
+            let la = ld[i + 3] as u32;
+            if la == 0 {
+                dd[i..i + 4].copy_from_slice(&bd[i..i + 4]);
+                continue;
+            }
+            let sa = (la * op) >> 8;
+            let inv = 255 - sa;
+            for k in 0..4 {
+                let s = (ld[i + k] as u32 * op) >> 8;
+                dd[i + k] = (s + (bd[i + k] as u32 * inv + 127) / 255).min(255) as u8;
+            }
+        }
+    }
+}
+
+pub fn clear_region(p: &mut Pixmap, r: IRect) {
+    let r = r.clamp_to(p.width(), p.height());
+    if r.is_empty() {
+        return;
+    }
+    let w = p.width() as usize;
+    let d = p.data_mut();
+    for y in r.y0..r.y1 {
+        let s = (y as usize * w + r.x0 as usize) * 4;
+        d[s..s + r.width() as usize * 4].fill(0);
+    }
+}
+
+/// Flood fill (4-connected) starting at (x, y) replacing exactly-matching pixels.
+/// Returns the touched bounding box.
+pub fn flood_fill(p: &mut Pixmap, x: i32, y: i32, color: Color32) -> Option<IRect> {
+    let start = idx(p, x, y)?;
+    let w = p.width() as i32;
+    let h = p.height() as i32;
+    let fill = premul(color);
+    let d = p.data_mut();
+    let target = [d[start], d[start + 1], d[start + 2], d[start + 3]];
+    if target == fill {
+        return None;
+    }
+    let at = |x: i32, y: i32| ((y * w + x) * 4) as usize;
+    let mut bbox = IRect::new(x, y, x + 1, y + 1);
+    let mut stack = vec![(x, y)];
+    while let Some((sx, sy)) = stack.pop() {
+        let mut lx = sx;
+        while lx > 0 && d[at(lx - 1, sy)..at(lx - 1, sy) + 4] == target {
+            lx -= 1;
+        }
+        let mut rx = sx;
+        while rx < w - 1 && d[at(rx + 1, sy)..at(rx + 1, sy) + 4] == target {
+            rx += 1;
+        }
+        if d[at(sx, sy)..at(sx, sy) + 4] != target {
+            continue;
+        }
+        for xx in lx..=rx {
+            let i = at(xx, sy);
+            d[i..i + 4].copy_from_slice(&fill);
+        }
+        bbox = bbox.union(&IRect::new(lx, sy, rx + 1, sy + 1));
+        for ny in [sy - 1, sy + 1] {
+            if ny < 0 || ny >= h {
+                continue;
+            }
+            let mut xx = lx;
+            while xx <= rx {
+                if d[at(xx, ny)..at(xx, ny) + 4] == target {
+                    stack.push((xx, ny));
+                    while xx <= rx && d[at(xx, ny)..at(xx, ny) + 4] == target {
+                        xx += 1;
+                    }
+                } else {
+                    xx += 1;
+                }
+            }
+        }
+    }
+    Some(bbox)
+}
+
+pub fn copy_rect(p: &Pixmap, r: IRect) -> Pixmap {
+    let mut out = new_pixmap(r.width().max(1) as u32, r.height().max(1) as u32, Color32::TRANSPARENT);
+    draw_exact(&mut out, p, -r.x0, -r.y0);
+    out
+}
+
+/// Copy `src` into `dst` at (x, y) replacing pixels (no blending).
+pub fn draw_exact(dst: &mut Pixmap, src: &Pixmap, x: i32, y: i32) {
+    let paint = PixmapPaint {
+        blend_mode: BlendMode::Source,
+        quality: FilterQuality::Nearest,
+        ..Default::default()
+    };
+    dst.draw_pixmap(x, y, src.as_ref(), &paint, Transform::identity(), None);
+}
+
+/// Draw `src` scaled into the destination rectangle (x, y, w, h) with src-over blending.
+pub fn draw_scaled(dst: &mut Pixmap, src: &Pixmap, x: f32, y: f32, w: f32, h: f32) {
+    let sx = w / src.width() as f32;
+    let sy = h / src.height() as f32;
+    let exact = (sx - 1.0).abs() < 1e-4 && (sy - 1.0).abs() < 1e-4;
+    let paint = PixmapPaint {
+        quality: if exact { FilterQuality::Nearest } else { FilterQuality::Bilinear },
+        ..Default::default()
+    };
+    if exact {
+        dst.draw_pixmap(x.round() as i32, y.round() as i32, src.as_ref(), &paint, Transform::identity(), None);
+    } else {
+        let t = Transform::from_row(sx, 0.0, 0.0, sy, x, y);
+        dst.draw_pixmap(0, 0, src.as_ref(), &paint, t, None);
+    }
+}
+
+pub fn resize(src: &Pixmap, w: u32, h: u32) -> Pixmap {
+    let mut out = new_pixmap(w, h, Color32::TRANSPARENT);
+    let paint = PixmapPaint {
+        quality: FilterQuality::Bicubic,
+        blend_mode: BlendMode::Source,
+        ..Default::default()
+    };
+    let t = Transform::from_scale(w as f32 / src.width() as f32, h as f32 / src.height() as f32);
+    out.draw_pixmap(0, 0, src.as_ref(), &paint, t, None);
+    out
+}
+
+pub fn skew(src: &Pixmap, deg_x: f32, deg_y: f32, bg: Color32) -> Pixmap {
+    let kx = deg_x.to_radians().tan();
+    let ky = deg_y.to_radians().tan();
+    let (w, h) = (src.width() as f32, src.height() as f32);
+    let nw = (w + (h * kx).abs()).round().max(1.0) as u32;
+    let nh = (h + (w * ky).abs()).round().max(1.0) as u32;
+    let mut out = new_pixmap(nw, nh, bg);
+    let tx = if kx < 0.0 { -h * kx } else { 0.0 };
+    let ty = if ky < 0.0 { -w * ky } else { 0.0 };
+    let paint = PixmapPaint {
+        quality: FilterQuality::Bilinear,
+        ..Default::default()
+    };
+    out.draw_pixmap(0, 0, src.as_ref(), &paint, Transform::from_row(1.0, ky, kx, 1.0, tx, ty), None);
+    out
+}
+
+fn remap(src: &Pixmap, w: u32, h: u32, f: impl Fn(i32, i32) -> (i32, i32)) -> Pixmap {
+    let mut out = new_pixmap(w, h, Color32::TRANSPARENT);
+    let sw = src.width() as usize;
+    let sd = src.data();
+    let od = out.data_mut();
+    for y in 0..h as i32 {
+        for x in 0..w as i32 {
+            let (sx, sy) = f(x, y);
+            let si = (sy as usize * sw + sx as usize) * 4;
+            let oi = (y as usize * w as usize + x as usize) * 4;
+            od[oi..oi + 4].copy_from_slice(&sd[si..si + 4]);
+        }
+    }
+    out
+}
+
+pub fn flip_h(p: &Pixmap) -> Pixmap {
+    let w = p.width() as i32;
+    remap(p, p.width(), p.height(), |x, y| (w - 1 - x, y))
+}
+pub fn flip_v(p: &Pixmap) -> Pixmap {
+    let h = p.height() as i32;
+    remap(p, p.width(), p.height(), |x, y| (x, h - 1 - y))
+}
+pub fn rotate_cw(p: &Pixmap) -> Pixmap {
+    let h = p.height() as i32;
+    remap(p, p.height(), p.width(), |x, y| (y, h - 1 - x))
+}
+pub fn rotate_ccw(p: &Pixmap) -> Pixmap {
+    let w = p.width() as i32;
+    remap(p, p.height(), p.width(), |x, y| (w - 1 - y, x))
+}
+pub fn rotate_180(p: &Pixmap) -> Pixmap {
+    let (w, h) = (p.width() as i32, p.height() as i32);
+    remap(p, p.width(), p.height(), |x, y| (w - 1 - x, h - 1 - y))
+}
+
+pub fn invert_colors(p: &mut Pixmap) {
+    for px in p.data_mut().chunks_exact_mut(4) {
+        let a = px[3];
+        for c in &mut px[..3] {
+            *c = a - (*c).min(a);
+        }
+    }
+}
+
+/// New canvas of the given size with the old content at the top-left.
+pub fn resize_canvas(p: &Pixmap, w: u32, h: u32, bg: Color32) -> Pixmap {
+    let mut out = new_pixmap(w, h, bg);
+    draw_exact(&mut out, p, 0, 0);
+    out
+}
+
+/// Make pixels matching `key` fully transparent.
+pub fn key_out(p: &mut Pixmap, key: Color32) {
+    let k = premul(key);
+    for px in p.data_mut().chunks_exact_mut(4) {
+        if px == k {
+            px.fill(0);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// File I/O
+
+pub fn load(path: &std::path::Path) -> Result<Pixmap, String> {
+    let img = image::ImageReader::open(path)
+        .map_err(|e| e.to_string())?
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?
+        .decode()
+        .map_err(|e| e.to_string())?;
+    Ok(from_dynamic(img))
+}
+
+pub fn from_dynamic(img: image::DynamicImage) -> Pixmap {
+    let rgba = img.to_rgba8();
+    from_rgba_unmultiplied(rgba.width(), rgba.height(), rgba.into_raw())
+}
+
+pub fn from_rgba_unmultiplied(w: u32, h: u32, mut data: Vec<u8>) -> Pixmap {
+    for px in data.chunks_exact_mut(4) {
+        let a = px[3] as u32;
+        if a < 255 {
+            for c in &mut px[..3] {
+                *c = ((*c as u32 * a + 127) / 255) as u8;
+            }
+        }
+    }
+    Pixmap::from_vec(data, IntSize::from_wh(w.max(1), h.max(1)).unwrap()).expect("pixmap")
+}
+
+pub fn to_rgba_unmultiplied(p: &Pixmap) -> image::RgbaImage {
+    let mut data = p.data().to_vec();
+    for px in data.chunks_exact_mut(4) {
+        let a = px[3] as u32;
+        if a > 0 && a < 255 {
+            for c in &mut px[..3] {
+                *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+            }
+        }
+    }
+    image::RgbaImage::from_raw(p.width(), p.height(), data).expect("rgba image")
+}
+
+pub const SAVE_FORMATS: &[(&str, &[&str])] = &[
+    ("PNG", &["png"]),
+    ("JPEG", &["jpg", "jpeg", "jpe", "jfif"]),
+    ("BMP", &["bmp", "dib"]),
+    ("GIF", &["gif"]),
+    ("TIFF", &["tif", "tiff"]),
+    ("WEBP", &["webp"]),
+    ("ICO", &["ico"]),
+];
+
+pub const OPEN_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "jpe", "jfif", "bmp", "dib", "gif", "tif", "tiff", "webp", "ico", "tga",
+    "pnm", "ppm", "pgm", "pbm", "qoi", "hdr", "exr", "dds", "ff",
+];
+
+pub fn save(p: &Pixmap, path: &std::path::Path) -> Result<(), String> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_ascii_lowercase();
+    let rgba = to_rgba_unmultiplied(p);
+    let flatten = || {
+        // Composite over white for formats without alpha.
+        let mut rgb = image::RgbImage::new(rgba.width(), rgba.height());
+        for (o, i) in rgb.pixels_mut().zip(rgba.pixels()) {
+            let a = i[3] as u32;
+            for k in 0..3 {
+                o[k] = ((i[k] as u32 * a + 255 * (255 - a)) / 255) as u8;
+            }
+        }
+        rgb
+    };
+    let res = match ext.as_str() {
+        "jpg" | "jpeg" | "jpe" | "jfif" => {
+            let f = std::fs::File::create(path).map_err(|e| e.to_string())?;
+            let mut w = std::io::BufWriter::new(f);
+            let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, 95);
+            flatten().write_with_encoder(enc)
+        }
+        "bmp" | "dib" => flatten().save_with_format(path, image::ImageFormat::Bmp),
+        "ico" => {
+            let (w, h) = (rgba.width(), rgba.height());
+            let img = if w > 256 || h > 256 {
+                image::DynamicImage::ImageRgba8(rgba).resize(256, 256, image::imageops::FilterType::Lanczos3)
+            } else {
+                image::DynamicImage::ImageRgba8(rgba)
+            };
+            img.save_with_format(path, image::ImageFormat::Ico)
+        }
+        "gif" => rgba.save_with_format(path, image::ImageFormat::Gif),
+        "tif" | "tiff" => rgba.save_with_format(path, image::ImageFormat::Tiff),
+        "webp" => rgba.save_with_format(path, image::ImageFormat::WebP),
+        _ => rgba.save_with_format(path, image::ImageFormat::Png),
+    };
+    res.map_err(|e| e.to_string())
+}
+
+/// Hash-based deterministic noise in [0, 1).
+#[inline]
+pub fn noise(x: i32, y: i32, seed: u32) -> f32 {
+    let mut h = (x as u32).wrapping_mul(0x8da6b343) ^ (y as u32).wrapping_mul(0xd8163841) ^ seed.wrapping_mul(0xcb1ab31f);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0x5bd1e995);
+    h ^= h >> 15;
+    (h & 0xffffff) as f32 / 16777216.0
+}
+
+/// Tiny xorshift RNG.
+#[derive(Clone)]
+pub struct Rng(pub u64);
+impl Rng {
+    pub fn next_u32(&mut self) -> u32 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        (x >> 32) as u32
+    }
+    pub fn f32(&mut self) -> f32 {
+        self.next_u32() as f32 / u32::MAX as f32
+    }
+}
