@@ -81,6 +81,8 @@ fn main() -> eframe::Result {
             .with_app_id("mspaint-linux")
             .with_inner_size([1280.0, 860.0])
             .with_min_inner_size([640.0, 420.0])
+            // Paint draws a Windows 11 style title bar; the setting can switch back to Plasma's.
+            .with_decorations(false)
             .with_icon(window_icon(64)),
         ..Default::default()
     };

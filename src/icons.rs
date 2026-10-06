@@ -43,6 +43,16 @@ pub enum Icon {
     Invert,
     Delete,
     Transparent,
+    Paste,
+    Cut,
+    Copy,
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+    AlignLeft,
+    AlignCenter,
+    AlignRight,
 }
 
 fn g(r: Rect, x: f32, y: f32) -> Pos2 {
@@ -124,6 +134,45 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
                 }
             }
             dashed_rect(p, r, 4.0, 4.0, 20.0, 20.0, s);
+        }
+        Icon::Paste => {
+            p.rect_stroke(Rect::from_min_max(g(r, 5.0, 4.0), g(r, 19.0, 21.0)), 2.0, s, StrokeKind::Middle);
+            p.rect_filled(Rect::from_min_max(g(r, 9.0, 2.5), g(r, 15.0, 6.0)), 1.0, fg);
+            pl(p, r, &[(8.5, 11.0), (15.5, 11.0)], s);
+            pl(p, r, &[(8.5, 15.0), (13.5, 15.0)], s);
+        }
+        Icon::Cut => {
+            p.circle_stroke(g(r, 7.5, 17.5), r.width() / 24.0 * 3.0, s);
+            p.circle_stroke(g(r, 16.5, 17.5), r.width() / 24.0 * 3.0, s);
+            pl(p, r, &[(9.3, 15.2), (17.0, 3.0)], s);
+            pl(p, r, &[(14.7, 15.2), (7.0, 3.0)], s);
+        }
+        Icon::Copy => {
+            p.rect_stroke(Rect::from_min_max(g(r, 8.0, 7.0), g(r, 19.0, 21.0)), 2.0, s, StrokeKind::Middle);
+            pl(p, r, &[(5.0, 17.0), (5.0, 5.0), (7.0, 3.0), (15.0, 3.0)], s);
+        }
+        Icon::Minimize => pl(p, r, &[(6.0, 12.0), (18.0, 12.0)], Stroke::new(1.0, fg)),
+        Icon::Maximize => {
+            p.rect_stroke(Rect::from_min_max(g(r, 6.5, 6.5), g(r, 17.5, 17.5)), 1.5, Stroke::new(1.0, fg), StrokeKind::Middle);
+        }
+        Icon::Restore => {
+            p.rect_stroke(Rect::from_min_max(g(r, 6.0, 8.5), g(r, 15.5, 18.0)), 1.5, Stroke::new(1.0, fg), StrokeKind::Middle);
+            pl(p, r, &[(8.5, 6.0), (16.0, 6.0), (18.0, 8.0), (18.0, 15.5)], Stroke::new(1.0, fg));
+        }
+        Icon::Close => {
+            pl(p, r, &[(6.5, 6.5), (17.5, 17.5)], Stroke::new(1.0, fg));
+            pl(p, r, &[(17.5, 6.5), (6.5, 17.5)], Stroke::new(1.0, fg));
+        }
+        Icon::AlignLeft | Icon::AlignCenter | Icon::AlignRight => {
+            for (i, w) in [16.0, 10.0, 16.0, 10.0].iter().enumerate() {
+                let y = 6.0 + i as f32 * 4.0;
+                let x0 = match icon {
+                    Icon::AlignLeft => 4.0,
+                    Icon::AlignCenter => 12.0 - w / 2.0,
+                    _ => 20.0 - w,
+                };
+                pl(p, r, &[(x0, y), (x0 + w, y)], s);
+            }
         }
         Icon::Crop => {
             pl(p, r, &[(7.0, 2.0), (7.0, 17.0), (22.0, 17.0)], s);

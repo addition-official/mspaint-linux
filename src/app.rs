@@ -88,6 +88,7 @@ struct Persisted {
     hide_status: bool,
     grid: bool,
     rulers: bool,
+    system_titlebar: bool,
 }
 
 /// Mouse interaction in progress on the canvas.
@@ -147,6 +148,9 @@ pub struct PaintApp {
     pub zoom_fit_pending: bool,
     pub active_slot: u8,
     system_dark: Option<bool>,
+    pub system_titlebar: bool,
+    decorations_applied: Option<bool>,
+    pub on_window_edge: bool,
     system_checked: f64,
 }
 
@@ -200,6 +204,9 @@ impl PaintApp {
             zoom_fit_pending: false,
             active_slot: 1,
             system_dark: None,
+            system_titlebar: p.system_titlebar,
+            decorations_applied: None,
+            on_window_edge: false,
             system_checked: 0.0,
         };
         if let Some(path) = open {
@@ -729,7 +736,7 @@ impl PaintApp {
         if let Overlay::Text(tb) = &mut self.doc.overlay
             && let Some(font) = self.fm.font(&self.s.text.family, self.s.text.bold, self.s.text.italic)
         {
-            let lay = crate::text::layout(&font, self.s.text.px(), &tb.text, tb.rect.min, tb.rect.width());
+            let lay = crate::text::layout(&font, self.s.text.px(), &tb.text, tb.rect.min, tb.rect.width(), self.s.text.align);
             let need = lay.lines.last().map(|l| l.2).unwrap_or(0.0) + lay.line_height + 4.0;
             if tb.rect.height() < need {
                 tb.rect.max.y = tb.rect.min.y + need;
@@ -740,25 +747,80 @@ impl PaintApp {
     // -----------------------------------------------------------------------
     // Top bar (menus + quick access)
 
-    fn menu_bar(&mut self, ui: &mut egui::Ui) {
+    /// Windows 11 style title bar: app icon and title on the left, caption buttons on
+    /// the right. Only shown when we draw our own window decorations.
+    fn title_bar(&mut self, ui: &mut egui::Ui) {
         let pal = self.pal;
-        // A fixed row height keeps menu titles and the quick-access icons on one centre line.
-        ui.spacing_mut().interact_size.y = 30.0;
+        let ctx = ui.ctx().clone();
+        let rect = ui.max_rect();
+        let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+
+        // The whole bar drags the window; caption buttons are registered later so they win.
+        let bar = ui.interact(rect, ui.id().with("titlebar"), Sense::click_and_drag());
+        if bar.double_clicked() {
+            ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+        } else if bar.drag_started_by(egui::PointerButton::Primary) {
+            ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+        }
+
+        let p = ui.painter();
+        app_icon(p, Rect::from_center_size(egui::pos2(rect.min.x + 24.0, rect.center().y), vec2(18.0, 18.0)));
+        p.text(
+            egui::pos2(rect.min.x + 46.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            self.title(),
+            egui::FontId::proportional(12.5),
+            pal.text,
+        );
+
+        let bw = 46.0;
+        let buttons = [
+            (Icon::Close, "Close"),
+            (if maximized { Icon::Restore } else { Icon::Maximize }, if maximized { "Restore down" } else { "Maximise" }),
+            (Icon::Minimize, "Minimise"),
+        ];
+        for (i, (icon, tip)) in buttons.into_iter().enumerate() {
+            let br = Rect::from_min_size(egui::pos2(rect.max.x - bw * (i + 1) as f32, rect.min.y), vec2(bw, rect.height()));
+            let resp = ui.interact(br, ui.id().with(("caption", i)), Sense::click());
+            let close = icon == Icon::Close;
+            let fg = if close && resp.hovered() { Color32::WHITE } else { pal.text };
+            if resp.hovered() {
+                let fill = if close { Color32::from_rgb(0xC4, 0x2B, 0x1C) } else { pal.hover };
+                ui.painter().rect_filled(br, 0.0, fill);
+            }
+            icons::paint(ui.painter(), Rect::from_center_size(br.center(), vec2(16.0, 16.0)), icon, fg, pal.accent);
+            if resp.on_hover_text(tip).clicked() {
+                match icon {
+                    Icon::Close => ctx.send_viewport_cmd(ViewportCommand::Close),
+                    Icon::Minimize => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+                    _ => ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized)),
+                }
+            }
+        }
+    }
+
+    /// The row under the title bar: File and View menus, quick-access buttons, settings.
+    fn menu_row(&mut self, ui: &mut egui::Ui) {
+        let pal = self.pal;
+        ui.spacing_mut().interact_size.y = 32.0;
         ui.horizontal_centered(|ui| {
-            ui.set_min_height(30.0);
-            ui.add_space(6.0);
-            let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
-            app_icon(ui.painter(), r);
-            ui.add_space(4.0);
+            ui.set_min_height(40.0);
+            ui.add_space(10.0);
+            ui.spacing_mut().button_padding = vec2(12.0, 6.0);
             egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("File", |ui| self.file_menu(ui));
-                ui.menu_button("Edit", |ui| self.edit_menu(ui));
-                ui.menu_button("View", |ui| self.view_menu(ui));
+                // Wide, airy menu titles like Win11 (the menu bar style overrides button padding).
+                ui.menu_button(RichText::new("  File  ").size(14.0), |ui| self.file_menu(ui));
+                ui.add_space(4.0);
+                ui.menu_button(RichText::new("  View  ").size(14.0), |ui| self.view_menu(ui));
                 ui.add_space(6.0);
                 ui.separator();
+                ui.add_space(2.0);
                 if self.quick_button(ui, Icon::Save, "Save (Ctrl+S)", true) {
                     self.push(Action::Save);
                 }
+                ui.add_space(2.0);
+                ui.separator();
+                ui.add_space(2.0);
                 if self.quick_button(ui, Icon::Undo, "Undo (Ctrl+Z)", self.doc.can_undo()) {
                     self.push(Action::Undo);
                 }
@@ -766,11 +828,12 @@ impl PaintApp {
                     self.push(Action::Redo);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
                     let resp = egui::containers::menu::MenuButton::from_button(
-                        Button::new("").min_size(vec2(30.0, 28.0)).frame(false),
+                        Button::new("").min_size(vec2(36.0, 32.0)).frame(false),
                     )
                     .ui(ui, |ui| {
+                        ui.set_min_width(220.0);
                         ui.label(RichText::new("App theme").strong());
                         for (t, n) in [(ThemePref::Light, "Light"), (ThemePref::Dark, "Dark"), (ThemePref::System, "Use system setting")] {
                             if ui.radio(self.theme_pref == t, n).clicked() {
@@ -778,11 +841,14 @@ impl PaintApp {
                             }
                         }
                         ui.separator();
+                        ui.checkbox(&mut self.system_titlebar, "Use system title bar")
+                            .on_hover_text("Use KDE Plasma's window title bar instead of the Windows 11 style one");
+                        ui.separator();
                         if ui.button("About Paint").clicked() {
                             self.push(Action::About);
                         }
                     });
-                    let r = Rect::from_center_size(resp.0.rect.center(), vec2(18.0, 18.0));
+                    let r = Rect::from_center_size(resp.0.rect.center(), vec2(20.0, 20.0));
                     icons::paint(ui.painter(), r, Icon::Gear, pal.text, pal.accent);
                     resp.0.on_hover_text("Settings");
                 });
@@ -790,10 +856,49 @@ impl PaintApp {
         });
     }
 
+    /// Without system decorations we have to offer resizing from the window edges.
+    /// Returns true while the pointer is over a resize edge.
+    fn window_edges(&mut self, ctx: &egui::Context) -> bool {
+        let (maximized, fullscreen) =
+            ctx.input(|i| (i.viewport().maximized.unwrap_or(false), i.viewport().fullscreen.unwrap_or(false)));
+        if self.system_titlebar || maximized || fullscreen {
+            return false;
+        }
+        let rect = ctx.viewport_rect();
+        // Paint the 1px window border.
+        ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::new("window_border")))
+            .rect_stroke(rect, 0.0, egui::Stroke::new(1.0, self.pal.border), egui::StrokeKind::Inside);
+        let Some(p) = ctx.input(|i| i.pointer.latest_pos()) else { return false };
+        let m = 5.0;
+        let (l, r, t, b) = (p.x < rect.min.x + m, p.x > rect.max.x - m, p.y < rect.min.y + m, p.y > rect.max.y - m);
+        use egui::viewport::ResizeDirection as D;
+        let dir = match (l, r, t, b) {
+            (true, _, true, _) => D::NorthWest,
+            (_, true, true, _) => D::NorthEast,
+            (true, _, _, true) => D::SouthWest,
+            (_, true, _, true) => D::SouthEast,
+            (true, ..) => D::West,
+            (_, true, ..) => D::East,
+            (_, _, true, _) => D::North,
+            (_, _, _, true) => D::South,
+            _ => return false,
+        };
+        ctx.set_cursor_icon(match dir {
+            D::North | D::South => egui::CursorIcon::ResizeVertical,
+            D::East | D::West => egui::CursorIcon::ResizeHorizontal,
+            D::NorthWest | D::SouthEast => egui::CursorIcon::ResizeNwSe,
+            D::NorthEast | D::SouthWest => egui::CursorIcon::ResizeNeSw,
+        });
+        if ctx.input(|i| i.pointer.primary_pressed()) {
+            ctx.send_viewport_cmd(ViewportCommand::BeginResize(dir));
+        }
+        true
+    }
+
     fn quick_button(&self, ui: &mut egui::Ui, icon: Icon, tip: &str, enabled: bool) -> bool {
-        let resp = ui.add_enabled(enabled, Button::new("").min_size(vec2(30.0, 28.0)).frame(false));
+        let resp = ui.add_enabled(enabled, Button::new("").min_size(vec2(36.0, 32.0)).frame(false));
         let fg = if enabled { self.pal.text } else { self.pal.text_dim.gamma_multiply(0.6) };
-        let r = Rect::from_center_size(resp.rect.center(), vec2(18.0, 18.0));
+        let r = Rect::from_center_size(resp.rect.center(), vec2(20.0, 20.0));
         icons::paint(ui.painter(), r, icon, fg, self.pal.accent);
         resp.on_hover_text(tip).clicked()
     }
@@ -857,27 +962,6 @@ impl PaintApp {
         }
         if item(ui, "Exit", "Ctrl+Q") {
             self.push(Action::Exit);
-        }
-    }
-
-    fn edit_menu(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(200.0);
-        let has_sel = self.doc.floating().is_some();
-        let entries: [(&str, &str, Action, bool); 6] = [
-            ("Undo", "Ctrl+Z", Action::Undo, self.doc.can_undo()),
-            ("Redo", "Ctrl+Y", Action::Redo, self.doc.can_redo()),
-            ("Cut", "Ctrl+X", Action::Cut, has_sel),
-            ("Copy", "Ctrl+C", Action::Copy, has_sel),
-            ("Paste", "Ctrl+V", Action::Paste, true),
-            ("Select all", "Ctrl+A", Action::SelectAll, true),
-        ];
-        for (i, (label, sc, a, en)) in entries.into_iter().enumerate() {
-            if i == 2 || i == 5 {
-                ui.separator();
-            }
-            if ui.add_enabled(en, Button::new(label).shortcut_text(sc)).clicked() {
-                self.push(a);
-            }
         }
     }
 
@@ -1340,13 +1424,25 @@ impl eframe::App for PaintApp {
         self.handle_keys(&ctx);
 
         let pal = self.pal;
+        // Our own decorations (Windows 11 look) unless the user prefers Plasma's title bar.
+        if self.decorations_applied != Some(self.system_titlebar) {
+            self.decorations_applied = Some(self.system_titlebar);
+            ctx.send_viewport_cmd(ViewportCommand::Decorations(self.system_titlebar));
+        }
+        self.on_window_edge = self.window_edges(&ctx);
+        if !self.system_titlebar {
+            egui::Panel::top("titlebar")
+                .exact_size(32.0)
+                .frame(egui::Frame::new().fill(pal.chrome))
+                .show(ui, |ui| self.title_bar(ui));
+        }
         egui::Panel::top("menubar")
-            .frame(egui::Frame::new().fill(pal.chrome).inner_margin(egui::Margin::symmetric(0, 4)))
-            .show(ui, |ui| self.menu_bar(ui));
+            .frame(egui::Frame::new().fill(pal.chrome))
+            .show(ui, |ui| self.menu_row(ui));
         egui::Panel::top("ribbon")
             .frame(
                 egui::Frame::new()
-                    .fill(pal.chrome)
+                    .fill(pal.ribbon)
                     .inner_margin(egui::Margin { left: 8, right: 8, top: 2, bottom: 4 })
                     .stroke(egui::Stroke::new(1.0, pal.separator)),
             )
@@ -1407,6 +1503,7 @@ impl eframe::App for PaintApp {
             hide_status: !self.show_status,
             grid: self.show_grid,
             rulers: self.show_rulers,
+            system_titlebar: self.system_titlebar,
         };
         eframe::set_value(storage, eframe::APP_KEY, &p);
     }

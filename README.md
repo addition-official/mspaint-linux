@@ -3,9 +3,10 @@
 A clone of **Windows 11 Paint** for Linux, built for **Kubuntu / KDE Plasma**. It's written in Rust with
 [egui](https://github.com/emilk/egui) and compiles to a single binary.
 
-It recreates the Windows 11 Paint layout: the File / Edit / View menus with quick Save, Undo and Redo
-buttons, the toolbar (Image, Tools, Brushes, Shapes, Size, Colours), the centred canvas with resize
-handles, and the status bar with a zoom slider. Light and dark themes are included.
+It recreates the Windows 11 Paint layout: the Windows 11 style title bar, the File / View row with quick
+Save, Undo and Redo buttons, the toolbar (Clipboard, Image, Tools, Brushes, Shapes, Size, Colours), the
+centred canvas with resize handles, and the status bar with a zoom slider. Light and dark themes are
+included.
 
 ## Features
 
@@ -17,18 +18,20 @@ handles, and the status bar with a zoom slider. Light and dark themes are includ
 | **Shape styles** | Outline and fill: none, solid, crayon, marker, oil, natural pencil, watercolour. Shapes stay editable (move or resize with handles) until you click away. Hold Shift for squares, circles and 45° lines. |
 | **Selection** | Rectangle and free-form, select all, invert selection, delete, transparent selection, move, resize with handles, nudge with the arrow keys |
 | **Image** | Crop to selection, Resize and skew (percent or pixels), Rotate 90°/180°, Flip, Invert colours, drag-to-resize canvas |
-| **Text** | Any installed font, size, bold, italic, underline, strikethrough, transparent or filled background, word wrap |
+| **Text** | Any installed font, size, bold, italic, underline, strikethrough, left/centre/right alignment, background fill, word wrap |
 | **Colours** | Colour 1 / Colour 2 (right-click draws with Colour 2), the classic 20-colour palette, 10 custom colours, Edit colours (picker + hex) |
 | **View** | Zoom 10% to 800% (Ctrl+wheel, slider, magnifier), fit to window, rulers, gridlines, status bar, full screen |
 | **Files** | Open / Save / Save as PNG, JPEG, BMP, GIF, TIFF, WEBP and ICO. Also opens TGA, PNM, QOI, HDR and more. Recent files, Import to canvas, drag and drop, open from the command line |
-| **Clipboard** | Copy, cut and paste images with other apps (Wayland and X11). Pasting a larger image grows the canvas, as in Paint |
+| **Clipboard** | Paste, Paste from file, Cut and Copy, shared with other apps (Wayland and X11). Pasting a larger image grows the canvas, as in Paint |
 | **History** | Undo / redo (up to 100 steps) |
 
 ### KDE / Kubuntu integration
 
 - **Native KDE file dialogs** through the XDG desktop portal (`xdg-desktop-portal-kde`).
 - **Set as desktop background** (Fill, Tile, Centre) through Plasma's `plasma-apply-wallpaperimage`.
-- Uses the desktop font (**Noto Sans** on Kubuntu) and follows the system light/dark setting.
+- Uses the desktop font (**Noto Sans** on Kubuntu) and follows the Plasma light/dark colour scheme.
+- Draws a Windows 11 style title bar by default (drag to move, double-click to maximise, resize from
+  the window edges). If you prefer Plasma's own title bar, turn on **Settings (gear) → Use system title bar**.
 - Native Wayland and X11 support, with a `.desktop` entry so Paint shows up in the launcher and under "Open with" for images.
 - Opens files in your XDG Pictures folder by default.
 - Asks to save unsaved work when you close the window.

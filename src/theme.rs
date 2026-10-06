@@ -13,8 +13,12 @@ pub enum ThemePref {
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub dark: bool,
-    /// Toolbar / title area.
+    /// Title bar and menu row.
     pub chrome: Color32,
+    /// The toolbar ("ribbon") strip.
+    pub ribbon: Color32,
+    /// Window border when we draw our own title bar.
+    pub border: Color32,
     /// Area around the canvas.
     pub workspace: Color32,
     pub text: Color32,
@@ -33,6 +37,8 @@ impl Palette {
             Self {
                 dark,
                 chrome: Color32::from_rgb(0x20, 0x20, 0x20),
+                ribbon: Color32::from_rgb(0x2B, 0x2B, 0x2B),
+                border: Color32::from_rgb(0x45, 0x45, 0x45),
                 workspace: Color32::from_rgb(0x16, 0x16, 0x16),
                 text: Color32::from_rgb(0xF2, 0xF2, 0xF2),
                 text_dim: Color32::from_rgb(0xA8, 0xA8, 0xA8),
@@ -46,7 +52,9 @@ impl Palette {
         } else {
             Self {
                 dark,
-                chrome: Color32::from_rgb(0xF9, 0xF9, 0xF9),
+                chrome: Color32::from_rgb(0xEE, 0xF2, 0xF8),
+                ribbon: Color32::from_rgb(0xF8, 0xF9, 0xFB),
+                border: Color32::from_rgb(0xC8, 0xCC, 0xD2),
                 workspace: Color32::from_rgb(0xE6, 0xEB, 0xF1),
                 text: Color32::from_rgb(0x1A, 0x1A, 0x1A),
                 text_dim: Color32::from_rgb(0x5F, 0x5F, 0x5F),

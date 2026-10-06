@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct TextStyle {
     pub family: String,
     pub size_pt: f32,
@@ -17,6 +18,8 @@ pub struct TextStyle {
     pub strikethrough: bool,
     /// Fill the text box with the secondary colour.
     pub opaque: bool,
+    /// 0 = left, 1 = centre, 2 = right.
+    pub align: u8,
 }
 
 impl Default for TextStyle {
@@ -29,6 +32,7 @@ impl Default for TextStyle {
             underline: false,
             strikethrough: false,
             opaque: false,
+            align: 0,
         }
     }
 }
@@ -111,7 +115,7 @@ pub struct Layout {
 }
 
 /// Greedy word-wrap layout within `width`.
-pub fn layout(font: &FontVec, px: f32, text: &str, origin: Pos2, width: f32) -> Layout {
+pub fn layout(font: &FontVec, px: f32, text: &str, origin: Pos2, width: f32, align: u8) -> Layout {
     let sf = font.as_scaled(PxScale::from(px));
     let line_height = sf.height() + sf.line_gap();
     let chars: Vec<char> = text.chars().collect();
@@ -157,6 +161,22 @@ pub fn layout(font: &FontVec, px: f32, text: &str, origin: Pos2, width: f32) -> 
     }
     caret.push(pos2(origin.x + x, origin.y + y));
     lines.push((line_start, chars.len(), y));
+    if align > 0 {
+        for &(s, e, ly) in &lines {
+            // Trailing spaces don't count towards the line's width.
+            let mut last = e;
+            while last > s && chars[last - 1] == ' ' {
+                last -= 1;
+            }
+            let w = if last > s { caret[last - 1].x + adv(chars[last - 1]) - origin.x } else { 0.0 };
+            let shift = (width - w).max(0.0) * if align == 1 { 0.5 } else { 1.0 };
+            for c in caret[s..=e].iter_mut() {
+                if c.y == origin.y + ly {
+                    c.x += shift;
+                }
+            }
+        }
+    }
     Layout { caret, line_height, lines }
 }
 
@@ -178,7 +198,7 @@ pub fn render(
         }
     let Some(font) = fm.font(&style.family, style.bold, style.italic) else { return dirty };
     let px = style.px();
-    let lay = layout(&font, px, text, rect.min, rect.width());
+    let lay = layout(&font, px, text, rect.min, rect.width(), style.align);
     let sf = font.as_scaled(PxScale::from(px));
     let ascent = sf.ascent();
     let chars: Vec<char> = text.chars().collect();
@@ -250,8 +270,20 @@ mod tests {
     fn wraps_long_text() {
         let mut fm = FontManager::new();
         let font = fm.font(&fm.default_family(), false, false).expect("a system font");
-        let lay = layout(&font, 15.0, "one two three four five six seven", pos2(0.0, 0.0), 60.0);
+        let lay = layout(&font, 15.0, "one two three four five six seven", pos2(0.0, 0.0), 60.0, 0);
         assert!(lay.lines.len() > 2);
         assert_eq!(lay.caret.len(), 34);
+    }
+
+    #[test]
+    fn centres_and_right_aligns() {
+        let mut fm = FontManager::new();
+        let font = fm.font(&fm.default_family(), false, false).expect("a system font");
+        let left = layout(&font, 15.0, "hi", pos2(0.0, 0.0), 200.0, 0);
+        let centre = layout(&font, 15.0, "hi", pos2(0.0, 0.0), 200.0, 1);
+        let right = layout(&font, 15.0, "hi", pos2(0.0, 0.0), 200.0, 2);
+        let w = left.caret[2].x;
+        assert!((centre.caret[0].x - (200.0 - w) / 2.0).abs() < 0.5);
+        assert!((right.caret[2].x - 200.0).abs() < 0.5);
     }
 }

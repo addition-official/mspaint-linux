@@ -243,7 +243,7 @@ impl PaintApp {
         if hovered {
             self.update_cursor(ui, p_scr, img, to_scr);
         }
-        if !hovered || ui.ctx().any_popup_open() {
+        if !hovered || ui.ctx().any_popup_open() || self.on_window_edge {
             return;
         }
         if pm {
@@ -434,7 +434,7 @@ impl PaintApp {
                 if sr.contains(p_scr) {
                     // Place the caret.
                     if let Some(font) = self.fm.font(&self.s.text.family, self.s.text.bold, self.s.text.italic) {
-                        let lay = crate::text::layout(&font, self.s.text.px(), &tb.text, tb.rect.min, tb.rect.width());
+                        let lay = crate::text::layout(&font, self.s.text.px(), &tb.text, tb.rect.min, tb.rect.width(), self.s.text.align);
                         let best = lay
                             .caret
                             .iter()
@@ -792,7 +792,7 @@ impl PaintApp {
             draw_handles(p, r, pal.accent);
             let blink = (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;
             if blink && let Some(font) = self.fm.font(&self.s.text.family, self.s.text.bold, self.s.text.italic) {
-                let lay = crate::text::layout(&font, self.s.text.px(), &tb.text, tb.rect.min, tb.rect.width());
+                let lay = crate::text::layout(&font, self.s.text.px(), &tb.text, tb.rect.min, tb.rect.width(), self.s.text.align);
                 if let Some(c) = lay.caret.get(tb.caret) {
                     let a = to_scr(*c);
                     let b = to_scr(*c + vec2(0.0, lay.line_height));

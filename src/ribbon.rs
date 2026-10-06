@@ -130,6 +130,8 @@ impl PaintApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                    self.clipboard_group(ui);
+                    self.separator_v(ui);
                     self.image_group(ui);
                     self.separator_v(ui);
                     self.tools_group(ui);
@@ -157,6 +159,31 @@ impl PaintApp {
             egui::FontId::proportional(11.5),
             self.pal.text_dim,
         );
+    }
+
+    fn clipboard_group(&mut self, ui: &mut Ui) {
+        self.with_group(ui, "Clipboard", 94.0, |app, ui, c| {
+            let (main, chev) = app.split_btn_at(ui, r(c.min.x + 2.0, c.min.y + 2.0, 44.0, 62.0), "paste", Icon::Paste, false, "Paste (Ctrl+V)");
+            if main.clicked() {
+                app.push(Action::Paste);
+            }
+            egui::Popup::menu(&chev).width(180.0).show(|ui| {
+                if app.menu_item_icon(ui, Icon::Paste, "Paste", false) {
+                    app.push(Action::Paste);
+                }
+                if app.menu_item_icon(ui, Icon::Paste, "Paste from file", false) {
+                    app.push(Action::Import);
+                }
+            });
+            let has_sel = app.doc.floating().is_some();
+            let x = c.min.x + 50.0;
+            if app.btn_at_enabled(ui, r(x, c.min.y + 2.0, 40.0, 30.0), "cut", Icon::Cut, false, "Cut (Ctrl+X)", has_sel).clicked() {
+                app.push(Action::Cut);
+            }
+            if app.btn_at_enabled(ui, r(x, c.min.y + 34.0, 40.0, 30.0), "copy", Icon::Copy, false, "Copy (Ctrl+C)", has_sel).clicked() {
+                app.push(Action::Copy);
+            }
+        });
     }
 
     fn image_group(&mut self, ui: &mut Ui) {
@@ -497,39 +524,87 @@ impl PaintApp {
         }
     }
 
+    /// Square toggle used by the text toolbar; selected state gets an accent border.
+    fn toggle_box(&self, ui: &mut Ui, selected: bool, tip: &str, paint: impl FnOnce(&Ui, Rect, Color32)) -> bool {
+        let (rect, resp) = ui.allocate_exact_size(vec2(36.0, 32.0), Sense::click());
+        if selected {
+            ui.painter().rect_filled(rect, 4.0, self.pal.selected);
+            ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.0, self.pal.accent), StrokeKind::Inside);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(rect, 4.0, self.pal.hover);
+        }
+        paint(ui, rect, self.pal.text);
+        resp.on_hover_text(tip).clicked()
+    }
+
     /// Contextual text formatting bar shown while a text box is active.
     pub fn text_bar(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Text").strong());
-            ui.add_space(8.0);
+        ui.horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
+            ui.spacing_mut().interact_size.y = 32.0;
             let fams = self.fm.families.clone();
             egui::ComboBox::from_id_salt("font_family")
                 .selected_text(self.s.text.family.clone())
-                .width(200.0)
-                .height(400.0)
+                .width(190.0)
+                .height(420.0)
                 .show_ui(ui, |ui| {
                     for f in &fams {
                         ui.selectable_value(&mut self.s.text.family, f.clone(), f);
                     }
-                });
+                })
+                .response
+                .on_hover_text("Font");
             egui::ComboBox::from_id_salt("font_size")
                 .selected_text(format!("{}", self.s.text.size_pt))
-                .width(60.0)
+                .width(64.0)
+                .height(420.0)
                 .show_ui(ui, |ui| {
                     for sz in [8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 36.0, 48.0, 72.0] {
                         ui.selectable_value(&mut self.s.text.size_pt, sz, format!("{sz}"));
                     }
-                });
-            ui.add(egui::DragValue::new(&mut self.s.text.size_pt).range(4.0..=400.0).speed(0.5));
+                })
+                .response
+                .on_hover_text("Font size");
             ui.separator();
-            let t = &mut self.s.text;
-            ui.toggle_value(&mut t.bold, RichText::new("B").strong()).on_hover_text("Bold");
-            ui.toggle_value(&mut t.italic, RichText::new("I").italics()).on_hover_text("Italic");
-            ui.toggle_value(&mut t.underline, RichText::new("U").underline()).on_hover_text("Underline");
-            ui.toggle_value(&mut t.strikethrough, RichText::new("S").strikethrough()).on_hover_text("Strikethrough");
+            let letter = |text: RichText| {
+                move |ui: &Ui, rect: Rect, fg: Color32| {
+                    let galley = egui::WidgetText::from(text.size(17.0).color(fg)).into_galley(
+                        ui,
+                        Some(egui::TextWrapMode::Extend),
+                        f32::INFINITY,
+                        egui::TextStyle::Body,
+                    );
+                    let pos = rect.center() - galley.size() / 2.0;
+                    ui.painter().galley(pos, galley, fg);
+                }
+            };
+            let t = self.s.text.clone();
+            let mut new = t.clone();
+            if self.toggle_box(ui, t.bold, "Bold", letter(RichText::new("B").strong())) {
+                new.bold = !t.bold;
+            }
+            if self.toggle_box(ui, t.italic, "Italic", letter(RichText::new("I").italics())) {
+                new.italic = !t.italic;
+            }
+            if self.toggle_box(ui, t.underline, "Underline", letter(RichText::new("U").underline())) {
+                new.underline = !t.underline;
+            }
+            if self.toggle_box(ui, t.strikethrough, "Strikethrough", letter(RichText::new("S").strikethrough())) {
+                new.strikethrough = !t.strikethrough;
+            }
             ui.separator();
-            ui.selectable_value(&mut t.opaque, false, "Transparent background");
-            ui.selectable_value(&mut t.opaque, true, "Fill background");
+            let accent = self.pal.accent;
+            for (align, icon, tip) in [(0u8, Icon::AlignLeft, "Align left"), (1, Icon::AlignCenter, "Centre"), (2, Icon::AlignRight, "Align right")] {
+                let paint = move |ui: &Ui, rect: Rect, fg: Color32| {
+                    icons::paint(ui.painter(), Rect::from_center_size(rect.center(), vec2(20.0, 20.0)), icon, fg, accent);
+                };
+                if self.toggle_box(ui, t.align == align, tip, paint) {
+                    new.align = align;
+                }
+            }
+            ui.separator();
+            ui.checkbox(&mut new.opaque, "Background fill");
+            self.s.text = new;
         });
     }
 }
