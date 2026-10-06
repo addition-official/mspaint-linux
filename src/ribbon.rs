@@ -249,6 +249,7 @@ impl PaintApp {
                     (Icon::RotateRight, "Rotate right 90°", Action::RotateRight),
                     (Icon::RotateLeft, "Rotate left 90°", Action::RotateLeft),
                     (Icon::Rotate180, "Rotate 180°", Action::Rotate180),
+                    (Icon::Rotate, "Custom rotate…", Action::CustomRotate),
                     (Icon::FlipV, "Flip vertical", Action::FlipVertical),
                     (Icon::FlipH, "Flip horizontal", Action::FlipHorizontal),
                 ] {

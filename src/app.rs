@@ -66,6 +66,7 @@ pub enum Action {
     BackgroundColour,
     CopyVisible,
     SetTool(Tool),
+    CustomRotate,
 }
 
 pub enum Dialog {
@@ -74,6 +75,7 @@ pub enum Dialog {
     Properties { w: u32, h: u32 },
     About,
     Message(String),
+    CustomRotate { angle: f32 },
 }
 
 pub struct ResizeState {
@@ -114,6 +116,9 @@ pub enum Drag {
     TextNew { start: Pos2, cur: Pos2 },
     CanvasResize { handle: u8, size: Vec2 },
     Pan { last: Pos2 },
+    /// Free-rotating the selection around `center`; `start` is the pointer angle at
+    /// the start of the drag, `angle` the current rotation (degrees).
+    Rotate { center: Pos2, start: f32, angle: f32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -170,6 +175,8 @@ pub struct PaintApp {
     pub thumbs_time: f64,
     pub layer_drag: Option<usize>,
     pub show_bg_picker: bool,
+    /// Unrotated selection pixels while free-rotating.
+    pub rotate_base: Option<tiny_skia::Pixmap>,
 }
 
 impl PaintApp {
@@ -233,6 +240,7 @@ impl PaintApp {
             thumbs_time: 0.0,
             layer_drag: None,
             show_bg_picker: false,
+            rotate_base: None,
             system_checked: 0.0,
         };
         if let Some(path) = open {
@@ -602,6 +610,7 @@ impl PaintApp {
             }
             Action::CopyVisible => self.copy_visible(),
             Action::SetTool(t) => self.set_tool(t),
+            Action::CustomRotate => self.dialog = Some(Dialog::CustomRotate { angle: 0.0 }),
         }
     }
 
@@ -1358,6 +1367,36 @@ impl PaintApp {
                 });
                 if close {
                     keep = false;
+                }
+            }
+            Dialog::CustomRotate { angle } => {
+                let mut result = None;
+                modal("custom_rotate", ctx, &mut |ui| {
+                    ui.set_width(300.0);
+                    ui.heading("Custom rotate");
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Angle");
+                        ui.add(egui::DragValue::new(angle).range(-360.0..=360.0).speed(0.5).suffix("°"));
+                    });
+                    ui.label(RichText::new("Positive angles rotate clockwise.").small().color(pal.text_dim));
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.add(primary_button("OK", pal)).clicked() {
+                            result = Some(true);
+                        }
+                        if ui.add(Button::new("Cancel").min_size(vec2(100.0, 30.0))).clicked() {
+                            result = Some(false);
+                        }
+                    });
+                });
+                if let Some(ok) = result {
+                    keep = false;
+                    if ok && *angle != 0.0 {
+                        let a = *angle;
+                        let s = self.s.clone();
+                        self.doc.transform(&s, move |p| pixels::rotate_any(p, a));
+                    }
                 }
             }
             Dialog::Message(msg) => {

@@ -423,6 +423,24 @@ pub fn rotate_180(p: &Pixmap) -> Pixmap {
     remap(p, p.width(), p.height(), |x, y| (w - 1 - x, h - 1 - y))
 }
 
+/// Rotate by an arbitrary angle (degrees, clockwise). The result grows to the rotated
+/// bounding box; uncovered corners are transparent.
+pub fn rotate_any(src: &Pixmap, deg: f32) -> Pixmap {
+    let a = deg.to_radians();
+    let (w, h) = (src.width() as f32, src.height() as f32);
+    let (c, s) = (a.cos().abs(), a.sin().abs());
+    // Small epsilon: cos(90°) is not exactly zero in floating point.
+    let nw = (w * c + h * s - 1e-3).ceil().max(1.0) as u32;
+    let nh = (w * s + h * c - 1e-3).ceil().max(1.0) as u32;
+    let mut out = new_pixmap(nw, nh, Color32::TRANSPARENT);
+    let t = Transform::from_translate(nw as f32 / 2.0, nh as f32 / 2.0)
+        .pre_rotate(deg)
+        .pre_translate(-w / 2.0, -h / 2.0);
+    let paint = PixmapPaint { quality: FilterQuality::Bilinear, ..Default::default() };
+    out.draw_pixmap(0, 0, src.as_ref(), &paint, t, None);
+    out
+}
+
 pub fn invert_colors(p: &mut Pixmap) {
     for px in p.data_mut().chunks_exact_mut(4) {
         let a = px[3];
@@ -574,5 +592,22 @@ impl Rng {
     }
     pub fn f32(&mut self) -> f32 {
         self.next_u32() as f32 / u32::MAX as f32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotate_any_grows_and_keeps_content() {
+        let p = new_pixmap(40, 20, Color32::RED);
+        let r = rotate_any(&p, 90.0);
+        assert_eq!((r.width(), r.height()), (20, 40));
+        assert_eq!(get_pixel(&r, 10, 20).unwrap(), Color32::RED);
+        let r = rotate_any(&p, 45.0);
+        assert!(r.width() > 40 && r.height() > 40);
+        assert_eq!(get_pixel(&r, 0, 0).unwrap().a(), 0, "corners are transparent");
+        assert_eq!(get_pixel(&r, r.width() as i32 / 2, r.height() as i32 / 2).unwrap(), Color32::RED);
     }
 }

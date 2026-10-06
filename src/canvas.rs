@@ -28,6 +28,11 @@ fn handle_points(r: Rect) -> [Pos2; 8] {
     ]
 }
 
+/// Screen position of the rotate handle above a selection.
+fn rotate_handle(r: Rect) -> Pos2 {
+    pos2(r.center().x, r.min.y - 24.0)
+}
+
 fn hit_box(r: Rect, p: Pos2, with_handles: bool) -> Option<Hit> {
     if with_handles {
         for (i, h) in handle_points(r).iter().enumerate() {
@@ -390,6 +395,18 @@ impl PaintApp {
         match &mut self.doc.overlay {
             Overlay::Float(f) => {
                 let r = Rect::from_min_max(to_scr(f.rect.min), to_scr(f.rect.max));
+                // Free rotation (Paint 11.2601+): drag the handle above the selection.
+                if (rotate_handle(r) - p_scr).length() <= 9.0 {
+                    let (w, h) = (f.rect.width().round().max(1.0) as u32, f.rect.height().round().max(1.0) as u32);
+                    let base = if (w, h) == (f.pix.width(), f.pix.height()) { f.pix.clone() } else { pixels::resize(&f.pix, w, h) };
+                    let center = f.rect.center();
+                    let start = (p - center).angle().to_degrees();
+                    self.rotate_base = Some(base);
+                    let s = self.s.clone();
+                    self.doc.lift(&s);
+                    self.drag = Some(Drag::Rotate { center, start, angle: 0.0 });
+                    return true;
+                }
                 if let Some(hit) = hit_box(r, p_scr, true) {
                     let start_rect = f.rect;
                     // Ctrl+drag leaves a copy behind; Shift+drag smears a trail of copies.
@@ -608,6 +625,26 @@ impl PaintApp {
                     _ => {}
                 }
             }
+            Drag::Rotate { center, start, angle } => {
+                let mut a = (p - center).angle().to_degrees() - start;
+                if shift {
+                    a = (a / 15.0).round() * 15.0;
+                }
+                if (a - angle).abs() >= 0.5
+                    && let Some(base) = &self.rotate_base
+                {
+                    let rotated = pixels::rotate_any(base, a);
+                    if let Some(f) = self.doc.floating_mut() {
+                        let size = vec2(rotated.width() as f32, rotated.height() as f32);
+                        f.rect = Rect::from_min_size((center - size / 2.0).round(), size);
+                        f.pix = rotated;
+                        f.tex_dirty = true;
+                        f.changed = true;
+                        f.outline = None;
+                    }
+                    self.drag = Some(Drag::Rotate { center, start, angle: a });
+                }
+            }
             Drag::LineEnd { which } => {
                 if let Overlay::Shape(sh) = &mut self.doc.overlay
                     && let Geom::Line(a, b) = &mut sh.geom
@@ -701,6 +738,7 @@ impl PaintApp {
                 let s = self.s.clone();
                 self.doc.resize_canvas(&s, size.x as u32, size.y as u32);
             }
+            Drag::Rotate { .. } => self.rotate_base = None,
             Drag::PolygonPoint | Drag::Box { .. } | Drag::LineEnd { .. } | Drag::Pan { .. } => {}
         }
     }
@@ -714,6 +752,10 @@ impl PaintApp {
         match &self.doc.overlay {
             Overlay::Float(f) => {
                 let r = Rect::from_min_max(to_scr(f.rect.min), to_scr(f.rect.max));
+                if (rotate_handle(r) - p_scr).length() <= 9.0 {
+                    ctx.set_cursor_icon(CursorIcon::Grab);
+                    return;
+                }
                 if let Some(h) = hit_box(r, p_scr, true) {
                     ctx.set_cursor_icon(handle_cursor(h));
                     return;
@@ -798,6 +840,19 @@ impl PaintApp {
             }
             dashed_rect(p, r, pal.accent);
             draw_handles(p, r, pal.accent);
+            let rh = rotate_handle(r);
+            p.line_segment([pos2(r.center().x, r.min.y), rh], Stroke::new(1.0, pal.accent));
+            p.circle_filled(rh, 6.0, Color32::WHITE);
+            p.circle_stroke(rh, 6.0, Stroke::new(1.5, pal.accent));
+            if let Some(Drag::Rotate { angle, .. }) = &self.drag {
+                p.text(
+                    rh + vec2(12.0, -10.0),
+                    egui::Align2::LEFT_CENTER,
+                    format!("{:.0}°", angle),
+                    egui::FontId::proportional(12.0),
+                    pal.text,
+                );
+            }
         }
 
         // Pending shape.
