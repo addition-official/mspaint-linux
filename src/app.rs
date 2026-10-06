@@ -605,8 +605,18 @@ impl PaintApp {
         if ctx.egui_wants_keyboard_input() || self.dialog.is_some() {
             return;
         }
-        // Text box typing takes priority.
+        // Text box typing takes priority; Ctrl+B/I/U format the text.
         if let Overlay::Text(_) = self.doc.overlay {
+            for (key, field) in [(Key::B, 0), (Key::I, 1), (Key::U, 2)] {
+                if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, key))) {
+                    let t = &mut self.s.text;
+                    match field {
+                        0 => t.bold = !t.bold,
+                        1 => t.italic = !t.italic,
+                        _ => t.underline = !t.underline,
+                    }
+                }
+            }
             self.text_input(ctx);
             if let Overlay::Text(_) = self.doc.overlay {
                 // Only allow shortcuts with Ctrl while typing.

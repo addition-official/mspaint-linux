@@ -519,6 +519,30 @@ impl Document {
         Some(p)
     }
 
+    /// Stamp the selection onto the canvas at its current place and keep it floating
+    /// (Ctrl+drag copies, Shift+drag smears). `record` adds an undo step.
+    pub fn stamp_float(&mut self, s: &Settings, record: bool) {
+        let Some(f) = self.floating() else { return };
+        if !f.origin_cleared {
+            // The pixels are still in the canvas: leaving them there *is* the copy.
+            if record {
+                self.begin_edit();
+            }
+            let f = self.floating_mut().unwrap();
+            f.origin_cleared = true;
+            f.changed = true;
+            return;
+        }
+        let Some(p) = self.effective_float(s) else { return };
+        let r = self.floating().unwrap().rect;
+        if record {
+            self.begin_edit();
+        }
+        pixels::draw_scaled(&mut self.image, &p, r.min.x, r.min.y, r.width(), r.height());
+        self.refresh(IRect::from_points((r.min.x, r.min.y), (r.max.x, r.max.y), 2.0));
+        self.modified = true;
+    }
+
     pub fn delete_selection(&mut self, s: &Settings) {
         if self.floating().is_none() {
             return;
@@ -703,6 +727,42 @@ mod tests {
         assert_eq!(px(&d, 25, 25), Color32::GREEN, "pixels stamped at new place");
         d.undo(&s);
         assert_eq!(px(&d, 5, 5), Color32::GREEN);
+    }
+
+    #[test]
+    fn ctrl_drag_leaves_a_copy() {
+        let s = Settings::default();
+        let mut d = Document::new(40, 40);
+        let mut img = d.image.clone();
+        pixels::flood_fill(&mut img, 0, 0, Color32::GREEN);
+        d.image = img;
+        d.select_rect(&s, IRect::new(0, 0, 10, 10));
+        d.stamp_float(&s, true);
+        d.lift(&s);
+        if let Some(f) = d.floating_mut() {
+            f.rect = f.rect.translate(vec2(20.0, 20.0));
+        }
+        d.commit_overlay(&s);
+        assert_eq!(px(&d, 5, 5), Color32::GREEN, "original stays");
+        assert_eq!(px(&d, 25, 25), Color32::GREEN, "copy placed");
+        d.undo(&s);
+        assert!(!d.can_undo(), "one undo step for the whole copy-move");
+    }
+
+    #[test]
+    fn colour_eraser_only_replaces_colour_1() {
+        let mut d = Document::new(20, 3);
+        let mut img = d.image.clone();
+        for x in 0..10 {
+            pixels::set_pixel(&mut img, x, 1, Color32::RED.to_array());
+        }
+        d.image = img;
+        d.begin_stroke(1.0);
+        let r = crate::brush::color_erase(&mut d.layer, &d.image, pos2(0.0, 1.0), pos2(19.0, 1.0), 1.0, Color32::RED, Color32::BLUE);
+        d.layer_touched(r);
+        d.end_stroke();
+        assert_eq!(px(&d, 5, 1), Color32::BLUE);
+        assert_eq!(px(&d, 15, 1), Color32::WHITE);
     }
 
     #[test]

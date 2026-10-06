@@ -68,6 +68,26 @@ fn apply_hit(r: Rect, hit: Hit, d: Vec2) -> Rect {
     }
 }
 
+/// Resize `r` from corner handle `h` while keeping `start`'s aspect ratio,
+/// anchored at the opposite corner.
+fn keep_aspect(start: Rect, r: Rect, h: u8) -> Rect {
+    let scale = (r.width() / start.width().max(1e-3)).max(r.height() / start.height().max(1e-3));
+    let size = start.size() * scale;
+    let anchor = match h {
+        0 => start.right_bottom(),
+        2 => start.left_bottom(),
+        4 => start.left_top(),
+        _ => start.right_top(),
+    };
+    let corner = match h {
+        0 => anchor - size,
+        2 => anchor + vec2(size.x, -size.y),
+        4 => anchor + size,
+        _ => anchor + vec2(-size.x, size.y),
+    };
+    Rect::from_two_pos(anchor, corner)
+}
+
 fn handle_cursor(h: Hit) -> CursorIcon {
     match h {
         Hit::Inside => CursorIcon::Move,
@@ -205,7 +225,7 @@ impl PaintApp {
         let z = self.zoom;
         let to_img = |p: Pos2| ((p - img.min) / z).to_pos2();
         let to_scr = |p: Pos2| img.min + p.to_vec2() * z;
-        let (ptr, pp, ps, pm, down, shift, zoom_delta, dbl) = ui.input(|i| {
+        let (ptr, pp, ps, pm, down, shift, zoom_delta, dbl, ctrl) = ui.input(|i| {
             (
                 i.pointer.latest_pos(),
                 i.pointer.button_pressed(egui::PointerButton::Primary),
@@ -215,6 +235,7 @@ impl PaintApp {
                 i.modifiers.shift,
                 i.zoom_delta(),
                 i.pointer.button_double_clicked(egui::PointerButton::Primary),
+                i.modifiers.command,
             )
         });
         let hovered = resp.contains_pointer();
@@ -266,7 +287,7 @@ impl PaintApp {
         }
 
         // Interact with the active overlay.
-        if !secondary && self.overlay_press(p, p_scr, to_scr, dbl) {
+        if !secondary && self.overlay_press(p, p_scr, to_scr, dbl, ctrl, shift) {
             return;
         }
         if secondary && matches!(self.doc.overlay, Overlay::Float(_)) && self.s.tool == Tool::Select {
@@ -359,13 +380,20 @@ impl PaintApp {
     }
 
     /// Returns true if the press was consumed by the active overlay.
-    fn overlay_press(&mut self, p: Pos2, p_scr: Pos2, to_scr: impl Fn(Pos2) -> Pos2, dbl: bool) -> bool {
+    #[allow(clippy::too_many_arguments)]
+    fn overlay_press(&mut self, p: Pos2, p_scr: Pos2, to_scr: impl Fn(Pos2) -> Pos2, dbl: bool, ctrl: bool, shift: bool) -> bool {
         let z = self.zoom;
         match &mut self.doc.overlay {
             Overlay::Float(f) => {
                 let r = Rect::from_min_max(to_scr(f.rect.min), to_scr(f.rect.max));
                 if let Some(hit) = hit_box(r, p_scr, true) {
-                    self.drag = Some(Drag::Box { hit, start_ptr: p, start_rect: f.rect, start_geom: None });
+                    let start_rect = f.rect;
+                    // Ctrl+drag leaves a copy behind; Shift+drag smears a trail of copies.
+                    if hit == Hit::Inside && (ctrl || shift) {
+                        let s = self.s.clone();
+                        self.doc.stamp_float(&s, true);
+                    }
+                    self.drag = Some(Drag::Box { hit, start_ptr: p, start_rect, start_geom: None });
                     return true;
                 }
             }
@@ -460,6 +488,10 @@ impl PaintApp {
         let color = self.stroke_color(secondary);
         let size = self.s.size();
         let r = match self.s.tool {
+            // Right-dragging the eraser only replaces colour 1 with colour 2.
+            Tool::Eraser if secondary => {
+                brush::color_erase(&mut self.doc.layer, &self.doc.image, a, b, size, self.s.color1, self.s.color2)
+            }
             Tool::Pencil | Tool::Eraser => brush::hard_line(&mut self.doc.layer, a, b, size, color),
             _ => {
                 let ctx = self.stroke_ctx.get_or_insert_with(|| StrokeCtx::new(size));
@@ -529,8 +561,16 @@ impl PaintApp {
                 if hit == Hit::Inside {
                     nr = Rect::from_min_size(nr.min.round(), nr.size());
                 }
+                // Shift on a corner handle keeps the aspect ratio.
+                if shift && let Hit::Handle(h @ (0 | 2 | 4 | 6)) = hit {
+                    nr = keep_aspect(start_rect, nr, h);
+                }
                 let is_float = matches!(self.doc.overlay, Overlay::Float(_));
                 if is_float && d != Vec2::ZERO {
+                    if shift && hit == Hit::Inside {
+                        let s = self.s.clone();
+                        self.doc.stamp_float(&s, false);
+                    }
                     self.doc.lift(&self.s);
                 }
                 match &mut self.doc.overlay {

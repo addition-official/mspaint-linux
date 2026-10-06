@@ -75,6 +75,30 @@ pub fn hard_line(layer: &mut Pixmap, a: Pos2, b: Pos2, size: f32, color: Color32
     IRect::from_points((a.x, a.y), (b.x, b.y), s as f32 + 1.0)
 }
 
+/// Colour eraser: square stamps that replace pixels of `from` (in `image`) with `to`.
+pub fn color_erase(layer: &mut Pixmap, image: &Pixmap, a: Pos2, b: Pos2, size: f32, from: Color32, to: Color32) -> IRect {
+    let s = size.max(1.0).round() as i32;
+    let off = (s - 1) / 2;
+    let (from, to) = (from.to_array(), to.to_array());
+    let w = image.width() as i32;
+    let h = image.height() as i32;
+    line_pixels(a, b, |x, y| {
+        for yy in 0..s {
+            for xx in 0..s {
+                let (px, py) = (x - off + xx, y - off + yy);
+                if px < 0 || py < 0 || px >= w || py >= h {
+                    continue;
+                }
+                let i = ((py * w + px) * 4) as usize;
+                if image.data()[i..i + 4] == from {
+                    set_pixel(layer, px, py, to);
+                }
+            }
+        }
+    });
+    IRect::from_points((a.x, a.y), (b.x, b.y), s as f32 + 1.0)
+}
+
 fn stroke_line(layer: &mut Pixmap, a: Pos2, b: Pos2, width: f32, color: Color32) {
     let mut pb = PathBuilder::new();
     pb.move_to(a.x, a.y);
