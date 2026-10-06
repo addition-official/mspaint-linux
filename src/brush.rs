@@ -12,6 +12,8 @@ pub struct StrokeCtx {
     pub seed: u32,
     /// Oil brush bristle offsets and strengths.
     pub bristles: Vec<(egui::Vec2, f32)>,
+    /// Distance painted so far (oil and watercolour run out of paint).
+    pub distance: f32,
 }
 
 impl StrokeCtx {
@@ -30,7 +32,7 @@ impl StrokeCtx {
             })
             .collect();
         let seed = rng.next_u32();
-        Self { rng, seed, bristles }
+        Self { rng, seed, bristles, distance: 0.0 }
     }
 }
 
@@ -152,6 +154,10 @@ pub fn brush_segment(
 ) -> IRect {
     let pad = size + 4.0;
     let dirty = IRect::from_points((a.x, a.y), (b.x, b.y), pad);
+    // Like real paint, the oil and watercolour brushes run dry over a long stroke;
+    // start a new stroke to "reload" the brush.
+    ctx.distance += (b - a).length();
+    let paint_left = (1.0 - ctx.distance / (500.0 + size * 20.0)).clamp(0.0, 1.0);
     match kind {
         BrushKind::Brush => stroke_line(layer, a, b, size, color),
         BrushKind::CalligraphyLeft | BrushKind::CalligraphyRight => {
@@ -181,7 +187,7 @@ pub fn brush_segment(
         BrushKind::Oil => {
             let bristles = ctx.bristles.clone();
             for (off, strength) in bristles {
-                let c = color.gamma_multiply(strength);
+                let c = color.gamma_multiply(strength * (0.25 + 0.75 * paint_left).min(paint_left * 4.0));
                 stroke_line(layer, a + off, b + off, (size / 5.0).max(1.0), c);
             }
         }
@@ -206,7 +212,7 @@ pub fn brush_segment(
             soft_stamp(layer, p, (size * 0.5).max(0.8), color, 0.4, ctx.seed, 0.6)
         }),
         BrushKind::Watercolor => stamp_along(a, b, size * 0.15, |p| {
-            soft_stamp(layer, p, size * 0.75, color, 0.2, ctx.seed, 0.3)
+            soft_stamp(layer, p, size * 0.75, color.gamma_multiply(paint_left), 0.2, ctx.seed, 0.3)
         }),
     }
     dirty

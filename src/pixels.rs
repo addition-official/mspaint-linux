@@ -124,13 +124,15 @@ pub fn set_pixel(p: &mut Pixmap, x: i32, y: i32, c: [u8; 4]) {
 #[inline]
 pub fn max_pixel(p: &mut Pixmap, x: i32, y: i32, c: Color32, alpha: f32) {
     if let Some(i) = idx(p, x, y) {
-        let a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
+        // The colour's own alpha scales the coverage (e.g. a fading brush).
+        let [r, g, b, ca] = c.to_srgba_unmultiplied();
+        let a = (alpha.clamp(0.0, 1.0) * ca as f32) as u8;
         let d = p.data_mut();
         if a > d[i + 3] {
             let s = a as f32 / 255.0;
-            d[i] = (c.r() as f32 * s) as u8;
-            d[i + 1] = (c.g() as f32 * s) as u8;
-            d[i + 2] = (c.b() as f32 * s) as u8;
+            d[i] = (r as f32 * s) as u8;
+            d[i + 1] = (g as f32 * s) as u8;
+            d[i + 2] = (b as f32 * s) as u8;
             d[i + 3] = a;
         }
     }

@@ -321,14 +321,26 @@ impl PaintApp {
             if main.clicked() {
                 app.set_tool(Tool::Brush);
             }
-            egui::Popup::menu(&chev).show(|ui| {
-                let (bw, gap) = (44.0, 4.0);
-                let (area, _) = ui.allocate_exact_size(vec2(3.0 * bw + 2.0 * gap, 3.0 * bw + 2.0 * gap), Sense::hover());
+            // Win11 lists the brushes by name with a preview of their stroke.
+            let previews = app.brush_previews(ui.ctx());
+            egui::Popup::menu(&chev).width(300.0).show(|ui| {
                 for (i, k) in BrushKind::ALL.into_iter().enumerate() {
-                    let (col, row) = ((i % 3) as f32, (i / 3) as f32);
-                    let rect = r(area.min.x + col * (bw + gap), area.min.y + row * (bw + gap), bw, bw);
+                    let (row, resp) = ui.allocate_exact_size(vec2(290.0, 40.0), Sense::click());
                     let sel = app.s.tool == Tool::Brush && app.s.brush == k;
-                    if app.btn_at(ui, rect, k.name(), Icon::Brush(k), sel, k.name()).clicked() {
+                    app.button_bg(ui, row, resp.hovered(), sel);
+                    app.paint_icon(ui, egui::pos2(row.min.x + 20.0, row.center().y), 20.0, Icon::Brush(k), true);
+                    ui.painter().text(
+                        egui::pos2(row.min.x + 40.0, row.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        k.name(),
+                        egui::FontId::proportional(13.5),
+                        app.pal.text,
+                    );
+                    if let Some(t) = previews.get(i) {
+                        let pr = Rect::from_min_size(egui::pos2(row.max.x - 128.0, row.center().y - 13.0), vec2(120.0, 26.0));
+                        ui.painter().image(t.id(), pr, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                    }
+                    if resp.clicked() {
                         app.s.brush = k;
                         app.set_tool(Tool::Brush);
                         ui.close();
@@ -336,6 +348,44 @@ impl PaintApp {
                 }
             });
         });
+    }
+
+    /// Stroke previews for the brush list, rendered with the real brush code.
+    fn brush_previews(&mut self, ctx: &egui::Context) -> Vec<egui::TextureHandle> {
+        let dark = self.pal.dark;
+        if self.brush_preview_dark != Some(dark) || self.brush_preview_tex.is_empty() {
+            let ink = if dark { Color32::from_gray(235) } else { Color32::from_gray(30) };
+            self.brush_preview_tex = BrushKind::ALL
+                .iter()
+                .map(|&k| {
+                    let (w, h) = (240u32, 52u32);
+                    let mut layer = crate::pixels::new_pixmap(w, h, Color32::TRANSPARENT);
+                    let mut sc = crate::brush::StrokeCtx::new(10.0);
+                    sc.distance = -1.0e6; // previews never run out of paint
+                    let pts: Vec<egui::Pos2> = (0..=60)
+                        .map(|i| {
+                            let t = i as f32 / 60.0;
+                            egui::pos2(14.0 + t * (w as f32 - 28.0), h as f32 / 2.0 - (t * std::f32::consts::TAU).sin() * 12.0)
+                        })
+                        .collect();
+                    for seg in pts.windows(2) {
+                        crate::brush::brush_segment(&mut layer, k, seg[0], seg[1], 10.0, ink, &mut sc);
+                    }
+                    // Apply the brush's layer opacity (marker, watercolour...).
+                    let op = k.layer_opacity();
+                    if op < 1.0 {
+                        for px in layer.data_mut().chunks_exact_mut(4) {
+                            for c in px.iter_mut() {
+                                *c = (*c as f32 * op) as u8;
+                            }
+                        }
+                    }
+                    ctx.load_texture(format!("brush-preview-{k:?}"), crate::pixels::to_color_image(&layer), egui::TextureOptions::LINEAR)
+                })
+                .collect();
+            self.brush_preview_dark = Some(dark);
+        }
+        self.brush_preview_tex.clone()
     }
 
     fn shapes_group(&mut self, ui: &mut Ui) {

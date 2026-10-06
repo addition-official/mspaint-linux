@@ -34,8 +34,8 @@ impl BrushKind {
     pub fn name(self) -> &'static str {
         match self {
             BrushKind::Brush => "Brush",
-            BrushKind::CalligraphyLeft => "Calligraphy brush 1",
-            BrushKind::CalligraphyRight => "Calligraphy brush 2",
+            BrushKind::CalligraphyLeft => "Calligraphy brush",
+            BrushKind::CalligraphyRight => "Calligraphy pen",
             BrushKind::Airbrush => "Airbrush",
             BrushKind::Oil => "Oil brush",
             BrushKind::Crayon => "Crayon",

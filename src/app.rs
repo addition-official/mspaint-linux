@@ -177,6 +177,8 @@ pub struct PaintApp {
     pub show_bg_picker: bool,
     /// Unrotated selection pixels while free-rotating.
     pub rotate_base: Option<tiny_skia::Pixmap>,
+    pub brush_preview_tex: Vec<TextureHandle>,
+    pub brush_preview_dark: Option<bool>,
 }
 
 impl PaintApp {
@@ -241,6 +243,8 @@ impl PaintApp {
             layer_drag: None,
             show_bg_picker: false,
             rotate_base: None,
+            brush_preview_tex: Vec::new(),
+            brush_preview_dark: None,
             system_checked: 0.0,
         };
         if let Some(path) = open {
