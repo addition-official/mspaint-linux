@@ -742,7 +742,10 @@ impl PaintApp {
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let pal = self.pal;
-        ui.horizontal(|ui| {
+        // A fixed row height keeps menu titles and the quick-access icons on one centre line.
+        ui.spacing_mut().interact_size.y = 30.0;
+        ui.horizontal_centered(|ui| {
+            ui.set_min_height(30.0);
             ui.add_space(6.0);
             let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
             app_icon(ui.painter(), r);
