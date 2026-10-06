@@ -143,6 +143,8 @@ impl PaintApp {
                     self.size_group(ui);
                     self.separator_v(ui);
                     self.colors_group(ui);
+                    self.separator_v(ui);
+                    self.layers_button(ui);
                 });
             });
     }
@@ -182,6 +184,15 @@ impl PaintApp {
             }
             if app.btn_at_enabled(ui, r(x, c.min.y + 34.0, 40.0, 30.0), "copy", Icon::Copy, false, "Copy (Ctrl+C)", has_sel).clicked() {
                 app.push(Action::Copy);
+            }
+        });
+    }
+
+    fn layers_button(&mut self, ui: &mut Ui) {
+        self.with_group(ui, "Layers", 52.0, |app, ui, c| {
+            let rect = r(c.min.x + 2.0, c.min.y + 2.0, 48.0, 62.0);
+            if app.btn_at(ui, rect, "layers", Icon::Layers, app.show_layers, "Layers").clicked() {
+                app.show_layers = !app.show_layers;
             }
         });
     }
@@ -483,7 +494,10 @@ impl PaintApp {
                     }
                     continue;
                 }
-                if resp.clicked() {
+                // Shift+click (or right-click) a swatch sets colour 2.
+                if resp.clicked() && ui.input(|i| i.modifiers.shift) {
+                    app.s.color2 = color;
+                } else if resp.clicked() {
                     app.set_active_color(color);
                 }
                 if resp.secondary_clicked() {

@@ -52,6 +52,15 @@ impl Default for Settings {
 }
 
 impl Settings {
+    pub fn size_mut(&mut self) -> &mut f32 {
+        match self.tool {
+            Tool::Pencil => &mut self.pencil_size,
+            Tool::Eraser => &mut self.eraser_size,
+            Tool::Shape => &mut self.shape_size,
+            _ => &mut self.brush_size,
+        }
+    }
+
     pub fn size(&self) -> f32 {
         match self.tool {
             Tool::Pencil => self.pencil_size,
@@ -102,8 +111,48 @@ pub enum Overlay {
     Float(Floating),
 }
 
+#[derive(Clone)]
+pub struct Layer {
+    pub name: String,
+    pub visible: bool,
+    /// The pixels. For the active layer this is a placeholder: its pixels live in
+    /// `Document::image` so every tool can keep drawing on `image`.
+    pub pix: Pixmap,
+}
+
+/// Undo snapshot of the whole layer stack.
+#[derive(Clone)]
+struct Snapshot {
+    layers: Vec<Layer>,
+    active: usize,
+}
+
+impl Snapshot {
+    fn bytes(&self) -> usize {
+        self.layers.iter().map(|l| l.pix.data().len()).sum()
+    }
+}
+
+fn placeholder() -> Pixmap {
+    Pixmap::new(1, 1).unwrap()
+}
+
 pub struct Document {
+    /// Pixels of the active layer.
     pub image: Pixmap,
+    pub layers: Vec<Layer>,
+    pub active: usize,
+    /// Composites of the visible layers below / above the active one.
+    below: Option<Pixmap>,
+    above: Option<Pixmap>,
+    /// The stroke layer erases (to transparency) instead of painting.
+    pub layer_erase: bool,
+    /// Bumped whenever layer pixels or the stack change (for thumbnails).
+    pub layers_rev: u64,
+    /// The Background tile under all layers (Win11 Paint: white by default,
+    /// hide it with Ctrl+Shift+H to get a transparent canvas).
+    pub background: Color32,
+    pub background_visible: bool,
     pub layer: Pixmap,
     pub display: Pixmap,
     layer_bbox: Option<IRect>,
@@ -112,8 +161,8 @@ pub struct Document {
     pub dirty_tex: Option<IRect>,
     /// The image size changed: the texture must be recreated.
     pub size_changed: bool,
-    undo: Vec<Pixmap>,
-    redo: Vec<Pixmap>,
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
     pub modified: bool,
     pub path: Option<PathBuf>,
     pub file_size: Option<u64>,
@@ -126,16 +175,26 @@ const HISTORY_MAX: usize = 100;
 
 impl Document {
     pub fn new(w: u32, h: u32) -> Self {
-        Self::from_pixmap(new_pixmap(w, h, Color32::WHITE), None)
+        Self::from_pixmap(new_pixmap(w, h, Color32::TRANSPARENT), None)
     }
 
     pub fn from_pixmap(image: Pixmap, path: Option<PathBuf>) -> Self {
         let (w, h) = (image.width(), image.height());
         let file_size = path.as_ref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
-        Self {
+        let has_alpha = path.is_some() && image.data().chunks_exact(4).any(|p| p[3] < 255);
+        let mut doc = Self {
             display: image.clone(),
             layer: new_pixmap(w, h, Color32::TRANSPARENT),
             image,
+            layers: vec![Layer { name: "Layer 1".into(), visible: true, pix: placeholder() }],
+            active: 0,
+            below: None,
+            above: None,
+            layer_erase: false,
+            layers_rev: 0,
+            background: Color32::WHITE,
+            // Pictures with transparency open on a checkerboard; everything else on white.
+            background_visible: !has_alpha,
             layer_bbox: None,
             layer_opacity: 1.0,
             dirty_tex: None,
@@ -147,7 +206,10 @@ impl Document {
             file_size,
             overlay: Overlay::None,
             render_key: String::new(),
-        }
+        };
+        doc.rebuild();
+        doc.size_changed = true;
+        doc
     }
 
     pub fn width(&self) -> u32 {
@@ -168,7 +230,8 @@ impl Document {
             .unwrap_or_else(|| "Untitled".into())
     }
 
-    /// Replace the whole image (keeps history).
+    /// Replace the active layer's pixels (keeps history). Other layers must already
+    /// have the same size.
     fn replace_image(&mut self, img: Pixmap) {
         let size_changed = img.width() != self.width() || img.height() != self.height();
         self.image = img;
@@ -179,19 +242,59 @@ impl Document {
             self.layer.fill(tiny_skia::Color::TRANSPARENT);
         }
         self.layer_bbox = None;
-        self.display = self.image.clone();
-        self.dirty_tex = Some(self.bounds());
         self.render_key.clear();
+        self.rebuild();
     }
 
-    /// Record the current image for undo before modifying it.
+    /// Apply a pixel transform to every layer (rotate, flip, resize the whole image).
+    fn transform_all(&mut self, f: impl Fn(&Pixmap, usize) -> Pixmap) {
+        let active = self.active;
+        for (i, l) in self.layers.iter_mut().enumerate() {
+            if i != active {
+                l.pix = f(&l.pix, i);
+            }
+        }
+        let img = f(&self.image, active);
+        self.replace_image(img);
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        let mut layers = self.layers.clone();
+        layers[self.active].pix = self.image.clone();
+        Snapshot { layers, active: self.active }
+    }
+
+    fn restore(&mut self, mut snap: Snapshot) {
+        let img = std::mem::replace(&mut snap.layers[snap.active].pix, placeholder());
+        self.layers = snap.layers;
+        self.active = snap.active;
+        self.replace_image(img);
+    }
+
+    /// Recompute the below/above composites and the whole display.
+    fn rebuild(&mut self) {
+        let (w, h) = (self.width(), self.height());
+        let below: Vec<&Pixmap> = self.layers[..self.active].iter().filter(|l| l.visible).map(|l| &l.pix).collect();
+        let above: Vec<&Pixmap> = self.layers[self.active + 1..].iter().filter(|l| l.visible).map(|l| &l.pix).collect();
+        let bg = self.background_visible.then(|| new_pixmap(w, h, self.background));
+        self.below = (!below.is_empty() || bg.is_some()).then(|| pixels::flatten(w, h, bg.iter().chain(below)));
+        self.above = (!above.is_empty()).then(|| pixels::flatten(w, h, above.into_iter()));
+        if self.display.width() != w || self.display.height() != h {
+            self.display = new_pixmap(w, h, Color32::TRANSPARENT);
+        }
+        self.refresh(self.bounds());
+        self.layers_rev += 1;
+    }
+
+    /// Record the current state for undo before modifying it.
     pub fn begin_edit(&mut self) {
-        self.undo.push(self.image.clone());
+        self.undo.push(self.snapshot());
         self.redo.clear();
         self.modified = true;
-        let mut total: usize = self.undo.iter().map(|p| p.data().len()).sum();
+        self.layers_rev += 1;
+        let mut total: usize = self.undo.iter().map(Snapshot::bytes).sum();
         while (total > HISTORY_BYTES || self.undo.len() > HISTORY_MAX) && self.undo.len() > 1 {
-            total -= self.undo.remove(0).data().len();
+            total -= self.undo.remove(0).bytes();
         }
     }
 
@@ -206,8 +309,8 @@ impl Document {
         // Undoing while a selection is being moved reverts the move.
         self.commit_overlay(settings);
         if let Some(prev) = self.undo.pop() {
-            self.redo.push(self.image.clone());
-            self.replace_image(prev);
+            self.redo.push(self.snapshot());
+            self.restore(prev);
             self.modified = true;
         }
     }
@@ -215,10 +318,167 @@ impl Document {
     pub fn redo(&mut self, settings: &Settings) {
         self.commit_overlay(settings);
         if let Some(next) = self.redo.pop() {
-            self.undo.push(self.image.clone());
-            self.replace_image(next);
+            self.undo.push(self.snapshot());
+            self.restore(next);
             self.modified = true;
         }
+    }
+
+    /// All visible layers flattened (what gets saved).
+    pub fn flattened(&self) -> Pixmap {
+        let (w, h) = (self.width(), self.height());
+        let active = self.active;
+        let bg = self.background_visible.then(|| new_pixmap(w, h, self.background));
+        pixels::flatten(
+            w,
+            h,
+            bg.iter().chain(
+                self.layers
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, l)| l.visible)
+                    .map(|(i, l)| if i == active { &self.image } else { &l.pix }),
+            ),
+        )
+    }
+
+    /// What erasing / clearing leaves behind: since Paint gained layers, erasing truly
+    /// erases (to transparency) and the Background tile shows through.
+    pub fn background_for(&self, _s: &Settings) -> Color32 {
+        Color32::TRANSPARENT
+    }
+
+    pub fn set_background(&mut self, c: Color32, visible: bool) {
+        if c == self.background && visible == self.background_visible {
+            return;
+        }
+        self.background = c;
+        self.background_visible = visible;
+        self.modified = true;
+        self.rebuild();
+    }
+
+    // -----------------------------------------------------------------------
+    // Layer panel operations
+
+    pub fn layer_pix(&self, i: usize) -> &Pixmap {
+        if i == self.active { &self.image } else { &self.layers[i].pix }
+    }
+
+    pub fn set_active_layer(&mut self, s: &Settings, i: usize) {
+        if i == self.active || i >= self.layers.len() {
+            return;
+        }
+        self.commit_overlay(s);
+        let img = std::mem::replace(&mut self.image, placeholder());
+        self.layers[self.active].pix = img;
+        self.image = std::mem::replace(&mut self.layers[i].pix, placeholder());
+        self.active = i;
+        self.rebuild();
+    }
+
+    fn next_layer_name(&self) -> String {
+        let n = (1..).find(|n| !self.layers.iter().any(|l| l.name == format!("Layer {n}"))).unwrap();
+        format!("Layer {n}")
+    }
+
+    pub fn add_layer(&mut self, s: &Settings) {
+        self.commit_overlay(s);
+        self.begin_edit();
+        let name = self.next_layer_name();
+        let blank = new_pixmap(self.width(), self.height(), Color32::TRANSPARENT);
+        let old = std::mem::replace(&mut self.image, blank);
+        self.layers[self.active].pix = old;
+        self.active += 1;
+        self.layers.insert(self.active, Layer { name, visible: true, pix: placeholder() });
+        self.rebuild();
+    }
+
+    pub fn duplicate_layer(&mut self, s: &Settings) {
+        self.commit_overlay(s);
+        self.begin_edit();
+        let name = format!("{} copy", self.layers[self.active].name);
+        let copy = Layer { name, visible: self.layers[self.active].visible, pix: self.image.clone() };
+        self.layers.insert(self.active, copy);
+        self.active += 1;
+        self.rebuild();
+    }
+
+    pub fn delete_layer(&mut self, s: &Settings) {
+        if self.layers.len() < 2 {
+            return;
+        }
+        self.commit_overlay(s);
+        self.begin_edit();
+        self.layers.remove(self.active);
+        self.active = self.active.saturating_sub(1).min(self.layers.len() - 1);
+        self.image = std::mem::replace(&mut self.layers[self.active].pix, placeholder());
+        self.rebuild();
+    }
+
+    /// Merge the active layer into the one below it.
+    pub fn merge_down(&mut self, s: &Settings) {
+        if self.active == 0 {
+            return;
+        }
+        self.commit_overlay(s);
+        self.begin_edit();
+        let top = std::mem::replace(&mut self.image, placeholder());
+        let top_visible = self.layers[self.active].visible;
+        self.layers.remove(self.active);
+        self.active -= 1;
+        let mut below = std::mem::replace(&mut self.layers[self.active].pix, placeholder());
+        if top_visible {
+            below.draw_pixmap(0, 0, top.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+        }
+        self.image = below;
+        self.rebuild();
+    }
+
+    /// Move the active layer up (+1) or down (-1) in the stack.
+    pub fn move_layer(&mut self, s: &Settings, dir: i32) {
+        let to = self.active as i32 + dir;
+        if to < 0 || to >= self.layers.len() as i32 {
+            return;
+        }
+        self.commit_overlay(s);
+        self.begin_edit();
+        self.layers.swap(self.active, to as usize);
+        self.active = to as usize;
+        self.rebuild();
+    }
+
+    /// Move layer `from` to stack position `to` (drag and drop in the panel).
+    pub fn move_layer_to(&mut self, s: &Settings, from: usize, to: usize) {
+        let n = self.layers.len();
+        if from >= n || to >= n || from == to {
+            return;
+        }
+        self.commit_overlay(s);
+        self.begin_edit();
+        // Put the active layer's pixels back so the stack can be reordered freely.
+        let active = self.active;
+        self.layers[active].pix = std::mem::replace(&mut self.image, placeholder());
+        let l = self.layers.remove(from);
+        self.layers.insert(to, l);
+        self.active = if active == from {
+            to
+        } else if from < active && to >= active {
+            active - 1
+        } else if from > active && to <= active {
+            active + 1
+        } else {
+            active
+        };
+        self.image = std::mem::replace(&mut self.layers[self.active].pix, placeholder());
+        self.rebuild();
+    }
+
+    pub fn toggle_layer_visible(&mut self, s: &Settings, i: usize) {
+        self.commit_overlay(s);
+        self.begin_edit();
+        self.layers[i].visible = !self.layers[i].visible;
+        self.rebuild();
     }
 
     // -----------------------------------------------------------------------
@@ -230,7 +490,19 @@ impl Document {
         if r.is_empty() {
             return;
         }
-        pixels::composite_region(&mut self.display, &self.image, &self.layer, self.layer_opacity, r);
+        if !self.layers[self.active].visible {
+            pixels::clear_region(&mut self.display, r);
+        } else if self.layer_erase {
+            pixels::erase_region(&mut self.display, &self.image, &self.layer, r);
+        } else {
+            pixels::composite_region(&mut self.display, &self.image, &self.layer, self.layer_opacity, r);
+        }
+        if let Some(b) = &self.below {
+            pixels::under_region(&mut self.display, b, r);
+        }
+        if let Some(a) = &self.above {
+            pixels::over_region(&mut self.display, a, r);
+        }
         self.dirty_tex = pixels::union_opt(self.dirty_tex, r);
     }
 
@@ -254,21 +526,29 @@ impl Document {
     fn commit_layer(&mut self) {
         if let Some(bb) = self.layer_bbox.take() {
             let bb = bb.clamp_to(self.width(), self.height());
-            let w = self.width() as usize;
-            for y in bb.y0..bb.y1 {
-                let s = (y as usize * w + bb.x0 as usize) * 4;
-                let e = s + bb.width() as usize * 4;
-                self.image.data_mut()[s..e].copy_from_slice(&self.display.data()[s..e]);
+            let base = pixels::copy_rect(&self.image, bb);
+            let mut stroke = pixels::copy_rect(&self.layer, bb);
+            let local = IRect::from_size(bb.width() as u32, bb.height() as u32);
+            let mut out = base.clone();
+            if self.layer_erase {
+                pixels::erase_region(&mut out, &base, &stroke, local);
+            } else {
+                pixels::composite_region(&mut out, &base, &stroke, self.layer_opacity, local);
             }
+            pixels::draw_exact(&mut self.image, &out, bb.x0, bb.y0);
             pixels::clear_region(&mut self.layer, bb);
+            stroke.fill(tiny_skia::Color::TRANSPARENT);
+            self.layers_rev += 1;
         }
         self.layer_opacity = 1.0;
+        self.layer_erase = false;
     }
 
-    pub fn begin_stroke(&mut self, opacity: f32) {
+    pub fn begin_stroke(&mut self, opacity: f32, erase: bool) {
         self.commit_overlay_noop();
         self.begin_edit();
         self.layer_opacity = opacity;
+        self.layer_erase = erase;
         self.overlay = Overlay::Stroke;
     }
 
@@ -303,6 +583,7 @@ impl Document {
         self.render_key = key;
         let cleared = self.layer_clear();
         self.layer_opacity = 1.0;
+        self.layer_erase = false;
         let dirty = match &self.overlay {
             Overlay::Shape(sh) => {
                 let (oc, fc) = if sh.swapped { (s.color2, s.color1) } else { (s.color1, s.color2) };
@@ -461,8 +742,8 @@ impl Document {
         let (pw, ph) = (pix.width(), pix.height());
         if pw > self.width() || ph > self.height() {
             self.begin_edit();
-            let img = pixels::resize_canvas(&self.image, pw.max(self.width()), ph.max(self.height()), s.color2);
-            self.replace_image(img);
+            let (nw, nh) = (pw.max(self.width()), ph.max(self.height()));
+            self.transform_all(|p, _| pixels::resize_canvas(p, nw, nh, Color32::TRANSPARENT));
         } else {
             self.begin_edit();
         }
@@ -490,7 +771,7 @@ impl Document {
         }
         let (r, mask) = f.origin.clone().expect("origin");
         self.begin_edit();
-        let c = s.color2.to_array();
+        let c = self.background_for(s).to_array();
         for y in r.y0..r.y1 {
             for x in r.x0..r.x1 {
                 let inside = match &mask {
@@ -623,8 +904,7 @@ impl Document {
             return;
         }
         self.begin_edit();
-        let img = f(&self.image);
-        self.replace_image(img);
+        self.transform_all(|p, _| f(p));
     }
 
     pub fn crop_to_selection(&mut self, s: &Settings) {
@@ -634,10 +914,19 @@ impl Document {
         if (w, h) != (p.width(), p.height()) {
             p = pixels::resize(&p, w, h);
         }
-        let mut out = new_pixmap(w, h, s.color2);
+        let mut out = new_pixmap(w, h, self.background_for(s));
         out.draw_pixmap(0, 0, p.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+        // Other layers are cropped to the same rectangle.
+        let r = f.rect;
+        let crop = IRect::new(r.min.x.round() as i32, r.min.y.round() as i32, r.min.x.round() as i32 + w as i32, r.min.y.round() as i32 + h as i32);
         self.overlay = Overlay::None;
         self.begin_edit();
+        let active = self.active;
+        for (i, l) in self.layers.iter_mut().enumerate() {
+            if i != active {
+                l.pix = pixels::copy_rect(&l.pix, crop);
+            }
+        }
         self.replace_image(out);
     }
 
@@ -647,8 +936,7 @@ impl Document {
             return;
         }
         self.begin_edit();
-        let img = pixels::resize_canvas(&self.image, w.max(1), h.max(1), s.color2);
-        self.replace_image(img);
+        self.transform_all(|p, _| pixels::resize_canvas(p, w.max(1), h.max(1), Color32::TRANSPARENT));
     }
 
     /// Fill the image directly (fill tool).
@@ -677,8 +965,14 @@ mod tests {
     use super::*;
     use crate::pixels::get_pixel;
 
+    /// Pixel of the active layer.
     fn px(d: &Document, x: i32, y: i32) -> Color32 {
         get_pixel(&d.image, x, y).unwrap()
+    }
+
+    /// What's visible on screen (layers over the Background tile).
+    fn vis(d: &Document, x: i32, y: i32) -> Color32 {
+        get_pixel(&d.display, x, y).unwrap()
     }
 
     #[test]
@@ -689,7 +983,8 @@ mod tests {
         assert_eq!(px(&d, 19, 9), Color32::RED);
         assert!(d.modified && d.can_undo());
         d.undo(&s);
-        assert_eq!(px(&d, 19, 9), Color32::WHITE);
+        assert_eq!(px(&d, 19, 9), Color32::TRANSPARENT);
+        assert_eq!(vis(&d, 19, 9), Color32::WHITE, "background tile shows through");
         d.redo(&s);
         assert_eq!(px(&d, 0, 0), Color32::RED);
     }
@@ -697,11 +992,11 @@ mod tests {
     #[test]
     fn stroke_is_committed_through_layer() {
         let mut d = Document::new(30, 30);
-        d.begin_stroke(1.0);
+        d.begin_stroke(1.0, false);
         let r = crate::brush::hard_line(&mut d.layer, pos2(2.0, 2.0), pos2(20.0, 2.0), 1.0, Color32::BLACK);
         d.layer_touched(r);
         // Not in the image until the stroke ends, but visible in the display buffer.
-        assert_eq!(px(&d, 10, 2), Color32::WHITE);
+        assert_eq!(px(&d, 10, 2), Color32::TRANSPARENT);
         assert_eq!(get_pixel(&d.display, 10, 2).unwrap(), Color32::BLACK);
         d.end_stroke();
         assert_eq!(px(&d, 10, 2), Color32::BLACK);
@@ -709,7 +1004,7 @@ mod tests {
     }
 
     #[test]
-    fn moving_selection_leaves_background_colour() {
+    fn moving_selection_leaves_transparency() {
         let mut s = Settings::default();
         s.color2 = Color32::from_rgb(0, 0, 255);
         let mut d = Document::new(40, 40);
@@ -723,7 +1018,8 @@ mod tests {
             f.rect = f.rect.translate(vec2(20.0, 20.0));
         }
         d.commit_overlay(&s);
-        assert_eq!(px(&d, 5, 5), s.color2, "origin cleared with colour 2");
+        assert_eq!(px(&d, 5, 5), Color32::TRANSPARENT, "origin erased");
+        assert_eq!(vis(&d, 5, 5), Color32::WHITE, "background tile shows through");
         assert_eq!(px(&d, 25, 25), Color32::GREEN, "pixels stamped at new place");
         d.undo(&s);
         assert_eq!(px(&d, 5, 5), Color32::GREEN);
@@ -757,12 +1053,49 @@ mod tests {
             pixels::set_pixel(&mut img, x, 1, Color32::RED.to_array());
         }
         d.image = img;
-        d.begin_stroke(1.0);
+        d.begin_stroke(1.0, false);
         let r = crate::brush::color_erase(&mut d.layer, &d.image, pos2(0.0, 1.0), pos2(19.0, 1.0), 1.0, Color32::RED, Color32::BLUE);
         d.layer_touched(r);
         d.end_stroke();
         assert_eq!(px(&d, 5, 1), Color32::BLUE);
-        assert_eq!(px(&d, 15, 1), Color32::WHITE);
+        assert_eq!(px(&d, 15, 1), Color32::TRANSPARENT);
+    }
+
+    #[test]
+    fn layers_composite_hide_merge_and_undo() {
+        let s = Settings::default();
+        let mut d = Document::new(10, 10);
+        d.flood_fill(0, 0, Color32::RED);
+        d.add_layer(&s);
+        assert_eq!((d.layers.len(), d.active), (2, 1));
+        d.begin_stroke(1.0, false);
+        let r = crate::brush::hard_line(&mut d.layer, pos2(0.0, 5.0), pos2(9.0, 5.0), 1.0, Color32::BLUE);
+        d.layer_touched(r);
+        d.end_stroke();
+        assert_eq!(vis(&d, 3, 5), Color32::BLUE);
+        assert_eq!(vis(&d, 3, 1), Color32::RED, "lower layer visible through the transparent one");
+        d.toggle_layer_visible(&s, 1);
+        assert_eq!(vis(&d, 3, 5), Color32::RED);
+        d.toggle_layer_visible(&s, 1);
+        // Erasing on the top layer reveals the layer below.
+        d.begin_stroke(1.0, true);
+        let r = crate::brush::hard_line(&mut d.layer, pos2(3.0, 5.0), pos2(3.0, 5.0), 1.0, Color32::BLACK);
+        d.layer_touched(r);
+        d.end_stroke();
+        assert_eq!(vis(&d, 3, 5), Color32::RED);
+        assert_eq!(vis(&d, 4, 5), Color32::BLUE);
+        d.merge_down(&s);
+        assert_eq!((d.layers.len(), d.active), (1, 0));
+        assert_eq!(px(&d, 4, 5), Color32::BLUE);
+        d.undo(&s);
+        assert_eq!(d.layers.len(), 2, "undo restores the merged layer");
+        // Hiding the background makes the canvas transparent.
+        d.set_active_layer(&s, 1);
+        d.set_background(Color32::WHITE, false);
+        assert_eq!(get_pixel(&d.flattened(), 3, 5).unwrap(), Color32::RED);
+        d.set_active_layer(&s, 0);
+        d.toggle_layer_visible(&s, 0);
+        assert_eq!(get_pixel(&d.flattened(), 0, 0).unwrap(), Color32::TRANSPARENT);
     }
 
     #[test]
@@ -773,7 +1106,7 @@ mod tests {
         d.commit_overlay(&s);
         assert_eq!((d.width(), d.height()), (30, 10));
         assert_eq!(px(&d, 29, 0), Color32::RED);
-        assert_eq!(px(&d, 29, 9), s.color2);
+        assert_eq!(px(&d, 29, 9), Color32::TRANSPARENT);
     }
 
     #[test]
@@ -814,7 +1147,7 @@ mod tests {
             d.overlay = Overlay::Shape(PendingShape { kind, geom, stage: 2, swapped: false, seed: 1 });
             d.render_overlay(&s, &mut fm);
             d.commit_overlay(&s);
-            let changed = d.image.data().chunks_exact(4).filter(|p| p != &[255, 255, 255, 255]).count();
+            let changed = d.image.data().chunks_exact(4).filter(|p| p[3] > 0).count();
             assert!(changed > 50, "{kind:?} drew only {changed} pixels");
         }
     }

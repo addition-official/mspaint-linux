@@ -1,0 +1,247 @@
+//! The Layers side panel (Windows 11 Paint shows it on the right of the canvas).
+
+use crate::app::PaintApp;
+use crate::icons::{self, Icon};
+use crate::pixels;
+use egui::{Color32, Rect, Sense, Stroke, StrokeKind, TextureOptions, Ui, vec2};
+
+const THUMB: egui::Vec2 = vec2(72.0, 48.0);
+
+impl PaintApp {
+    /// Regenerate layer thumbnails when the layers changed (throttled while drawing).
+    fn update_thumbnails(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        let stale = self.thumbs_rev != self.doc.layers_rev || self.layer_thumbs.len() != self.doc.layers.len();
+        if !stale {
+            return;
+        }
+        if now - self.thumbs_time < 0.25 && self.layer_thumbs.len() == self.doc.layers.len() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            return;
+        }
+        self.thumbs_time = now;
+        self.thumbs_rev = self.doc.layers_rev;
+        let (w, h) = (self.doc.width() as f32, self.doc.height() as f32);
+        let scale = (THUMB.x / w).min(THUMB.y / h).min(1.0);
+        let (tw, th) = ((w * scale).round().max(1.0) as u32, (h * scale).round().max(1.0) as u32);
+        self.layer_thumbs = (0..self.doc.layers.len())
+            .map(|i| {
+                let small = pixels::resize(self.doc.layer_pix(i), tw, th);
+                ctx.load_texture(format!("layer-thumb-{i}"), pixels::to_color_image(&small), TextureOptions::LINEAR)
+            })
+            .collect();
+    }
+
+    pub fn layers_panel(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        self.update_thumbnails(&ctx);
+        let pal = self.pal;
+        let s = self.s.clone();
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Layers").size(15.0).strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let (r, resp) = ui.allocate_exact_size(vec2(30.0, 28.0), Sense::click());
+                if resp.hovered() {
+                    ui.painter().rect_filled(r, 4.0, pal.hover);
+                }
+                icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(18.0, 18.0)), Icon::Plus, pal.text, pal.accent);
+                if resp.on_hover_text("Add layer").clicked() {
+                    self.doc.add_layer(&s);
+                }
+            });
+        });
+        ui.add_space(6.0);
+
+        let mut rows: Vec<(usize, Rect)> = Vec::new();
+        egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+            // Top layer first, as in Paint.
+            for i in (0..self.doc.layers.len()).rev() {
+                let selected = i == self.doc.active;
+                let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), THUMB.y + 16.0), Sense::click_and_drag());
+                rows.push((i, row));
+                if resp.drag_started() {
+                    self.layer_drag = Some(i);
+                }
+                let p = ui.painter();
+                if selected {
+                    p.rect_filled(row, 6.0, pal.selected);
+                    p.rect_stroke(row, 6.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
+                } else if resp.hovered() {
+                    p.rect_filled(row, 6.0, pal.hover);
+                }
+                // Thumbnail on a checkerboard so transparency is visible.
+                let thumb_area = Rect::from_min_size(row.min + vec2(8.0, 8.0), THUMB);
+                if let Some(t) = self.layer_thumbs.get(i) {
+                    let size = t.size_vec2();
+                    let tr = Rect::from_center_size(thumb_area.center(), size);
+                    self.paint_checker(p, tr);
+                    p.image(t.id(), tr, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                    p.rect_stroke(tr, 0.0, Stroke::new(1.0, pal.separator), StrokeKind::Outside);
+                }
+                let layer = &self.doc.layers[i];
+                let name_color = if layer.visible { pal.text } else { pal.text_dim };
+                p.text(
+                    egui::pos2(thumb_area.max.x + 10.0, row.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    &layer.name,
+                    egui::FontId::proportional(13.0),
+                    name_color,
+                );
+                // Visibility toggle.
+                let eye = Rect::from_center_size(egui::pos2(row.max.x - 20.0, row.center().y), vec2(28.0, 28.0));
+                let eye_resp = ui.interact(eye, ui.id().with(("eye", i)), Sense::click());
+                if eye_resp.hovered() {
+                    ui.painter().rect_filled(eye, 4.0, pal.hover);
+                }
+                let icon = if layer.visible { Icon::Eye } else { Icon::EyeOff };
+                icons::paint(ui.painter(), Rect::from_center_size(eye.center(), vec2(18.0, 18.0)), icon, pal.text_dim, pal.accent);
+                let tip = if layer.visible { "Hide layer" } else { "Show layer" };
+                if eye_resp.on_hover_text(tip).clicked() {
+                    self.doc.toggle_layer_visible(&s, i);
+                } else if resp.clicked() {
+                    self.doc.set_active_layer(&s, i);
+                }
+                resp.context_menu(|ui| {
+                    self.doc.set_active_layer(&s, i);
+                    let n = self.doc.layers.len();
+                    if ui.button("Duplicate layer").clicked() {
+                        self.doc.duplicate_layer(&s);
+                    }
+                    if ui.add_enabled(i > 0, egui::Button::new("Merge down")).clicked() {
+                        self.doc.merge_down(&s);
+                    }
+                    if ui.add_enabled(i + 1 < n, egui::Button::new("Move up")).clicked() {
+                        self.doc.move_layer(&s, 1);
+                    }
+                    if ui.add_enabled(i > 0, egui::Button::new("Move down")).clicked() {
+                        self.doc.move_layer(&s, -1);
+                    }
+                    let vis = if self.doc.layers[i].visible { "Hide layer" } else { "Show layer" };
+                    if ui.button(vis).clicked() {
+                        self.doc.toggle_layer_visible(&s, i);
+                    }
+                    ui.separator();
+                    if ui.add_enabled(n > 1, egui::Button::new("Delete layer")).clicked() {
+                        self.doc.delete_layer(&s);
+                    }
+                });
+                ui.add_space(4.0);
+            }
+            self.background_tile(ui);
+        });
+
+        // Drag and drop to reorder: show the drop position and move on release.
+        if let Some(from) = self.layer_drag {
+            let ptr = ctx.input(|i| i.pointer.interact_pos());
+            let target = ptr.and_then(|p| {
+                rows.iter().min_by(|a, b| (a.1.center().y - p.y).abs().total_cmp(&(b.1.center().y - p.y).abs())).copied()
+            });
+            if let Some((to, r)) = target
+                && to != from
+            {
+                let y = if to > from { r.min.y - 2.0 } else { r.max.y + 2.0 };
+                ui.painter().line_segment([egui::pos2(r.min.x, y), egui::pos2(r.max.x, y)], Stroke::new(2.0, pal.accent));
+            }
+            if !ctx.input(|i| i.pointer.any_down()) {
+                self.layer_drag = None;
+                if let Some((to, _)) = target {
+                    self.doc.move_layer_to(&s, from, to);
+                }
+            }
+        }
+    }
+
+    /// The Background tile at the bottom of the layer list: its colour and visibility.
+    fn background_tile(&mut self, ui: &mut Ui) {
+        let pal = self.pal;
+        ui.add_space(2.0);
+        ui.separator();
+        let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+        if resp.hovered() {
+            ui.painter().rect_filled(row, 6.0, pal.hover);
+        }
+        let sw = Rect::from_min_size(row.min + vec2(8.0, 8.0), vec2(THUMB.x, 28.0));
+        if self.doc.background_visible {
+            ui.painter().rect_filled(sw, 3.0, self.doc.background);
+        } else {
+            self.paint_checker(ui.painter(), sw);
+        }
+        ui.painter().rect_stroke(sw, 3.0, Stroke::new(1.0, pal.separator), StrokeKind::Outside);
+        ui.painter().text(
+            egui::pos2(sw.max.x + 10.0, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            "Background",
+            egui::FontId::proportional(13.0),
+            if self.doc.background_visible { pal.text } else { pal.text_dim },
+        );
+        let eye = Rect::from_center_size(egui::pos2(row.max.x - 20.0, row.center().y), vec2(28.0, 28.0));
+        let eye_resp = ui.interact(eye, ui.id().with("bg_eye"), Sense::click());
+        if eye_resp.hovered() {
+            ui.painter().rect_filled(eye, 4.0, pal.hover);
+        }
+        let icon = if self.doc.background_visible { Icon::Eye } else { Icon::EyeOff };
+        icons::paint(ui.painter(), Rect::from_center_size(eye.center(), vec2(18.0, 18.0)), icon, pal.text_dim, pal.accent);
+        if eye_resp.on_hover_text("Show or hide the background (Ctrl+Shift+H)").clicked() {
+            let (c, v) = (self.doc.background, self.doc.background_visible);
+            self.doc.set_background(c, !v);
+        } else if resp.on_hover_text("Background colour (Ctrl+Shift+B)").clicked() {
+            self.show_bg_picker = true;
+        }
+    }
+
+    /// Small window for choosing the Background tile colour.
+    pub fn background_picker(&mut self, ctx: &egui::Context) {
+        if !self.show_bg_picker {
+            return;
+        }
+        let mut open = true;
+        let mut c = self.doc.background;
+        egui::Window::new("Background colour")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                egui::widgets::color_picker::color_picker_color32(ui, &mut c, egui::color_picker::Alpha::Opaque);
+                ui.horizontal(|ui| {
+                    for (name, col) in [("White", Color32::WHITE), ("Black", Color32::BLACK), ("Colour 1", self.s.color1), ("Colour 2", self.s.color2)] {
+                        if ui.button(name).clicked() {
+                            c = col;
+                        }
+                    }
+                });
+            });
+        if c != self.doc.background {
+            self.doc.set_background(c, true);
+        }
+        self.show_bg_picker = open;
+    }
+
+    /// Light/dark checkerboard used behind transparent pixels.
+    pub fn paint_checker(&self, p: &egui::Painter, r: Rect) {
+        if let Some(t) = &self.checker_tex {
+            // Each texel is one 8px square on screen.
+            let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(r.width() / 16.0, r.height() / 16.0));
+            p.image(t.id(), r, uv, Color32::WHITE);
+        } else {
+            p.rect_filled(r, 0.0, Color32::WHITE);
+        }
+    }
+
+    pub fn ensure_checker(&mut self, ctx: &egui::Context) {
+        if self.checker_tex.is_some() {
+            return;
+        }
+        let (a, b) = (Color32::from_gray(255), Color32::from_gray(222));
+        let img = egui::ColorImage::new([2, 2], vec![a, b, b, a]);
+        let opts = TextureOptions {
+            magnification: egui::TextureFilter::Nearest,
+            minification: egui::TextureFilter::Nearest,
+            wrap_mode: egui::TextureWrapMode::Repeat,
+            ..Default::default()
+        };
+        self.checker_tex = Some(ctx.load_texture("checker", img, opts));
+    }
+}

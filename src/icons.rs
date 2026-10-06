@@ -53,6 +53,10 @@ pub enum Icon {
     AlignLeft,
     AlignCenter,
     AlignRight,
+    Layers,
+    Eye,
+    EyeOff,
+    Plus,
 }
 
 fn g(r: Rect, x: f32, y: f32) -> Pos2 {
@@ -173,6 +177,25 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
                 };
                 pl(p, r, &[(x0, y), (x0 + w, y)], s);
             }
+        }
+        Icon::Layers => {
+            closed(p, r, &[(12.0, 3.0), (21.0, 8.0), (12.0, 13.0), (3.0, 8.0)], s);
+            pl(p, r, &[(3.0, 12.0), (12.0, 17.0), (21.0, 12.0)], s);
+            pl(p, r, &[(3.0, 16.0), (12.0, 21.0), (21.0, 16.0)], s);
+        }
+        Icon::Eye | Icon::EyeOff => {
+            let top: Vec<(f32, f32)> = (0..=12).map(|i| { let t = i as f32 / 12.0; (2.0 + 20.0 * t, 12.0 - 7.0 * (std::f32::consts::PI * t).sin()) }).collect();
+            let bot: Vec<(f32, f32)> = (0..=12).map(|i| { let t = i as f32 / 12.0; (2.0 + 20.0 * t, 12.0 + 7.0 * (std::f32::consts::PI * t).sin()) }).collect();
+            pl(p, r, &top, s);
+            pl(p, r, &bot, s);
+            p.circle_stroke(g(r, 12.0, 12.0), r.width() / 24.0 * 3.2, s);
+            if icon == Icon::EyeOff {
+                pl(p, r, &[(4.0, 20.0), (20.0, 4.0)], s);
+            }
+        }
+        Icon::Plus => {
+            pl(p, r, &[(12.0, 5.0), (12.0, 19.0)], s);
+            pl(p, r, &[(5.0, 12.0), (19.0, 12.0)], s);
         }
         Icon::Crop => {
             pl(p, r, &[(7.0, 2.0), (7.0, 17.0), (22.0, 17.0)], s);

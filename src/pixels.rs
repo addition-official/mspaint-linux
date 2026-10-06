@@ -183,6 +183,77 @@ pub fn composite_region(dst: &mut Pixmap, base: &Pixmap, layer: &Pixmap, opacity
     }
 }
 
+/// `dst[r] = base[r]` with the stroke `layer` *erasing* it: alpha is removed where the
+/// layer has coverage (destination-out).
+pub fn erase_region(dst: &mut Pixmap, base: &Pixmap, layer: &Pixmap, r: IRect) {
+    let r = r.clamp_to(dst.width(), dst.height());
+    if r.is_empty() {
+        return;
+    }
+    let w = dst.width() as usize;
+    let bd = base.data();
+    let ld = layer.data();
+    let dd = dst.data_mut();
+    for y in r.y0..r.y1 {
+        let row = y as usize * w;
+        for x in r.x0..r.x1 {
+            let i = (row + x as usize) * 4;
+            let keep = 255 - ld[i + 3] as u32;
+            for k in 0..4 {
+                dd[i + k] = ((bd[i + k] as u32 * keep + 127) / 255) as u8;
+            }
+        }
+    }
+}
+
+/// `dst[r] = src[r] over dst[r]` (premultiplied src-over).
+pub fn over_region(dst: &mut Pixmap, src: &Pixmap, r: IRect) {
+    blend_region(dst, src, r, false);
+}
+
+/// `dst[r] = dst[r] over src[r]` (src goes underneath).
+pub fn under_region(dst: &mut Pixmap, src: &Pixmap, r: IRect) {
+    blend_region(dst, src, r, true);
+}
+
+fn blend_region(dst: &mut Pixmap, src: &Pixmap, r: IRect, under: bool) {
+    let r = r.clamp_to(dst.width(), dst.height());
+    if r.is_empty() {
+        return;
+    }
+    let w = dst.width() as usize;
+    let sd = src.data();
+    let dd = dst.data_mut();
+    for y in r.y0..r.y1 {
+        let row = y as usize * w;
+        for x in r.x0..r.x1 {
+            let i = (row + x as usize) * 4;
+            let (top, bottom) = if under { (&dd[i..i + 4], &sd[i..i + 4]) } else { (&sd[i..i + 4], &dd[i..i + 4]) };
+            let ta = top[3] as u32;
+            if ta == 255 {
+                let t = [top[0], top[1], top[2], top[3]];
+                dd[i..i + 4].copy_from_slice(&t);
+                continue;
+            }
+            let inv = 255 - ta;
+            let mut out = [0u8; 4];
+            for k in 0..4 {
+                out[k] = (top[k] as u32 + (bottom[k] as u32 * inv + 127) / 255).min(255) as u8;
+            }
+            dd[i..i + 4].copy_from_slice(&out);
+        }
+    }
+}
+
+/// Composite `layers` (bottom first) into one pixmap.
+pub fn flatten<'a>(w: u32, h: u32, layers: impl Iterator<Item = &'a Pixmap>) -> Pixmap {
+    let mut out = new_pixmap(w, h, Color32::TRANSPARENT);
+    for l in layers {
+        out.draw_pixmap(0, 0, l.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+    }
+    out
+}
+
 pub fn clear_region(p: &mut Pixmap, r: IRect) {
     let r = r.clamp_to(p.width(), p.height());
     if r.is_empty() {

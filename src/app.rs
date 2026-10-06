@@ -59,6 +59,13 @@ pub enum Action {
     About,
     /// Close without asking (after the unsaved-changes prompt).
     ForceExit,
+    SizeUp,
+    SizeDown,
+    AddLayer,
+    ToggleBackground,
+    BackgroundColour,
+    CopyVisible,
+    SetTool(Tool),
 }
 
 pub enum Dialog {
@@ -90,6 +97,7 @@ struct Persisted {
     grid: bool,
     rulers: bool,
     system_titlebar: bool,
+    layers: bool,
 }
 
 /// Mouse interaction in progress on the canvas.
@@ -155,6 +163,13 @@ pub struct PaintApp {
     /// Window corner radius we currently draw (0 when maximised or using system decorations).
     pub corner: u8,
     system_checked: f64,
+    pub show_layers: bool,
+    pub checker_tex: Option<TextureHandle>,
+    pub layer_thumbs: Vec<TextureHandle>,
+    pub thumbs_rev: u64,
+    pub thumbs_time: f64,
+    pub layer_drag: Option<usize>,
+    pub show_bg_picker: bool,
 }
 
 impl PaintApp {
@@ -211,6 +226,13 @@ impl PaintApp {
             decorations_applied: None,
             on_window_edge: false,
             corner: WINDOW_RADIUS,
+            show_layers: p.layers,
+            checker_tex: None,
+            layer_thumbs: Vec::new(),
+            thumbs_rev: u64::MAX,
+            thumbs_time: 0.0,
+            layer_drag: None,
+            show_bg_picker: false,
             system_checked: 0.0,
         };
         if let Some(path) = open {
@@ -345,7 +367,7 @@ impl PaintApp {
 
     fn save_to(&mut self, path: PathBuf) -> bool {
         self.doc.commit_overlay(&self.s);
-        match pixels::save(&self.doc.image, &path) {
+        match pixels::save(&self.doc.flattened(), &path) {
             Ok(()) => {
                 self.doc.mark_saved(path.clone());
                 self.add_recent(path);
@@ -370,7 +392,30 @@ impl PaintApp {
 
     fn copy(&mut self) {
         let Some(p) = self.doc.effective_float(&self.s) else { return };
-        let img = pixels::to_rgba_unmultiplied(&p);
+        self.copy_pixmap(&p);
+    }
+
+    /// Ctrl+Shift+C: copy what's visible (all visible layers) under the selection,
+    /// or the whole canvas.
+    fn copy_visible(&mut self) {
+        let flat = self.doc.flattened();
+        let pix = match self.doc.floating() {
+            Some(f) => {
+                let r = crate::pixels::IRect::new(
+                    f.rect.min.x.round() as i32,
+                    f.rect.min.y.round() as i32,
+                    f.rect.max.x.round() as i32,
+                    f.rect.max.y.round() as i32,
+                );
+                pixels::copy_rect(&flat, r)
+            }
+            None => flat,
+        };
+        self.copy_pixmap(&pix);
+    }
+
+    fn copy_pixmap(&mut self, p: &tiny_skia::Pixmap) {
+        let img = pixels::to_rgba_unmultiplied(p);
         if let Some(cb) = &mut self.clipboard {
             let _ = cb.set_image(arboard::ImageData {
                 width: img.width() as usize,
@@ -538,6 +583,25 @@ impl PaintApp {
                 self.show_edit_colors = true;
             }
             Action::About => self.dialog = Some(Dialog::About),
+            Action::SizeUp | Action::SizeDown => {
+                let d = if a == Action::SizeUp { 1.0 } else { -1.0 };
+                let size = self.s.size_mut();
+                *size = (*size + d).clamp(1.0, 100.0);
+            }
+            Action::AddLayer => {
+                self.show_layers = true;
+                self.doc.add_layer(&s);
+            }
+            Action::ToggleBackground => {
+                let (c, v) = (self.doc.background, self.doc.background_visible);
+                self.doc.set_background(c, !v);
+            }
+            Action::BackgroundColour => {
+                self.show_layers = true;
+                self.show_bg_picker = true;
+            }
+            Action::CopyVisible => self.copy_visible(),
+            Action::SetTool(t) => self.set_tool(t),
         }
     }
 
@@ -555,7 +619,7 @@ impl PaintApp {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let path = dir.join(format!("wallpaper-{stamp}.png"));
-        if let Err(e) = pixels::save(&self.doc.image, &path) {
+        if let Err(e) = pixels::save(&self.doc.flattened(), &path) {
             self.dialog = Some(Dialog::Message(format!("Could not write the wallpaper image.\n\n{e}")));
             return;
         }
@@ -629,29 +693,39 @@ impl PaintApp {
         use Action as A;
         let cmd = Modifiers::COMMAND;
         let cs = Modifiers::COMMAND | Modifiers::SHIFT;
+        // Shift combinations first: egui matches Shift loosely, so Ctrl+S would also
+        // swallow Ctrl+Shift+S.
         let shortcuts: &[(Modifiers, Key, Action)] = &[
+            (cs, Key::S, A::SaveAs(None)),
+            (cs, Key::Z, A::Redo),
+            (cs, Key::I, A::InvertColors),
+            (cs, Key::X, A::Crop),
+            (cs, Key::N, A::AddLayer),
+            (cs, Key::H, A::ToggleBackground),
+            (cs, Key::B, A::BackgroundColour),
+            (cs, Key::C, A::CopyVisible),
             (cmd, Key::N, A::New),
             (cmd, Key::O, A::Open),
             (cmd, Key::S, A::Save),
-            (cs, Key::S, A::SaveAs(None)),
             (Modifiers::NONE, Key::F12, A::SaveAs(None)),
             (cmd, Key::Z, A::Undo),
             (cmd, Key::Y, A::Redo),
-            (cs, Key::Z, A::Redo),
             (cmd, Key::A, A::SelectAll),
             (cmd, Key::E, A::Properties),
             (cmd, Key::W, A::ResizeDialog),
-            (cmd, Key::Plus, A::ZoomIn),
-            (cmd, Key::Equals, A::ZoomIn),
-            (cmd, Key::Minus, A::ZoomOut),
+            // As in Paint: Ctrl+Plus/Minus change the brush / line width,
+            // Ctrl+PageUp/PageDown (and Ctrl+wheel) zoom.
+            (cmd, Key::Plus, A::SizeUp),
+            (cmd, Key::Equals, A::SizeUp),
+            (cmd, Key::Minus, A::SizeDown),
+            (cmd, Key::PageUp, A::ZoomIn),
+            (cmd, Key::PageDown, A::ZoomOut),
             (cmd, Key::Num0, A::ZoomFit),
             (cmd, Key::Num1, A::Zoom100),
             (cmd, Key::G, A::ToggleGrid),
             (cmd, Key::R, A::ToggleRulers),
             (Modifiers::NONE, Key::F11, A::Fullscreen),
             (cmd, Key::Q, A::Exit),
-            (cmd | Modifiers::SHIFT, Key::I, A::InvertColors),
-            (cmd | Modifiers::SHIFT, Key::X, A::Crop),
         ];
         for (m, k, a) in shortcuts {
             if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(*m, *k))) {
@@ -669,6 +743,10 @@ impl PaintApp {
                     self.push(Action::Paste)
                 }
                 egui::Event::Key { key: Key::Delete | Key::Backspace, pressed: true, .. } => self.push(Action::DeleteSelection),
+                // Single-letter tool keys.
+                egui::Event::Key { key, pressed: true, modifiers, .. } if modifiers.is_none() && tool_for_key(key).is_some() => {
+                    self.push(Action::SetTool(tool_for_key(key).unwrap()));
+                }
                 egui::Event::Key { key: Key::Escape, pressed: true, .. } => {
                     if self.fullscreen {
                         self.push(Action::Fullscreen);
@@ -982,10 +1060,10 @@ impl PaintApp {
     fn view_menu(&mut self, ui: &mut egui::Ui) {
         ui.set_min_width(220.0);
         ui.menu_button("Zoom", |ui| {
-            if ui.add(Button::new("Zoom in").shortcut_text("Ctrl++")).clicked() {
+            if ui.add(Button::new("Zoom in").shortcut_text("Ctrl+PgUp")).clicked() {
                 self.push(Action::ZoomIn);
             }
-            if ui.add(Button::new("Zoom out").shortcut_text("Ctrl+-")).clicked() {
+            if ui.add(Button::new("Zoom out").shortcut_text("Ctrl+PgDn")).clicked() {
                 self.push(Action::ZoomOut);
             }
             if ui.add(Button::new("Zoom to 100%").shortcut_text("Ctrl+1")).clicked() {
@@ -1477,6 +1555,18 @@ impl eframe::App for PaintApp {
                 )
                 .show(ui, |ui| self.status_bar(ui));
         }
+        self.ensure_checker(&ctx);
+        if self.show_layers {
+            egui::Panel::right("layers")
+                .exact_size(250.0)
+                .frame(
+                    egui::Frame::new()
+                        .fill(pal.ribbon)
+                        .inner_margin(egui::Margin::symmetric(8, 4))
+                        .stroke(egui::Stroke::new(1.0, pal.separator)),
+                )
+                .show(ui, |ui| self.layers_panel(ui));
+        }
         let bottom = if self.show_status { 0 } else { self.corner };
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(pal.workspace).corner_radius(egui::CornerRadius { nw: 0, ne: 0, sw: bottom, se: bottom }))
@@ -1500,6 +1590,7 @@ impl eframe::App for PaintApp {
 
         self.dialogs(&ctx);
         self.edit_colors_window(&ctx);
+        self.background_picker(&ctx);
 
         for a in std::mem::take(&mut self.actions) {
             self.run_action(&ctx, a);
@@ -1538,6 +1629,7 @@ impl eframe::App for PaintApp {
             grid: self.show_grid,
             rulers: self.show_rulers,
             system_titlebar: self.system_titlebar,
+            layers: self.show_layers,
         };
         eframe::set_value(storage, eframe::APP_KEY, &p);
     }
@@ -1546,6 +1638,20 @@ impl eframe::App for PaintApp {
 fn primary_button(label: &str, pal: Palette) -> Button<'static> {
     let fg = if pal.dark { Color32::BLACK } else { Color32::WHITE };
     Button::new(RichText::new(label).color(fg)).fill(pal.accent).min_size(vec2(100.0, 30.0))
+}
+
+/// Paint's single-letter tool shortcuts.
+fn tool_for_key(k: Key) -> Option<Tool> {
+    Some(match k {
+        Key::P => Tool::Pencil,
+        Key::E => Tool::Eraser,
+        Key::B => Tool::Fill,
+        Key::I => Tool::Picker,
+        Key::T => Tool::Text,
+        Key::Z => Tool::Magnifier,
+        Key::S => Tool::Select,
+        _ => return None,
+    })
 }
 
 pub fn human_size(b: u64) -> String {

@@ -314,7 +314,9 @@ impl PaintApp {
             }
             Tool::Pencil | Tool::Eraser | Tool::Brush => {
                 let opacity = if self.s.tool == Tool::Brush { self.s.brush.layer_opacity() } else { 1.0 };
-                self.doc.begin_stroke(opacity);
+                // The eraser erases to transparency (the Background tile shows through).
+                let erase = self.s.tool == Tool::Eraser && !secondary;
+                self.doc.begin_stroke(opacity, erase);
                 self.stroke_ctx = Some(StrokeCtx::new(self.s.size()));
                 self.drag = Some(Drag::Stroke { secondary, last: p });
                 self.stroke_to(p, p, secondary);
@@ -326,7 +328,7 @@ impl PaintApp {
                 }
             }
             Tool::Picker => {
-                if inside && let Some(c) = pixels::get_pixel(&self.doc.image, p.x as i32, p.y as i32) {
+                if inside && let Some(c) = pixels::get_pixel(&self.doc.display, p.x as i32, p.y as i32) {
                     let [r, g, b, _] = c.to_srgba_unmultiplied();
                     let c = Color32::from_rgb(r, g, b);
                     if secondary {
@@ -768,7 +770,8 @@ impl PaintApp {
             let f = i as f32;
             p.rect_filled(img.expand(f).translate(vec2(0.0, f * 0.5)), 2.0 + f, pal.canvas_shadow.gamma_multiply(0.25));
         }
-        p.rect_filled(img, 0.0, Color32::WHITE);
+        // Transparent pixels show a checkerboard, as in Paint.
+        self.paint_checker(&p, img);
         if let Some(t) = &self.tex {
             p.image(t.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         }

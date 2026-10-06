@@ -5,6 +5,7 @@ mod brush;
 mod canvas;
 mod document;
 mod icons;
+mod layers_panel;
 mod pixels;
 mod ribbon;
 mod shapes;
