@@ -83,6 +83,8 @@ fn main() -> eframe::Result {
             .with_min_inner_size([640.0, 420.0])
             // Paint draws a Windows 11 style title bar; the setting can switch back to Plasma's.
             .with_decorations(false)
+            // Needed for the rounded Windows 11 window corners.
+            .with_transparent(true)
             .with_icon(window_icon(64)),
         ..Default::default()
     };

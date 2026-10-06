@@ -16,6 +16,7 @@ use std::path::PathBuf;
 pub const DEFAULT_W: u32 = 1152;
 pub const DEFAULT_H: u32 = 648;
 pub const ZOOM_MIN: f32 = 0.1;
+const WINDOW_RADIUS: u8 = 8;
 pub const ZOOM_MAX: f32 = 8.0;
 const ZOOM_STEPS: [f32; 14] = [0.1, 0.125, 0.25, 0.33, 0.5, 0.66, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0];
 
@@ -151,6 +152,8 @@ pub struct PaintApp {
     pub system_titlebar: bool,
     decorations_applied: Option<bool>,
     pub on_window_edge: bool,
+    /// Window corner radius we currently draw (0 when maximised or using system decorations).
+    pub corner: u8,
     system_checked: f64,
 }
 
@@ -207,6 +210,7 @@ impl PaintApp {
             system_titlebar: p.system_titlebar,
             decorations_applied: None,
             on_window_edge: false,
+            corner: WINDOW_RADIUS,
             system_checked: 0.0,
         };
         if let Some(path) = open {
@@ -654,7 +658,7 @@ impl PaintApp {
                 egui::Event::Key { key: Key::V, pressed: false, modifiers, .. } if modifiers.command => {
                     self.push(Action::Paste)
                 }
-                egui::Event::Key { key: Key::Delete, pressed: true, .. } => self.push(Action::DeleteSelection),
+                egui::Event::Key { key: Key::Delete | Key::Backspace, pressed: true, .. } => self.push(Action::DeleteSelection),
                 egui::Event::Key { key: Key::Escape, pressed: true, .. } => {
                     if self.fullscreen {
                         self.push(Action::Fullscreen);
@@ -867,7 +871,7 @@ impl PaintApp {
         let rect = ctx.viewport_rect();
         // Paint the 1px window border.
         ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::new("window_border")))
-            .rect_stroke(rect, 0.0, egui::Stroke::new(1.0, self.pal.border), egui::StrokeKind::Inside);
+            .rect_stroke(rect, self.corner, egui::Stroke::new(1.0, self.pal.border), egui::StrokeKind::Inside);
         let Some(p) = ctx.input(|i| i.pointer.latest_pos()) else { return false };
         let m = 5.0;
         let (l, r, t, b) = (p.x < rect.min.x + m, p.x > rect.max.x - m, p.y < rect.min.y + m, p.y > rect.max.y - m);
@@ -1429,11 +1433,17 @@ impl eframe::App for PaintApp {
             self.decorations_applied = Some(self.system_titlebar);
             ctx.send_viewport_cmd(ViewportCommand::Decorations(self.system_titlebar));
         }
+        // Windows 11 windows have rounded corners. We draw them ourselves on a transparent
+        // window whenever we own the decorations and the window isn't maximised/fullscreen.
+        let (maximized, fullscreen) =
+            ctx.input(|i| (i.viewport().maximized.unwrap_or(false), i.viewport().fullscreen.unwrap_or(false)));
+        self.corner = if self.system_titlebar || maximized || fullscreen { 0 } else { WINDOW_RADIUS };
         self.on_window_edge = self.window_edges(&ctx);
         if !self.system_titlebar {
+            let r = self.corner;
             egui::Panel::top("titlebar")
                 .exact_size(32.0)
-                .frame(egui::Frame::new().fill(pal.chrome))
+                .frame(egui::Frame::new().fill(pal.chrome).corner_radius(egui::CornerRadius { nw: r, ne: r, sw: 0, se: 0 }))
                 .show(ui, |ui| self.title_bar(ui));
         }
         egui::Panel::top("menubar")
@@ -1450,11 +1460,16 @@ impl eframe::App for PaintApp {
         if self.show_status {
             egui::Panel::bottom("status")
                 .exact_size(30.0)
-                .frame(egui::Frame::new().fill(pal.status).stroke(egui::Stroke::new(1.0, pal.separator)))
+                .frame(
+                    egui::Frame::new()
+                        .fill(pal.status)
+                        .corner_radius(egui::CornerRadius { nw: 0, ne: 0, sw: self.corner, se: self.corner }),
+                )
                 .show(ui, |ui| self.status_bar(ui));
         }
+        let bottom = if self.show_status { 0 } else { self.corner };
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(pal.workspace))
+            .frame(egui::Frame::new().fill(pal.workspace).corner_radius(egui::CornerRadius { nw: 0, ne: 0, sw: bottom, se: bottom }))
             .show(ui, |ui| self.canvas(ui));
 
         // Floating text formatting bar, like Windows 11 Paint.
@@ -1493,6 +1508,15 @@ impl eframe::App for PaintApp {
 
         let title = self.title();
         ctx.send_viewport_cmd(ViewportCommand::Title(title));
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // Transparent so the rounded window corners show the desktop behind them.
+        if self.corner > 0 {
+            [0.0; 4]
+        } else {
+            self.pal.workspace.to_normalized_gamma_f32()
+        }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
