@@ -771,7 +771,7 @@ impl PaintApp {
             p.rect_filled(img.expand(f).translate(vec2(0.0, f * 0.5)), 2.0 + f, pal.canvas_shadow.gamma_multiply(0.25));
         }
         // Transparent pixels show a checkerboard, as in Paint.
-        self.paint_checker(&p, img);
+        self.paint_checker(p, img);
         if let Some(t) = &self.tex {
             p.image(t.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         }
