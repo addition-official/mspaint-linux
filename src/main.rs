@@ -11,6 +11,7 @@ mod ribbon;
 mod shapes;
 mod text;
 mod theme;
+mod tool_sliders;
 mod tools;
 
 use std::path::PathBuf;

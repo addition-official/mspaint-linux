@@ -313,7 +313,8 @@ impl PaintApp {
                 });
             }
             Tool::Pencil | Tool::Eraser | Tool::Brush => {
-                let opacity = if self.s.tool == Tool::Brush { self.s.brush.layer_opacity() } else { 1.0 };
+                let user = if matches!(self.s.tool, Tool::Pencil | Tool::Brush) { self.s.opacity / 100.0 } else { 1.0 };
+                let opacity = user * if self.s.tool == Tool::Brush { self.s.brush.layer_opacity() } else { 1.0 };
                 // The eraser erases to transparency (the Background tile shows through).
                 let erase = self.s.tool == Tool::Eraser && !secondary;
                 self.doc.begin_stroke(opacity, erase);
@@ -324,7 +325,8 @@ impl PaintApp {
             Tool::Fill => {
                 if inside {
                     let c = if secondary { self.s.color2 } else { self.s.color1 };
-                    self.doc.flood_fill(p.x as i32, p.y as i32, c);
+                    let tol = (self.s.tolerance / 100.0 * 255.0).round() as u8;
+                    self.doc.flood_fill(p.x as i32, p.y as i32, c, tol);
                 }
             }
             Tool::Picker => {

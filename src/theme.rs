@@ -100,9 +100,13 @@ pub fn apply(ctx: &egui::Context, pal: &Palette) {
     v.widgets.active.bg_stroke = Stroke::NONE;
     v.widgets.open.weak_bg_fill = pal.selected;
     v.window_stroke = Stroke::new(1.0, pal.separator);
+    // Fluent sliders: filled track and round thumb.
+    v.slider_trailing_fill = true;
+    v.handle_shape = egui::style::HandleShape::Circle;
     ctx.set_visuals(v);
     ctx.all_styles_mut(|s| {
         s.spacing.scroll.fade.strength = 0.0;
+        s.spacing.slider_rail_height = 4.0;
         s.spacing.button_padding = egui::vec2(8.0, 4.0);
         s.spacing.item_spacing = egui::vec2(6.0, 4.0);
         s.spacing.menu_margin = egui::Margin::same(6);

@@ -1572,6 +1572,8 @@ impl eframe::App for PaintApp {
             .frame(egui::Frame::new().fill(pal.workspace).corner_radius(egui::CornerRadius { nw: 0, ne: 0, sw: bottom, se: bottom }))
             .show(ui, |ui| self.canvas(ui));
 
+        self.tool_sliders(&ctx);
+
         // Floating text formatting bar, like Windows 11 Paint.
         if matches!(self.doc.overlay, Overlay::Text(_)) && self.viewport.is_positive() {
             egui::Area::new(egui::Id::new("textbar"))

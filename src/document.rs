@@ -11,6 +11,7 @@ use tiny_skia::{FillRule, PathBuilder, Pixmap, Transform};
 
 /// User-adjustable tool settings.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub tool: Tool,
     pub brush: BrushKind,
@@ -27,6 +28,10 @@ pub struct Settings {
     pub transparent_selection: bool,
     pub select_mode: crate::tools::SelectMode,
     pub custom_colors: Vec<Color32>,
+    /// Pencil / brush opacity in percent.
+    pub opacity: f32,
+    /// Fill tolerance in percent.
+    pub tolerance: f32,
 }
 
 impl Default for Settings {
@@ -47,6 +52,8 @@ impl Default for Settings {
             transparent_selection: false,
             select_mode: crate::tools::SelectMode::Rectangle,
             custom_colors: Vec::new(),
+            opacity: 100.0,
+            tolerance: 10.0,
         }
     }
 }
@@ -940,9 +947,9 @@ impl Document {
     }
 
     /// Fill the image directly (fill tool).
-    pub fn flood_fill(&mut self, x: i32, y: i32, c: Color32) {
+    pub fn flood_fill(&mut self, x: i32, y: i32, c: Color32, tolerance: u8) {
         let mut img = self.image.clone();
-        if let Some(r) = pixels::flood_fill(&mut img, x, y, c) {
+        if let Some(r) = pixels::flood_fill(&mut img, x, y, c, tolerance) {
             self.begin_edit();
             self.image = img;
             self.refresh(r);
@@ -979,7 +986,7 @@ mod tests {
     fn flood_fill_and_undo_redo() {
         let s = Settings::default();
         let mut d = Document::new(20, 10);
-        d.flood_fill(3, 3, Color32::RED);
+        d.flood_fill(3, 3, Color32::RED, 0);
         assert_eq!(px(&d, 19, 9), Color32::RED);
         assert!(d.modified && d.can_undo());
         d.undo(&s);
@@ -987,6 +994,24 @@ mod tests {
         assert_eq!(vis(&d, 19, 9), Color32::WHITE, "background tile shows through");
         d.redo(&s);
         assert_eq!(px(&d, 0, 0), Color32::RED);
+    }
+
+    #[test]
+    fn fill_tolerance() {
+        let mut d = Document::new(10, 1);
+        let mut img = d.image.clone();
+        for x in 0..10 {
+            let g = 100 + x as u8 * 3; // a gentle gradient
+            pixels::set_pixel(&mut img, x, 0, Color32::from_gray(g).to_array());
+        }
+        d.image = img.clone();
+        d.flood_fill(0, 0, Color32::RED, 0);
+        assert_eq!(px(&d, 1, 0), Color32::from_gray(103), "exact fill stops at the first change");
+        d.image = img;
+        d.flood_fill(0, 0, Color32::RED, 30);
+        assert_eq!(px(&d, 9, 0), Color32::RED, "tolerance covers the gradient");
+        // Filling with a colour inside the tolerance must terminate.
+        d.flood_fill(0, 0, Color32::from_rgb(250, 10, 10), 255);
     }
 
     #[test]
@@ -1008,9 +1033,9 @@ mod tests {
         let mut s = Settings::default();
         s.color2 = Color32::from_rgb(0, 0, 255);
         let mut d = Document::new(40, 40);
-        d.flood_fill(0, 0, Color32::WHITE);
+        d.flood_fill(0, 0, Color32::WHITE, 0);
         let mut img = d.image.clone();
-        pixels::flood_fill(&mut img, 0, 0, Color32::GREEN);
+        pixels::flood_fill(&mut img, 0, 0, Color32::GREEN, 0);
         d.image = img;
         d.select_rect(&s, IRect::new(0, 0, 10, 10));
         d.lift(&s);
@@ -1030,7 +1055,7 @@ mod tests {
         let s = Settings::default();
         let mut d = Document::new(40, 40);
         let mut img = d.image.clone();
-        pixels::flood_fill(&mut img, 0, 0, Color32::GREEN);
+        pixels::flood_fill(&mut img, 0, 0, Color32::GREEN, 0);
         d.image = img;
         d.select_rect(&s, IRect::new(0, 0, 10, 10));
         d.stamp_float(&s, true);
@@ -1065,7 +1090,7 @@ mod tests {
     fn layers_composite_hide_merge_and_undo() {
         let s = Settings::default();
         let mut d = Document::new(10, 10);
-        d.flood_fill(0, 0, Color32::RED);
+        d.flood_fill(0, 0, Color32::RED, 0);
         d.add_layer(&s);
         assert_eq!((d.layers.len(), d.active), (2, 1));
         d.begin_stroke(1.0, false);
@@ -1157,7 +1182,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mspaint-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut d = Document::new(16, 8);
-        d.flood_fill(0, 0, Color32::from_rgb(10, 200, 30));
+        d.flood_fill(0, 0, Color32::from_rgb(10, 200, 30), 0);
         for ext in ["png", "bmp", "jpg", "gif", "tiff", "webp", "ico"] {
             let p = dir.join(format!("t.{ext}"));
             pixels::save(&d.image, &p).unwrap_or_else(|e| panic!("{ext}: {e}"));

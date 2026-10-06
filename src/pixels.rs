@@ -267,36 +267,41 @@ pub fn clear_region(p: &mut Pixmap, r: IRect) {
     }
 }
 
-/// Flood fill (4-connected) starting at (x, y) replacing exactly-matching pixels.
-/// Returns the touched bounding box.
-pub fn flood_fill(p: &mut Pixmap, x: i32, y: i32, color: Color32) -> Option<IRect> {
+/// Flood fill (4-connected) from (x, y). Pixels whose channels all differ from the
+/// start pixel by at most `tolerance` (0-255) are filled. Returns the touched bounding box.
+pub fn flood_fill(p: &mut Pixmap, x: i32, y: i32, color: Color32, tolerance: u8) -> Option<IRect> {
     let start = idx(p, x, y)?;
     let w = p.width() as i32;
     let h = p.height() as i32;
     let fill = premul(color);
     let d = p.data_mut();
     let target = [d[start], d[start + 1], d[start + 2], d[start + 3]];
-    if target == fill {
+    if target == fill && tolerance == 0 {
         return None;
     }
-    let at = |x: i32, y: i32| ((y * w + x) * 4) as usize;
+    let tol = tolerance as i16;
+    let matches = |px: &[u8]| (0..4).all(|k| (px[k] as i16 - target[k] as i16).abs() <= tol);
+    let mut seen = vec![false; (w * h) as usize];
+    let at = |x: i32, y: i32| (y * w + x) as usize;
     let mut bbox = IRect::new(x, y, x + 1, y + 1);
     let mut stack = vec![(x, y)];
     while let Some((sx, sy)) = stack.pop() {
+        if seen[at(sx, sy)] || !matches(&d[at(sx, sy) * 4..at(sx, sy) * 4 + 4]) {
+            continue;
+        }
+        let ok = |d: &[u8], seen: &[bool], x: i32, y: i32| !seen[at(x, y)] && matches(&d[at(x, y) * 4..at(x, y) * 4 + 4]);
         let mut lx = sx;
-        while lx > 0 && d[at(lx - 1, sy)..at(lx - 1, sy) + 4] == target {
+        while lx > 0 && ok(d, &seen, lx - 1, sy) {
             lx -= 1;
         }
         let mut rx = sx;
-        while rx < w - 1 && d[at(rx + 1, sy)..at(rx + 1, sy) + 4] == target {
+        while rx < w - 1 && ok(d, &seen, rx + 1, sy) {
             rx += 1;
-        }
-        if d[at(sx, sy)..at(sx, sy) + 4] != target {
-            continue;
         }
         for xx in lx..=rx {
             let i = at(xx, sy);
-            d[i..i + 4].copy_from_slice(&fill);
+            seen[i] = true;
+            d[i * 4..i * 4 + 4].copy_from_slice(&fill);
         }
         bbox = bbox.union(&IRect::new(lx, sy, rx + 1, sy + 1));
         for ny in [sy - 1, sy + 1] {
@@ -305,9 +310,9 @@ pub fn flood_fill(p: &mut Pixmap, x: i32, y: i32, color: Color32) -> Option<IRec
             }
             let mut xx = lx;
             while xx <= rx {
-                if d[at(xx, ny)..at(xx, ny) + 4] == target {
+                if ok(d, &seen, xx, ny) {
                     stack.push((xx, ny));
-                    while xx <= rx && d[at(xx, ny)..at(xx, ny) + 4] == target {
+                    while xx <= rx && ok(d, &seen, xx, ny) {
                         xx += 1;
                     }
                 } else {
