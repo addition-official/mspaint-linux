@@ -389,7 +389,7 @@ impl PaintApp {
                     // Apply the brush's layer opacity (marker, watercolour...).
                     let op = k.layer_opacity();
                     if op < 1.0 {
-                        for px in layer.data_mut().chunks_exact_mut(4) {
+                        for px in layer.data_mut().as_chunks_mut::<4>().0.iter_mut() {
                             for c in px.iter_mut() {
                                 *c = (*c as f32 * op) as u8;
                             }

@@ -292,7 +292,7 @@ fn apply_style(p: &mut Pixmap, style: ShapeStyle, ox: i32, oy: i32, seed: u32) {
         return;
     }
     let w = p.width() as i32;
-    for (i, px) in p.data_mut().chunks_exact_mut(4).enumerate() {
+    for (i, px) in p.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
         if px[3] == 0 {
             continue;
         }

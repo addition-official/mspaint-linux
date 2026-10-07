@@ -8,9 +8,12 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v5
+      # Pinned so a new Rust release (with new lints) can't suddenly fail CI.
+      # Bump deliberately after checking `cargo clippy` with the new version.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.99.0
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Fonts for the text tests

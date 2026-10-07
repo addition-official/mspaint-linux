@@ -572,7 +572,7 @@ pub fn remove_background(p: &mut Pixmap) {
 
 /// Classic "Black and white" image attribute: threshold to pure black/white.
 pub fn black_and_white(p: &mut Pixmap) {
-    for px in p.data_mut().chunks_exact_mut(4) {
+    for px in p.data_mut().as_chunks_mut::<4>().0.iter_mut() {
         let a = px[3];
         if a == 0 {
             continue;
@@ -586,7 +586,7 @@ pub fn black_and_white(p: &mut Pixmap) {
 }
 
 pub fn invert_colors(p: &mut Pixmap) {
-    for px in p.data_mut().chunks_exact_mut(4) {
+    for px in p.data_mut().as_chunks_mut::<4>().0.iter_mut() {
         let a = px[3];
         for c in &mut px[..3] {
             *c = a - (*c).min(a);
@@ -604,8 +604,8 @@ pub fn resize_canvas(p: &Pixmap, w: u32, h: u32, bg: Color32) -> Pixmap {
 /// Make pixels matching `key` fully transparent.
 pub fn key_out(p: &mut Pixmap, key: Color32) {
     let k = premul(key);
-    for px in p.data_mut().chunks_exact_mut(4) {
-        if px == k {
+    for px in p.data_mut().as_chunks_mut::<4>().0.iter_mut() {
+        if *px == k {
             px.fill(0);
         }
     }
@@ -630,7 +630,7 @@ pub fn from_dynamic(img: image::DynamicImage) -> Pixmap {
 }
 
 pub fn from_rgba_unmultiplied(w: u32, h: u32, mut data: Vec<u8>) -> Pixmap {
-    for px in data.chunks_exact_mut(4) {
+    for px in data.as_chunks_mut::<4>().0.iter_mut() {
         let a = px[3] as u32;
         if a < 255 {
             for c in &mut px[..3] {
@@ -643,7 +643,7 @@ pub fn from_rgba_unmultiplied(w: u32, h: u32, mut data: Vec<u8>) -> Pixmap {
 
 pub fn to_rgba_unmultiplied(p: &Pixmap) -> image::RgbaImage {
     let mut data = p.data().to_vec();
-    for px in data.chunks_exact_mut(4) {
+    for px in data.as_chunks_mut::<4>().0.iter_mut() {
         let a = px[3] as u32;
         if a > 0 && a < 255 {
             for c in &mut px[..3] {

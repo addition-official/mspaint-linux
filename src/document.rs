@@ -188,7 +188,7 @@ impl Document {
     pub fn from_pixmap(image: Pixmap, path: Option<PathBuf>) -> Self {
         let (w, h) = (image.width(), image.height());
         let file_size = path.as_ref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
-        let has_alpha = path.is_some() && image.data().chunks_exact(4).any(|p| p[3] < 255);
+        let has_alpha = path.is_some() && image.data().as_chunks::<4>().0.iter().any(|p| p[3] < 255);
         let mut doc = Self {
             display: image.clone(),
             layer: new_pixmap(w, h, Color32::TRANSPARENT),
@@ -692,9 +692,9 @@ impl Document {
         if let Some(path) = pb.finish() {
             maskpix.fill_path(&path, &pixels::paint_for(Color32::WHITE, false), FillRule::Winding, Transform::identity(), None);
         }
-        let mask: Vec<bool> = maskpix.data().chunks_exact(4).map(|p| p[3] > 127).collect();
+        let mask: Vec<bool> = maskpix.data().as_chunks::<4>().0.iter().map(|p| p[3] > 127).collect();
         let mut pix = pixels::copy_rect(&self.image, r);
-        for (px, m) in pix.data_mut().chunks_exact_mut(4).zip(&mask) {
+        for (px, m) in pix.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(&mask) {
             if !m {
                 px.fill(0);
             }
@@ -739,7 +739,7 @@ impl Document {
         }
         let b = self.bounds();
         let mut pix = self.image.clone();
-        for (px, m) in pix.data_mut().chunks_exact_mut(4).zip(&full) {
+        for (px, m) in pix.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(&full) {
             if !m {
                 px.fill(0);
             }
@@ -1220,7 +1220,7 @@ mod tests {
             d.overlay = Overlay::Shape(PendingShape { kind, geom, stage: 2, swapped: false, seed: 1 });
             d.render_overlay(&s, &mut fm);
             d.commit_overlay(&s);
-            let changed = d.image.data().chunks_exact(4).filter(|p| p[3] > 0).count();
+            let changed = d.image.data().as_chunks::<4>().0.iter().filter(|p| p[3] > 0).count();
             assert!(changed > 50, "{kind:?} drew only {changed} pixels");
         }
     }

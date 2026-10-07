@@ -262,7 +262,7 @@ mod tests {
         let mut layer = new_pixmap(300, 60, Color32::TRANSPARENT);
         let rect = Rect::from_min_size(pos2(10.0, 10.0), egui::vec2(250.0, 40.0));
         render(&mut layer, &mut fm, &style, "Hello", rect, Color32::BLACK, Color32::WHITE);
-        let inked = layer.data().chunks_exact(4).filter(|p| p[3] > 0).count();
+        let inked = layer.data().as_chunks::<4>().0.iter().filter(|p| p[3] > 0).count();
         assert!(inked > 50, "only {inked} pixels inked");
     }
 
