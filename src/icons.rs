@@ -298,7 +298,7 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
             pl(p, r, &[(4.0, 7.0), (6.5, 11.0), (10.5, 9.0)], s);
         }
         Icon::Redo => {
-            arc(p, r, 11.0, 13.0, 6.5, 340.0, 90.0 - 360.0, s);
+            arc(p, r, 11.0, 13.0, 6.5, -20.0, -270.0, s);
             pl(p, r, &[(20.0, 7.0), (17.5, 11.0), (13.5, 9.0)], s);
         }
         Icon::Save => {

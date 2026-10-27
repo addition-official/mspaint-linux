@@ -1,6 +1,7 @@
 //! Application state, menus, keyboard shortcuts, file handling and dialogs.
 
 use crate::brush::StrokeCtx;
+use crate::color_dialog::ColorEdit;
 use crate::document::{Document, Overlay, Settings};
 use crate::icons::{self, Icon};
 use crate::pixels;
@@ -168,8 +169,9 @@ pub struct PaintApp {
     pub show_grid: bool,
     pub show_rulers: bool,
     pub dialog: Option<Dialog>,
-    pub show_edit_colors: bool,
-    pub edit_color: Color32,
+    /// Open Edit colors dialog and the background color dialog.
+    pub color_edit: Option<ColorEdit>,
+    pub bg_edit: Option<ColorEdit>,
     pub actions: Vec<Action>,
     pub recent: Vec<PathBuf>,
     clipboard: Option<arboard::Clipboard>,
@@ -189,7 +191,6 @@ pub struct PaintApp {
     pub thumbs_rev: u64,
     pub thumbs_time: f64,
     pub layer_drag: Option<usize>,
-    pub show_bg_picker: bool,
     /// Unrotated selection pixels while free-rotating.
     pub rotate_base: Option<tiny_skia::Pixmap>,
     pub brush_preview_tex: Vec<TextureHandle>,
@@ -201,7 +202,6 @@ pub struct PaintApp {
     /// A plain V key press was seen (so its release is not a Ctrl+V paste).
     v_press_seen: bool,
     /// The Background color picker already recorded an undo step.
-    pub bg_edit_recorded: bool,
     /// Accumulated Ctrl+wheel zoom, applied as preset steps.
     pub zoom_accum: f32,
 }
@@ -246,8 +246,8 @@ impl PaintApp {
             show_grid: p.grid,
             show_rulers: p.rulers,
             dialog: None,
-            show_edit_colors: false,
-            edit_color: Color32::BLACK,
+            color_edit: None,
+            bg_edit: None,
             actions: Vec::new(),
             recent: p.recent,
             clipboard: arboard::Clipboard::new().ok(),
@@ -265,7 +265,6 @@ impl PaintApp {
             thumbs_rev: u64::MAX,
             thumbs_time: 0.0,
             layer_drag: None,
-            show_bg_picker: false,
             rotate_base: None,
             brush_preview_tex: Vec::new(),
             brush_preview_dark: None,
@@ -273,7 +272,6 @@ impl PaintApp {
             edit_hsv: false,
             canvas_cursor: None,
             v_press_seen: false,
-            bg_edit_recorded: false,
             zoom_accum: 1.0,
             system_checked: 0.0,
         };
@@ -624,8 +622,8 @@ impl PaintApp {
             }
             Action::Wallpaper(mode) => self.set_wallpaper(mode),
             Action::EditColors => {
-                self.edit_color = self.s.color1;
-                self.show_edit_colors = true;
+                let c = if self.active_slot == 2 { self.s.color2 } else { self.s.color1 };
+                self.color_edit = Some(ColorEdit::new(c));
             }
             Action::About => self.dialog = Some(Dialog::About),
             Action::SizeUp | Action::SizeDown => {
@@ -643,7 +641,7 @@ impl PaintApp {
             }
             Action::BackgroundColor => {
                 self.show_layers = true;
-                self.show_bg_picker = true;
+                self.bg_edit = Some(ColorEdit::new(self.doc.background));
             }
             Action::CopyVisible => self.copy_visible(),
             Action::SetTool(t) => self.set_tool(t),
@@ -748,7 +746,7 @@ impl PaintApp {
     // Keyboard
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() || self.dialog.is_some() {
+        if ctx.egui_wants_keyboard_input() || self.modal_open() {
             return;
         }
         // Text box typing takes priority; Ctrl+B/I/U format the text.
@@ -1286,38 +1284,15 @@ impl PaintApp {
         let pal = self.pal;
         // Enter presses the default button; Esc cancels (handled at the end).
         let enter = ctx.input(|i| i.key_pressed(Key::Enter));
-        let modal = |id: &str, ctx: &egui::Context, f: &mut dyn FnMut(&mut egui::Ui)| {
-            egui::Modal::new(egui::Id::new(id)).show(ctx, |ui| {
-                // Dialog controls get visible borders, like Fluent text boxes and buttons.
-                let w = &mut ui.visuals_mut().widgets;
-                w.inactive.weak_bg_fill = w.inactive.bg_fill;
-                w.inactive.bg_stroke = egui::Stroke::new(1.0, pal.separator);
-                w.hovered.bg_stroke = egui::Stroke::new(1.0, pal.text_dim);
-                f(ui)
-            });
+        let modal = |id: &str, ctx: &egui::Context, width: f32, title: &str, buttons: &[&str], f: &mut dyn FnMut(&mut egui::Ui)| {
+            content_dialog(ctx, pal, id, width, title, buttons, f)
         };
         let mut dialog = dialog;
         match &mut dialog {
             Dialog::Unsaved(action) => {
                 let name = self.doc.name();
-                let mut choice = None;
-                modal("unsaved", ctx, &mut |ui| {
-                    ui.set_width(380.0);
-                    ui.heading("Paint");
-                    ui.add_space(8.0);
+                let choice = modal("unsaved", ctx, 420.0, "Paint", &["Save", "Don't save", "Cancel"], &mut |ui| {
                     ui.label(format!("Do you want to save your work to {name}?"));
-                    ui.add_space(16.0);
-                    ui.horizontal(|ui| {
-                        if ui.add(primary_button("Save", pal)).clicked() {
-                            choice = Some(0);
-                        }
-                        if ui.add(Button::new("Don't save").min_size(vec2(100.0, 30.0))).clicked() {
-                            choice = Some(1);
-                        }
-                        if ui.add(Button::new("Cancel").min_size(vec2(100.0, 30.0))).clicked() {
-                            choice = Some(2);
-                        }
-                    });
                 });
                 let choice = choice.or(enter.then_some(0));
                 match choice {
@@ -1340,11 +1315,7 @@ impl PaintApp {
                 }
             }
             Dialog::Resize(st) => {
-                let mut result = None;
-                modal("resize", ctx, &mut |ui| {
-                    ui.set_width(340.0);
-                    ui.heading("Resize and skew");
-                    ui.add_space(6.0);
+                let clicked = modal("resize", ctx, 360.0, "Resize and skew", &["OK", "Cancel"], &mut |ui| {
                     ui.label(RichText::new("Resize").strong());
                     ui.horizontal(|ui| {
                         if ui.radio(st.by_percent, "Percentage").clicked() && !st.by_percent {
@@ -1362,7 +1333,7 @@ impl PaintApp {
                     egui::Grid::new("resize_grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                         let max = if st.by_percent { 500.0 } else { 20000.0 };
                         ui.label("Horizontal");
-                        let first = ui.add(egui::DragValue::new(&mut st.w).range(1.0..=max).speed(1.0));
+                        let first = ui.add_sized([90.0, 26.0], egui::DragValue::new(&mut st.w).range(1.0..=max).speed(1.0));
                         if !st.focused {
                             first.request_focus();
                             st.focused = true;
@@ -1372,7 +1343,7 @@ impl PaintApp {
                         }
                         ui.end_row();
                         ui.label("Vertical");
-                        if ui.add(egui::DragValue::new(&mut st.h).range(1.0..=max).speed(1.0)).changed() && st.keep_aspect {
+                        if ui.add_sized([90.0, 26.0], egui::DragValue::new(&mut st.h).range(1.0..=max).speed(1.0)).changed() && st.keep_aspect {
                             st.w = if st.by_percent { st.h } else { (st.h / aspect).round() };
                         }
                         ui.end_row();
@@ -1382,23 +1353,14 @@ impl PaintApp {
                     ui.label(RichText::new("Skew (degrees)").strong());
                     egui::Grid::new("skew_grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                         ui.label("Horizontal");
-                        ui.add(egui::DragValue::new(&mut st.skew_x).range(-89.0..=89.0).speed(0.5));
+                        ui.add_sized([90.0, 26.0], egui::DragValue::new(&mut st.skew_x).range(-89.0..=89.0).speed(0.5));
                         ui.end_row();
                         ui.label("Vertical");
-                        ui.add(egui::DragValue::new(&mut st.skew_y).range(-89.0..=89.0).speed(0.5));
+                        ui.add_sized([90.0, 26.0], egui::DragValue::new(&mut st.skew_y).range(-89.0..=89.0).speed(0.5));
                         ui.end_row();
                     });
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        if ui.add(primary_button("OK", pal)).clicked() {
-                            result = Some(true);
-                        }
-                        if ui.add(Button::new("Cancel").min_size(vec2(100.0, 30.0))).clicked() {
-                            result = Some(false);
-                        }
-                    });
                 });
-                let result = result.or(enter.then_some(true));
+                let result = clicked.map(|i| i == 0).or(enter.then_some(true));
                 if let Some(ok) = result {
                     keep = false;
                     if ok {
@@ -1423,7 +1385,6 @@ impl PaintApp {
                 }
             }
             Dialog::Properties { w, h, unit, bw } => {
-                let mut result = None;
                 let doc = &self.doc;
                 let last_saved = doc
                     .path
@@ -1432,10 +1393,7 @@ impl PaintApp {
                     .and_then(|m| m.modified().ok())
                     .map(format_time)
                     .unwrap_or_else(|| "Not available".into());
-                modal("props", ctx, &mut |ui| {
-                    ui.set_width(380.0);
-                    ui.heading("Image properties");
-                    ui.add_space(6.0);
+                let clicked = modal("props", ctx, 400.0, "Image properties", &["OK", "Cancel"], &mut |ui| {
                     ui.label(RichText::new("File attributes").strong());
                     egui::Grid::new("props_info").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
                         ui.label("Last saved");
@@ -1486,21 +1444,13 @@ impl PaintApp {
                             ui.end_row();
                         }
                     });
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        if ui.add(primary_button("OK", pal)).clicked() {
-                            result = Some(true);
-                        }
-                        if ui.add(Button::new("Cancel").min_size(vec2(100.0, 30.0))).clicked() {
-                            result = Some(false);
-                        }
-                        if ui.add(Button::new("Default").min_size(vec2(90.0, 30.0))).clicked() {
-                            *w = DEFAULT_W;
-                            *h = DEFAULT_H;
-                        }
-                    });
+                    ui.add_space(8.0);
+                    if ui.add(Button::new("Default size").min_size(vec2(110.0, 30.0))).clicked() {
+                        *w = DEFAULT_W;
+                        *h = DEFAULT_H;
+                    }
                 });
-                let result = result.or(enter.then_some(true));
+                let result = clicked.map(|i| i == 0).or(enter.then_some(true));
                 if let Some(ok) = result {
                     keep = false;
                     if ok {
@@ -1517,9 +1467,7 @@ impl PaintApp {
                 }
             }
             Dialog::About => {
-                let mut close = false;
-                modal("about", ctx, &mut |ui| {
-                    ui.set_width(360.0);
+                let clicked = modal("about", ctx, 400.0, "About Paint", &["OK"], &mut |ui| {
                     ui.horizontal(|ui| {
                         let (r, _) = ui.allocate_exact_size(vec2(48.0, 48.0), Sense::hover());
                         app_icon(ui.painter(), r);
@@ -1532,37 +1480,20 @@ impl PaintApp {
                     ui.label("A Windows 11 Paint-style image editor for Linux and KDE Plasma, written in Rust.");
                     ui.add_space(4.0);
                     ui.label(RichText::new("Not affiliated with or endorsed by Microsoft.").small().color(pal.text_dim));
-                    ui.add_space(12.0);
-                    if ui.add(primary_button("OK", pal)).clicked() {
-                        close = true;
-                    }
                 });
-                if close || enter {
+                if clicked.is_some() || enter {
                     keep = false;
                 }
             }
             Dialog::CustomRotate { angle } => {
-                let mut result = None;
-                modal("custom_rotate", ctx, &mut |ui| {
-                    ui.set_width(300.0);
-                    ui.heading("Custom rotate");
-                    ui.add_space(6.0);
+                let clicked = modal("custom_rotate", ctx, 340.0, "Custom rotate", &["OK", "Cancel"], &mut |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Angle");
                         ui.add(egui::DragValue::new(angle).range(-360.0..=360.0).speed(0.5).suffix("°"));
                     });
                     ui.label(RichText::new("Positive angles rotate clockwise.").small().color(pal.text_dim));
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        if ui.add(primary_button("OK", pal)).clicked() {
-                            result = Some(true);
-                        }
-                        if ui.add(Button::new("Cancel").min_size(vec2(100.0, 30.0))).clicked() {
-                            result = Some(false);
-                        }
-                    });
                 });
-                let result = result.or(enter.then_some(true));
+                let result = clicked.map(|i| i == 0).or(enter.then_some(true));
                 if let Some(ok) = result {
                     keep = false;
                     if ok && *angle != 0.0 {
@@ -1573,11 +1504,7 @@ impl PaintApp {
                 }
             }
             Dialog::Print(st) => {
-                let mut result = None;
-                modal("print", ctx, &mut |ui| {
-                    ui.set_width(360.0);
-                    ui.heading("Print");
-                    ui.add_space(6.0);
+                let clicked = modal("print", ctx, 400.0, "Print", &["Print", "Cancel"], &mut |ui| {
                     egui::Grid::new("print_grid").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
                         ui.label("Printer");
                         egui::ComboBox::from_id_salt("printer").selected_text(st.printers[st.printer].clone()).width(220.0).show_ui(ui, |ui| {
@@ -1602,17 +1529,8 @@ impl PaintApp {
                         });
                         ui.end_row();
                     });
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        if ui.add(primary_button("Print", pal)).clicked() {
-                            result = Some(true);
-                        }
-                        if ui.add(Button::new("Cancel").min_size(vec2(100.0, 30.0))).clicked() {
-                            result = Some(false);
-                        }
-                    });
                 });
-                let result = result.or(enter.then_some(true));
+                let result = clicked.map(|i| i == 0).or(enter.then_some(true));
                 if let Some(ok) = result {
                     keep = false;
                     if ok {
@@ -1624,19 +1542,11 @@ impl PaintApp {
                 }
             }
             Dialog::Message(msg) => {
-                let mut close = false;
                 let msg = msg.clone();
-                modal("message", ctx, &mut |ui| {
-                    ui.set_max_width(420.0);
-                    ui.heading("Paint");
-                    ui.add_space(6.0);
+                let clicked = modal("message", ctx, 420.0, "Paint", &["OK"], &mut |ui| {
                     ui.label(&msg);
-                    ui.add_space(12.0);
-                    if ui.add(primary_button("OK", pal)).clicked() {
-                        close = true;
-                    }
                 });
-                if close || enter {
+                if clicked.is_some() || enter {
                     keep = false;
                 }
             }
@@ -1662,6 +1572,7 @@ impl PaintApp {
         egui::Window::new("Thumbnail")
             .collapsible(false)
             .resizable(false)
+            .fixed_size(size)
             .open(&mut open)
             .default_pos(egui::pos2(self.viewport.max.x - size.x - 40.0, self.viewport.min.y + 20.0))
             .show(ctx, |ui| {
@@ -1687,75 +1598,37 @@ impl PaintApp {
         self.show_thumbnail = open;
     }
 
+    /// Whether a modal dialog is up, so shortcuts and canvas overlays stay out of the way.
+    pub fn modal_open(&self) -> bool {
+        self.dialog.is_some() || self.color_edit.is_some() || self.bg_edit.is_some()
+    }
+
+    /// Edit colors: OK sets the selected color slot (Color 1 or 2) and adds the color
+    /// to the custom colors row.
     fn edit_colors_window(&mut self, ctx: &egui::Context) {
-        if !self.show_edit_colors {
-            return;
-        }
-        let mut open = true;
-        let mut done = false;
-        egui::Window::new("Edit colors")
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                egui::widgets::color_picker::color_picker_color32(ui, &mut self.edit_color, egui::color_picker::Alpha::Opaque);
-                // Numeric fields: RGB or HSV, as in Paint's Edit colors dialog.
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.edit_hsv, false, "RGB");
-                    ui.selectable_value(&mut self.edit_hsv, true, "HSV");
-                });
-                if self.edit_hsv {
-                    let hsv = egui::ecolor::Hsva::from(self.edit_color);
-                    let (mut h, mut sat, mut v) = (hsv.h * 360.0, hsv.s * 100.0, hsv.v * 100.0);
-                    let mut changed = false;
-                    ui.horizontal(|ui| {
-                        changed |= ui.add(egui::DragValue::new(&mut h).range(0.0..=360.0).prefix("H ").suffix("°").fixed_decimals(0)).changed();
-                        changed |= ui.add(egui::DragValue::new(&mut sat).range(0.0..=100.0).prefix("S ").suffix("%").fixed_decimals(0)).changed();
-                        changed |= ui.add(egui::DragValue::new(&mut v).range(0.0..=100.0).prefix("V ").suffix("%").fixed_decimals(0)).changed();
-                    });
-                    if changed {
-                        self.edit_color = egui::ecolor::Hsva::new(h / 360.0, sat / 100.0, v / 100.0, 1.0).into();
-                    }
+        let Some(mut edit) = self.color_edit.take() else { return };
+        let pal = self.pal;
+        let mut hsv_fields = self.edit_hsv;
+        let clicked = content_dialog(ctx, pal, "edit_colors", 420.0, "Edit colors", &["OK", "Cancel"], &mut |ui| {
+            edit.ui(ui, &pal, 372.0, &mut hsv_fields);
+        });
+        self.edit_hsv = hsv_fields;
+        let (enter, esc) = ctx.input(|i| (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape)));
+        match clicked.map(|i| i == 0).or(enter.then_some(true)).or(esc.then_some(false)) {
+            Some(true) => {
+                let c = edit.color();
+                if self.active_slot == 2 {
+                    self.s.color2 = c;
                 } else {
-                    let [mut r, mut g, mut b, _] = self.edit_color.to_array();
-                    let mut changed = false;
-                    ui.horizontal(|ui| {
-                        changed |= ui.add(egui::DragValue::new(&mut r).prefix("R ")).changed();
-                        changed |= ui.add(egui::DragValue::new(&mut g).prefix("G ")).changed();
-                        changed |= ui.add(egui::DragValue::new(&mut b).prefix("B ")).changed();
-                    });
-                    if changed {
-                        self.edit_color = Color32::from_rgb(r, g, b);
-                    }
+                    self.s.color1 = c;
                 }
-                ui.horizontal(|ui| {
-                    ui.label("Hex");
-                    let mut hex = self.edit_color.to_hex()[..7].to_string();
-                    if ui.add(egui::TextEdit::singleline(&mut hex).desired_width(80.0)).changed()
-                        && let Ok(c) = Color32::from_hex(hex.trim())
-                    {
-                        self.edit_color = c;
-                    }
-                });
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Set as color 1").clicked() {
-                        self.s.color1 = self.edit_color;
-                        done = true;
-                    }
-                    if ui.button("Set as color 2").clicked() {
-                        self.s.color2 = self.edit_color;
-                        done = true;
-                    }
-                });
-            });
-        if done {
-            let c = self.edit_color;
-            self.s.custom_colors.retain(|x| *x != c);
-            self.s.custom_colors.insert(0, c);
-            self.s.custom_colors.truncate(10);
+                self.s.custom_colors.retain(|x| *x != c);
+                self.s.custom_colors.insert(0, c);
+                self.s.custom_colors.truncate(10);
+            }
+            Some(false) => {}
+            None => self.color_edit = Some(edit),
         }
-        self.show_edit_colors = open && !done;
     }
 
     // -----------------------------------------------------------------------
@@ -2001,17 +1874,77 @@ fn format_time(t: std::time::SystemTime) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
-    format!("{d:02}/{m:02}/{y} {:02}:{:02} UTC", rem / 3600, rem % 3600 / 60)
+    format!("{m:02}/{d:02}/{y} {:02}:{:02} UTC", rem / 3600, rem % 3600 / 60)
+}
+
+/// Windows 11 content dialog: title and content on the dialog color, buttons of equal
+/// width in a footer band, the first one the accent (default) button. Returns the index
+/// of the clicked button.
+pub fn content_dialog(
+    ctx: &egui::Context,
+    pal: Palette,
+    id: &str,
+    width: f32,
+    title: &str,
+    buttons: &[&str],
+    f: &mut dyn FnMut(&mut egui::Ui),
+) -> Option<usize> {
+    let mut clicked = None;
+    let visuals = ctx.global_style().visuals.clone();
+    let frame = egui::Frame::new()
+        .fill(visuals.window_fill)
+        .corner_radius(8)
+        .stroke(egui::Stroke::new(1.0, pal.separator))
+        .shadow(visuals.popup_shadow);
+    egui::Modal::new(egui::Id::new(id)).frame(frame).show(ctx, |ui| {
+        // Dialog controls get visible borders, like Fluent text boxes and buttons.
+        let w = &mut ui.visuals_mut().widgets;
+        w.inactive.weak_bg_fill = w.inactive.bg_fill;
+        w.inactive.bg_stroke = egui::Stroke::new(1.0, pal.separator);
+        w.hovered.bg_stroke = egui::Stroke::new(1.0, pal.text_dim);
+        let spacing = ui.spacing().item_spacing;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let inner = width - 48.0;
+        egui::Frame::new().inner_margin(egui::Margin { left: 24, right: 24, top: 20, bottom: 24 }).show(ui, |ui| {
+            ui.spacing_mut().item_spacing = spacing;
+            ui.set_width(inner);
+            ui.label(RichText::new(title).size(20.0).strong());
+            ui.add_space(12.0);
+            f(ui);
+        });
+        let footer = if pal.dark { Color32::from_rgb(0x20, 0x20, 0x20) } else { Color32::from_rgb(0xF3, 0xF3, 0xF3) };
+        let band = egui::Frame::new()
+            .fill(footer)
+            .corner_radius(egui::CornerRadius { nw: 0, ne: 0, sw: 8, se: 8 })
+            .inner_margin(egui::Margin::same(24))
+            .show(ui, |ui| {
+                ui.set_width(inner);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let n = buttons.len() as f32;
+                    let bw = (inner - 8.0 * (n - 1.0)) / n;
+                    for (i, label) in buttons.iter().enumerate() {
+                        let b = if i == 0 { primary_button(label, pal) } else { Button::new(*label) };
+                        if ui.add_sized([bw, 32.0], b).clicked() {
+                            clicked = Some(i);
+                        }
+                    }
+                });
+            });
+        let top = band.response.rect;
+        ui.painter().hline(top.x_range(), top.min.y, egui::Stroke::new(1.0, pal.separator));
+    });
+    clicked
 }
 
 fn primary_button(label: &str, pal: Palette) -> Button<'static> {
     let fg = if pal.dark { Color32::BLACK } else { Color32::WHITE };
-    Button::new(RichText::new(label).color(fg)).fill(pal.accent).min_size(vec2(100.0, 30.0))
+    Button::new(RichText::new(label.to_string()).color(fg)).fill(pal.accent).min_size(vec2(100.0, 30.0))
 }
 
 /// Menu entry with a check mark in the left gutter (Win11 style toggles).
 fn check_item(ui: &mut egui::Ui, pal: &Palette, label: &str, shortcut: &str, checked: bool) -> bool {
-    let width = ui.available_width().max(190.0);
+    let width = ui.available_width().clamp(190.0, 260.0);
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
     pal.paint_button(ui.painter(), rect, resp.hovered(), resp.is_pointer_button_down_on(), false);
     let p = ui.painter();

@@ -15,7 +15,8 @@ impl PaintApp {
             Tool::Fill => &["tolerance"],
             _ => return,
         };
-        if !self.viewport.is_positive() {
+        // Hidden behind dialogs, which would otherwise be drawn under them.
+        if !self.viewport.is_positive() || self.modal_open() {
             return;
         }
         let pal = self.pal;

@@ -557,7 +557,9 @@ impl PaintApp {
             p.circle_stroke(center, d / 2.0 - 0.5, Stroke::new(1.0, self.pal.separator));
         } else {
             p.circle_filled(center, d / 2.0, c);
-            p.circle_stroke(center, d / 2.0, Stroke::new(1.0, Color32::from_black_alpha(50)));
+            // A faint ring keeps black swatches visible on the dark ribbon and white ones on the light one.
+            let ring = if self.pal.dark { Color32::from_white_alpha(60) } else { Color32::from_black_alpha(50) };
+            p.circle_stroke(center, d / 2.0, Stroke::new(1.0, ring));
         }
         if tip.is_empty() { resp } else { resp.on_hover_text(tip) }
     }

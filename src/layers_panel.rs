@@ -1,9 +1,9 @@
 //! The Layers side panel (Windows 11 Paint shows it on the right of the canvas).
 
-use crate::app::PaintApp;
+use crate::app::{Action, PaintApp, content_dialog};
 use crate::icons::{self, Icon};
 use crate::pixels;
-use egui::{Color32, Rect, Sense, Stroke, StrokeKind, TextureOptions, Ui, vec2};
+use egui::{Color32, Key, Rect, Sense, Stroke, StrokeKind, TextureOptions, Ui, vec2};
 
 const THUMB: egui::Vec2 = vec2(72.0, 48.0);
 
@@ -184,39 +184,46 @@ impl PaintApp {
             let (c, v) = (self.doc.background, self.doc.background_visible);
             self.doc.set_background(c, !v, true);
         } else if resp.on_hover_text("Background color (Ctrl+Shift+B)").clicked() {
-            self.show_bg_picker = true;
+            self.push(Action::BackgroundColor);
         }
     }
 
     /// Small window for choosing the Background tile color.
+    /// Background color dialog. The canvas previews the color live; OK keeps it as one
+    /// undo step and Cancel puts the old color back.
     pub fn background_picker(&mut self, ctx: &egui::Context) {
-        if !self.show_bg_picker {
-            return;
-        }
-        let mut open = true;
-        let mut c = self.doc.background;
-        egui::Window::new("Background color")
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                egui::widgets::color_picker::color_picker_color32(ui, &mut c, egui::color_picker::Alpha::Opaque);
-                ui.horizontal(|ui| {
-                    for (name, col) in [("White", Color32::WHITE), ("Black", Color32::BLACK), ("Color 1", self.s.color1), ("Color 2", self.s.color2)] {
-                        if ui.button(name).clicked() {
-                            c = col;
-                        }
+        let Some(mut edit) = self.bg_edit.take() else { return };
+        let pal = self.pal;
+        let mut hsv_fields = self.edit_hsv;
+        let swatches = [("White", Color32::WHITE), ("Black", Color32::BLACK), ("Color 1", self.s.color1), ("Color 2", self.s.color2)];
+        let clicked = content_dialog(ctx, pal, "bg_color", 420.0, "Background color", &["OK", "Cancel"], &mut |ui| {
+            edit.ui(ui, &pal, 372.0, &mut hsv_fields);
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                for (name, c) in swatches {
+                    if ui.button(name).clicked() {
+                        edit.set_rgb(c);
                     }
-                });
+                }
             });
-        if c != self.doc.background {
-            // One undo step per visit to the picker, not one per drag movement.
-            self.doc.set_background(c, true, !self.bg_edit_recorded);
-            self.bg_edit_recorded = true;
-        }
-        self.show_bg_picker = open;
-        if !open {
-            self.bg_edit_recorded = false;
+        });
+        self.edit_hsv = hsv_fields;
+        let (enter, esc) = ctx.input(|i| (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape)));
+        let visible = self.doc.background_visible;
+        match clicked.map(|i| i == 0).or(enter.then_some(true)).or(esc.then_some(false)) {
+            Some(ok) => {
+                // Back to the original without a history entry, then record the change once.
+                self.doc.set_background(edit.original, visible, false);
+                if ok && edit.color() != edit.original {
+                    self.doc.set_background(edit.color(), true, true);
+                }
+            }
+            None => {
+                if edit.color() != self.doc.background {
+                    self.doc.set_background(edit.color(), visible, false);
+                }
+                self.bg_edit = Some(edit);
+            }
         }
     }
 

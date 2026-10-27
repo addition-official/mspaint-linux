@@ -3,6 +3,7 @@
 mod app;
 mod brush;
 mod canvas;
+mod color_dialog;
 mod cursor;
 mod document;
 mod icons;
