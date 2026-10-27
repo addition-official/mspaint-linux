@@ -2,8 +2,23 @@
 //! which lets the same code render the canvas shape and the toolbar icon.
 
 use crate::tools::ShapeKind;
-use egui::{Pos2, Rect, pos2};
+use egui::{Pos2, Rect, pos2, vec2};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
+
+/// Scale and move `polys` so their combined bounds fill `r`.
+fn fit_to(polys: &mut [Vec<Pos2>], r: Rect) {
+    let mut b = Rect::NOTHING;
+    for p in polys.iter().flatten() {
+        b.extend_with(*p);
+    }
+    if b.width() <= 0.0 || b.height() <= 0.0 {
+        return;
+    }
+    let s = vec2(r.width() / b.width(), r.height() / b.height());
+    for p in polys.iter_mut().flatten() {
+        *p = r.min + (*p - b.min) * s;
+    }
+}
 
 fn ellipse(c: Pos2, rx: f32, ry: f32, n: usize) -> Vec<Pos2> {
     (0..n)
@@ -173,7 +188,10 @@ pub fn polygons(kind: ShapeKind, r: Rect) -> Vec<Vec<Pos2>> {
                 r.height() * 0.025,
                 12,
             );
-            vec![pts, small1, small2]
+            // The bumps bulge past the body's ellipse; scale everything back into the box.
+            let mut polys = vec![pts, small1, small2];
+            fit_to(&mut polys, r);
+            polys
         }
         ShapeKind::Heart => {
             let n = segments_for(r).max(64);

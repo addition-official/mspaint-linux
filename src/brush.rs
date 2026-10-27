@@ -120,6 +120,28 @@ fn stroke_line(layer: &mut Pixmap, a: Pos2, b: Pos2, width: f32, color: Color32)
     }
 }
 
+/// Anti-aliased round line written with max coverage, so the overlapping ends of the
+/// segments of a translucent stroke don't build up into darker beads.
+fn max_line(layer: &mut Pixmap, a: Pos2, b: Pos2, width: f32, color: Color32) {
+    let r = (width / 2.0).max(0.5);
+    let x0 = (a.x.min(b.x) - r - 1.0).floor() as i32;
+    let x1 = (a.x.max(b.x) + r + 1.0).ceil() as i32;
+    let y0 = (a.y.min(b.y) - r - 1.0).floor() as i32;
+    let y1 = (a.y.max(b.y) + r + 1.0).ceil() as i32;
+    let ab = b - a;
+    let len2 = ab.length_sq();
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let p = pos2(x as f32 + 0.5, y as f32 + 0.5);
+            let t = if len2 > 0.0 { ((p - a).dot(ab) / len2).clamp(0.0, 1.0) } else { 0.0 };
+            let cov = (r + 0.5 - (a + ab * t - p).length()).clamp(0.0, 1.0);
+            if cov > 0.0 {
+                max_pixel(layer, x, y, color, cov);
+            }
+        }
+    }
+}
+
 /// Soft round stamp writing max coverage (no build-up within one stroke).
 fn soft_stamp(layer: &mut Pixmap, c: Pos2, r: f32, color: Color32, hardness: f32, seed: u32, grain: f32) {
     let r = r.max(0.5);
@@ -188,7 +210,7 @@ pub fn brush_segment(
             let bristles = ctx.bristles.clone();
             for (off, strength) in bristles {
                 let c = color.gamma_multiply(strength * (0.25 + 0.75 * paint_left).min(paint_left * 4.0));
-                stroke_line(layer, a + off, b + off, (size / 5.0).max(1.0), c);
+                max_line(layer, a + off, b + off, (size / 5.0).max(1.0), c);
             }
         }
         BrushKind::Crayon => stamp_along(a, b, size * 0.25, |p| {

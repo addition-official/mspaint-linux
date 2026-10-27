@@ -8,7 +8,7 @@ use crate::icons::Icon;
 use crate::document::{Overlay, PendingShape, TextBox};
 use crate::pixels::{self, IRect};
 use crate::shapes::Geom;
-use crate::tools::{BrushKind, SelectMode, ShapeKind, Tool};
+use crate::tools::{BrushKind, SelectMode, ShapeKind, ShapeStyle, Tool};
 use egui::{
     Color32, CursorIcon, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2, vec2,
 };
@@ -30,9 +30,17 @@ fn handle_points(r: Rect) -> [Pos2; 8] {
     ]
 }
 
-/// Screen position of the rotate handle above a selection.
-fn rotate_handle(r: Rect) -> Pos2 {
-    pos2(r.center().x, r.min.y - 24.0)
+/// Gap between a text box's text and its dashed frame, in screen pixels.
+const TEXT_FRAME: f32 = 3.0;
+
+/// Screen position of the rotate handle: above the selection, or below it when the
+/// top would be out of view. Also returns the edge point it is connected to.
+fn rotate_handle(r: Rect, view: Rect) -> (Pos2, Pos2) {
+    if r.min.y - 24.0 < view.min.y + 8.0 && r.max.y + 24.0 < view.max.y - 8.0 {
+        (pos2(r.center().x, r.max.y + 24.0), pos2(r.center().x, r.max.y))
+    } else {
+        (pos2(r.center().x, r.min.y - 24.0), pos2(r.center().x, r.min.y))
+    }
 }
 
 fn hit_box(r: Rect, p: Pos2, with_handles: bool) -> Option<Hit> {
@@ -149,6 +157,17 @@ fn draw_handles(p: &egui::Painter, r: Rect, accent: Color32) {
 }
 
 impl PaintApp {
+    /// Screen frame around a pending boxed shape: outside its outline, like Windows,
+    /// so the dashed line and handles don't sit on top of the stroke.
+    fn shape_frame(&self, scr: Rect) -> Rect {
+        scr.expand(self.shape_frame_pad())
+    }
+
+    fn shape_frame_pad(&self) -> f32 {
+        let stroke = if self.s.outline == ShapeStyle::None { 0.0 } else { self.s.shape_size * self.zoom / 2.0 };
+        stroke + 3.0
+    }
+
     pub fn canvas(&mut self, ui: &mut Ui) {
         let full = ui.available_rect_before_wrap();
         let ruler = if self.show_rulers { 20.0 } else { 0.0 };
@@ -191,48 +210,57 @@ impl PaintApp {
         ui.allocate_rect(full, Sense::hover());
     }
 
+    /// Right-click menu, with icons and shortcuts as in Windows 11 Paint.
     fn context_menu(&mut self, ui: &mut Ui) {
         let has_sel = self.doc.floating().is_some();
-        let items: [(&str, Action, bool); 7] = [
-            ("Cut", Action::Cut, has_sel),
-            ("Copy", Action::Copy, has_sel),
-            ("Paste", Action::Paste, true),
-            ("Select all", Action::SelectAll, true),
-            ("Invert selection", Action::InvertSelection, true),
-            ("Delete", Action::DeleteSelection, has_sel),
-            ("Crop", Action::Crop, has_sel),
+        let items = [
+            (Icon::Cut, "Cut", "Ctrl+X", Action::Cut, has_sel),
+            (Icon::Copy, "Copy", "Ctrl+C", Action::Copy, has_sel),
+            (Icon::Paste, "Paste", "Ctrl+V", Action::Paste, true),
+            (Icon::SelectAll, "Select all", "Ctrl+A", Action::SelectAll, true),
+            (Icon::Invert, "Invert selection", "", Action::InvertSelection, true),
+            (Icon::Delete, "Delete", "Delete", Action::DeleteSelection, has_sel),
+            (Icon::Crop, "Crop", "Ctrl+Shift+X", Action::Crop, has_sel),
+            (Icon::Layers, "Copy visible layers", "Ctrl+Shift+C", Action::CopyVisible, true),
         ];
-        for (label, a, en) in items {
-            if ui.add_enabled(en, egui::Button::new(label)).clicked() {
+        for (icon, label, shortcut, a, en) in items {
+            if self.menu_item(ui, icon, label, shortcut, false, en) {
                 self.push(a);
             }
         }
-        if ui.button("Copy visible layers").clicked() {
-            self.push(Action::CopyVisible);
-        }
         ui.separator();
-        ui.menu_button("Rotate", |ui| {
-            for (label, a) in [
-                ("Rotate right 90°", Action::RotateRight),
-                ("Rotate left 90°", Action::RotateLeft),
-                ("Rotate 180°", Action::Rotate180),
-                ("Custom rotate…", Action::CustomRotate),
-                ("Flip vertical", Action::FlipVertical),
-                ("Flip horizontal", Action::FlipHorizontal),
-            ] {
-                if ui.button(label).clicked() {
-                    self.push(a);
+        type Items<'a> = &'a [(Icon, &'a str, Action)];
+        let submenus: [(Icon, &str, Items); 2] = [
+            (Icon::Rotate, "Rotate", &[
+                (Icon::RotateRight, "Rotate right 90°", Action::RotateRight),
+                (Icon::RotateLeft, "Rotate left 90°", Action::RotateLeft),
+                (Icon::Rotate180, "Rotate 180°", Action::Rotate180),
+                (Icon::Rotate, "Custom rotate…", Action::CustomRotate),
+            ]),
+            (Icon::Flip, "Flip", &[
+                (Icon::FlipV, "Flip vertical", Action::FlipVertical),
+                (Icon::FlipH, "Flip horizontal", Action::FlipHorizontal),
+            ]),
+        ];
+        for (icon, label, items) in submenus {
+            let row = self.submenu_row(ui, icon, label);
+            egui::containers::menu::SubMenu::new().show(ui, &row, |ui| {
+                for (icon, label, a) in items {
+                    if self.menu_item(ui, *icon, label, "", false, true) {
+                        self.push(a.clone());
+                    }
                 }
+            });
+        }
+        let more = [
+            (Icon::Resize, "Resize and skew", "Ctrl+W", Action::ResizeDialog),
+            (Icon::Invert, "Invert color", "Ctrl+Shift+I", Action::InvertColors),
+            (Icon::RemoveBg, "Remove background", "", Action::RemoveBackground),
+        ];
+        for (icon, label, shortcut, a) in more {
+            if self.menu_item(ui, icon, label, shortcut, false, true) {
+                self.push(a);
             }
-        });
-        if ui.button("Resize and skew").clicked() {
-            self.push(Action::ResizeDialog);
-        }
-        if ui.button("Invert color").clicked() {
-            self.push(Action::InvertColors);
-        }
-        if ui.button("Remove background").clicked() {
-            self.push(Action::RemoveBackground);
         }
     }
 
@@ -422,11 +450,12 @@ impl PaintApp {
     #[allow(clippy::too_many_arguments)]
     fn overlay_press(&mut self, p: Pos2, p_scr: Pos2, to_scr: impl Fn(Pos2) -> Pos2, dbl: bool, ctrl: bool, shift: bool) -> bool {
         let z = self.zoom;
+        let frame_pad = self.shape_frame_pad();
         match &mut self.doc.overlay {
             Overlay::Float(f) => {
                 let r = Rect::from_min_max(to_scr(f.rect.min), to_scr(f.rect.max));
                 // Free rotation (Paint 11.2601+): drag the handle above the selection.
-                if (rotate_handle(r) - p_scr).length() <= 9.0 {
+                if (rotate_handle(r, self.viewport).0 - p_scr).length() <= 9.0 {
                     let (w, h) = (f.rect.width().round().max(1.0) as u32, f.rect.height().round().max(1.0) as u32);
                     let base = if (w, h) == (f.pix.width(), f.pix.height()) { f.pix.clone() } else { pixels::resize(&f.pix, w, h) };
                     let center = f.rect.center();
@@ -491,7 +520,7 @@ impl PaintApp {
                     }
                 }
                 Geom::Boxed(r) => {
-                    let sr = Rect::from_min_max(to_scr(r.min), to_scr(r.max));
+                    let sr = Rect::from_min_max(to_scr(r.min), to_scr(r.max)).expand(frame_pad);
                     if let Some(hit) = hit_box(sr, p_scr, true) {
                         self.drag = Some(Drag::Box { hit, start_ptr: p, start_rect: *r, start_geom: None });
                         return true;
@@ -500,7 +529,7 @@ impl PaintApp {
                 _ => {}
             },
             Overlay::Text(tb) => {
-                let sr = Rect::from_min_max(to_scr(tb.rect.min), to_scr(tb.rect.max));
+                let sr = Rect::from_min_max(to_scr(tb.rect.min), to_scr(tb.rect.max)).expand(TEXT_FRAME);
                 if let Some(Hit::Handle(h)) = hit_box(sr, p_scr, true) {
                     self.drag = Some(Drag::Box { hit: Hit::Handle(h), start_ptr: p, start_rect: tb.rect, start_geom: None });
                     return true;
@@ -819,7 +848,7 @@ impl PaintApp {
         match &self.doc.overlay {
             Overlay::Float(f) => {
                 let r = Rect::from_min_max(to_scr(f.rect.min), to_scr(f.rect.max));
-                if (rotate_handle(r) - p_scr).length() <= 9.0 {
+                if (rotate_handle(r, self.viewport).0 - p_scr).length() <= 9.0 {
                     return os(CursorIcon::Grab);
                 }
                 if let Some(h) = hit_box(r, p_scr, true) {
@@ -828,14 +857,14 @@ impl PaintApp {
             }
             Overlay::Shape(sh) => {
                 if let Geom::Boxed(r) = &sh.geom {
-                    let r = Rect::from_min_max(to_scr(r.min), to_scr(r.max));
+                    let r = self.shape_frame(Rect::from_min_max(to_scr(r.min), to_scr(r.max)));
                     if let Some(h) = hit_box(r, p_scr, true) {
                         return os(handle_cursor(h));
                     }
                 }
             }
             Overlay::Text(tb) => {
-                let r = Rect::from_min_max(to_scr(tb.rect.min), to_scr(tb.rect.max));
+                let r = Rect::from_min_max(to_scr(tb.rect.min), to_scr(tb.rect.max)).expand(TEXT_FRAME);
                 match hit_box(r, p_scr, true) {
                     Some(Hit::Handle(h)) => return os(handle_cursor(Hit::Handle(h))),
                     _ if r.expand(4.0).contains(p_scr) && !r.shrink(4.0).contains(p_scr) => return os(CursorIcon::Move),
@@ -888,8 +917,8 @@ impl PaintApp {
             }
             dashed_rect(p, r, pal.accent);
             draw_handles(p, r, pal.accent);
-            let rh = rotate_handle(r);
-            p.line_segment([pos2(r.center().x, r.min.y), rh], Stroke::new(1.0, pal.accent));
+            let (rh, edge) = rotate_handle(r, self.viewport);
+            p.line_segment([edge, rh], Stroke::new(1.0, pal.accent));
             p.circle_filled(rh, 6.0, Color32::WHITE);
             p.circle_stroke(rh, 6.0, Stroke::new(1.5, pal.accent));
             if let Some(Drag::Rotate { angle, .. }) = &self.drag {
@@ -909,7 +938,7 @@ impl PaintApp {
         {
             match &sh.geom {
                 Geom::Boxed(r) => {
-                    let r = Rect::from_min_max(to_scr(r.min), to_scr(r.max));
+                    let r = self.shape_frame(Rect::from_min_max(to_scr(r.min), to_scr(r.max)));
                     dashed_rect(p, r, pal.accent);
                     draw_handles(p, r, pal.accent);
                 }
@@ -930,12 +959,12 @@ impl PaintApp {
             && let Overlay::Shape(sh) = &self.doc.overlay
             && let Geom::Boxed(r) = &sh.geom
         {
-            dashed_rect(p, Rect::from_min_max(to_scr(r.min), to_scr(r.max)), pal.accent);
+            dashed_rect(p, self.shape_frame(Rect::from_min_max(to_scr(r.min), to_scr(r.max))), pal.accent);
         }
 
         // Text box.
         if let Overlay::Text(tb) = &self.doc.overlay {
-            let r = Rect::from_min_max(to_scr(tb.rect.min), to_scr(tb.rect.max));
+            let r = Rect::from_min_max(to_scr(tb.rect.min), to_scr(tb.rect.max)).expand(TEXT_FRAME);
             dashed_rect(p, r, pal.accent);
             draw_handles(p, r, pal.accent);
             let blink = (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;
@@ -1040,7 +1069,10 @@ impl PaintApp {
                 let len = if is_major { size * 0.6 } else { size * 0.25 };
                 p.line_segment([pos2(left.max.x - len, y), pos2(left.max.x, y)], tick);
                 if is_major {
-                    p.text(pos2(left.min.x + 1.0, y + 1.0), egui::Align2::LEFT_TOP, format!("{}", v as i64), font.clone(), pal.text_dim);
+                    // Rotated to read bottom to top, below the tick, like Windows.
+                    let g = p.layout_no_wrap(format!("{}", v as i64), font.clone(), pal.text_dim);
+                    let at = pos2(left.min.x + 2.0, y + 2.0 + g.size().x);
+                    p.add(egui::epaint::TextShape::new(at, g, pal.text_dim).with_angle(-std::f32::consts::FRAC_PI_2));
                 }
             }
             v += minor;

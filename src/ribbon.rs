@@ -3,8 +3,17 @@
 use crate::app::{Action, PaintApp};
 use crate::icons::{self, Icon};
 use crate::tools::{BrushKind, SelectMode, ShapeKind, ShapeStyle, Tool, size_presets};
-use egui::{Color32, PopupCloseBehavior, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, vec2};
+use egui::{Color32, PopupCloseBehavior, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, Vec2, vec2};
 
+/// Group widths, full and folded (see `ribbon`).
+const SWATCH: f32 = 21.0;
+const COLORS_W: f32 = 36.0 + 8.0 + SWATCH * 10.0 + 8.0 + 46.0;
+const COLORS_COMPACT_W: f32 = 36.0 + 8.0 + 52.0;
+const GALLERY: Vec2 = vec2(24.0 * 8.0 + 6.0, 20.0 * 3.0 + 6.0);
+const SHAPES_W: f32 = GALLERY.x + 6.0 + 52.0;
+const SHAPES_COMPACT_W: f32 = 52.0 + 6.0 + 52.0;
+const IMAGE_W: f32 = 180.0;
+const IMAGE_COMPACT_W: f32 = 52.0;
 pub const PALETTE: [[u8; 3]; 20] = [
     [0, 0, 0],
     [127, 127, 127],
@@ -150,6 +159,23 @@ impl PaintApp {
     }
 
     pub fn ribbon(&mut self, ui: &mut Ui) {
+        // Like Windows 11 Paint, fold groups into drop-downs when the window is too
+        // narrow: first the color palette, then the shape gallery, then the Image group.
+        let fixed = 94.0 + 104.0 + 52.0 + 52.0 + 52.0 + 7.0 * 17.0;
+        let widths = |c: [bool; 3]| {
+            fixed
+                + if c[0] { COLORS_COMPACT_W } else { COLORS_W }
+                + if c[1] { SHAPES_COMPACT_W } else { SHAPES_W }
+                + if c[2] { IMAGE_COMPACT_W } else { IMAGE_W }
+        };
+        let avail = ui.available_width();
+        let mut compact = [false; 3];
+        for i in 0..3 {
+            if widths(compact) <= avail {
+                break;
+            }
+            compact[i] = true;
+        }
         egui::ScrollArea::horizontal()
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {
@@ -157,17 +183,17 @@ impl PaintApp {
                     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                     self.clipboard_group(ui);
                     self.separator_v(ui);
-                    self.image_group(ui);
+                    self.image_group(ui, compact[2]);
                     self.separator_v(ui);
                     self.tools_group(ui);
                     self.separator_v(ui);
                     self.brushes_group(ui);
                     self.separator_v(ui);
-                    self.shapes_group(ui);
+                    self.shapes_group(ui, compact[1]);
                     self.separator_v(ui);
                     self.size_group(ui);
                     self.separator_v(ui);
-                    self.colors_group(ui);
+                    self.colors_group(ui, compact[0]);
                     self.separator_v(ui);
                     self.layers_button(ui);
                 });
@@ -222,8 +248,15 @@ impl PaintApp {
         });
     }
 
-    fn image_group(&mut self, ui: &mut Ui) {
-        self.with_group(ui, "Image", 180.0, |app, ui, c| {
+    fn image_group(&mut self, ui: &mut Ui, compact: bool) {
+        if compact {
+            self.with_group(ui, "Image", IMAGE_COMPACT_W, |app, ui, c| {
+                let resp = app.stacked_dropdown_at(ui, r(c.min.x + 2.0, c.min.y + 2.0, 48.0, 62.0), "image_menu", Icon::Picture, "Image");
+                egui::Popup::menu(&resp).width(240.0).show(|ui| app.image_menu(ui));
+            });
+            return;
+        }
+        self.with_group(ui, "Image", IMAGE_W, |app, ui, c| {
             // Selection: big split button.
             let icon = if app.s.select_mode == SelectMode::FreeForm { Icon::SelectFree } else { Icon::SelectRect };
             let (main, chev) = app.split_btn_at(ui, r(c.min.x + 2.0, c.min.y + 2.0, 44.0, 62.0), "select", icon, app.s.tool == Tool::Select, "Selection");
@@ -302,9 +335,69 @@ impl PaintApp {
         });
     }
 
+    /// Everything in the Image group as one menu, for the folded ribbon.
+    fn image_menu(&mut self, ui: &mut Ui) {
+        let has_sel = self.doc.floating().is_some();
+        for (mode, icon, label) in [
+            (SelectMode::Rectangle, Icon::SelectRect, "Rectangle selection"),
+            (SelectMode::FreeForm, Icon::SelectFree, "Free-form selection"),
+        ] {
+            let on = self.s.tool == Tool::Select && self.s.select_mode == mode;
+            if self.menu_item_icon(ui, icon, label, on) {
+                self.s.select_mode = mode;
+                self.set_tool(Tool::Select);
+            }
+        }
+        for (icon, label, shortcut, a, enabled) in [
+            (Icon::SelectAll, "Select all", "Ctrl+A", Action::SelectAll, true),
+            (Icon::Invert, "Invert selection", "", Action::InvertSelection, true),
+            (Icon::Delete, "Delete", "Delete", Action::DeleteSelection, has_sel),
+        ] {
+            if self.menu_item(ui, icon, label, shortcut, false, enabled) {
+                self.push(a);
+            }
+        }
+        if self.menu_item_icon(ui, Icon::Transparent, "Transparent selection", self.s.transparent_selection) {
+            self.s.transparent_selection = !self.s.transparent_selection;
+        }
+        ui.separator();
+        for (icon, label, shortcut, a, enabled) in [
+            (Icon::Crop, "Crop", "Ctrl+Shift+X", Action::Crop, has_sel),
+            (Icon::Resize, "Resize and skew", "Ctrl+W", Action::ResizeDialog, true),
+            (Icon::RotateRight, "Rotate right 90°", "", Action::RotateRight, true),
+            (Icon::RotateLeft, "Rotate left 90°", "", Action::RotateLeft, true),
+            (Icon::Rotate180, "Rotate 180°", "", Action::Rotate180, true),
+            (Icon::Rotate, "Custom rotate…", "", Action::CustomRotate, true),
+            (Icon::FlipV, "Flip vertical", "", Action::FlipVertical, true),
+            (Icon::FlipH, "Flip horizontal", "", Action::FlipHorizontal, true),
+            (Icon::RemoveBg, "Remove background", "", Action::RemoveBackground, true),
+        ] {
+            if self.menu_item(ui, icon, label, shortcut, false, enabled) {
+                self.push(a);
+            }
+        }
+    }
+
     /// Menu entry with an icon in a fixed gutter; `checked` shows a tick on the right.
     fn menu_item_icon(&self, ui: &mut Ui, icon: Icon, label: &str, checked: bool) -> bool {
         self.menu_item(ui, icon, label, "", checked, true)
+    }
+
+    /// Menu row that opens a submenu (pass its response to `SubMenu::show`): icon
+    /// gutter, label and a right-pointing chevron.
+    pub fn submenu_row(&self, ui: &mut Ui, icon: Icon, label: &str) -> Response {
+        let width = ui.available_width().clamp(190.0, 260.0);
+        let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+        let open = egui::Popup::is_id_open(ui.ctx(), egui::containers::menu::SubMenu::id_from_widget_id(resp.id));
+        self.pal.paint_button(ui.painter(), rect, resp.hovered() || open, false, false);
+        let fg = self.pal.text;
+        self.paint_icon_fg(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), 16.0, icon, fg);
+        ui.painter().text(egui::pos2(rect.min.x + 34.0, rect.center().y), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(13.5), fg);
+        let c = egui::pos2(rect.max.x - 12.0, rect.center().y);
+        let s = Stroke::new(1.2, self.pal.text_dim);
+        ui.painter().line_segment([c + vec2(-2.0, -4.0), c + vec2(2.0, 0.0)], s);
+        ui.painter().line_segment([c + vec2(2.0, 0.0), c + vec2(-2.0, 4.0)], s);
+        resp
     }
 
     /// Menu entry: icon gutter, label, optional shortcut on the right, check mark,
@@ -444,25 +537,48 @@ impl PaintApp {
         self.brush_preview_tex.clone()
     }
 
-    fn shapes_group(&mut self, ui: &mut Ui) {
+    /// The 8x3 shape gallery in a bordered box at `frame` (`GALLERY` sized).
+    fn shape_gallery(&mut self, ui: &mut Ui, frame: Rect) -> bool {
         let (cw, ch, cols) = (24.0, 20.0, 8usize);
-        let grid_w = cw * cols as f32 + 6.0;
-        self.with_group(ui, "Shapes", grid_w + 6.0 + 52.0, |app, ui, c| {
-            // Shape gallery in a bordered box.
-            let frame = r(c.min.x, c.center().y - (3.0 * ch + 6.0) / 2.0, grid_w, 3.0 * ch + 6.0);
-            ui.painter().rect_stroke(frame, 4.0, Stroke::new(1.0, app.pal.separator), StrokeKind::Inside);
-            for (i, k) in ShapeKind::ALL.into_iter().enumerate() {
-                let (col, row) = ((i % cols) as f32, (i / cols) as f32);
-                let rect = r(frame.min.x + 3.0 + col * cw, frame.min.y + 3.0 + row * ch, cw, ch);
-                let sel = app.s.tool == Tool::Shape && app.s.shape == k;
-                if app.btn_at(ui, rect, k.name(), Icon::Shape(k), sel, k.name()).clicked() {
-                    app.doc.commit_overlay(&app.s);
-                    app.s.shape = k;
-                    app.set_tool(Tool::Shape);
-                }
+        ui.painter().rect_stroke(frame, 4.0, Stroke::new(1.0, self.pal.separator), StrokeKind::Inside);
+        let mut picked = false;
+        for (i, k) in ShapeKind::ALL.into_iter().enumerate() {
+            let (col, row) = ((i % cols) as f32, (i / cols) as f32);
+            let rect = r(frame.min.x + 3.0 + col * cw, frame.min.y + 3.0 + row * ch, cw, ch);
+            let sel = self.s.tool == Tool::Shape && self.s.shape == k;
+            if self.btn_at(ui, rect, k.name(), Icon::Shape(k), sel, k.name()).clicked() {
+                self.doc.commit_overlay(&self.s);
+                self.s.shape = k;
+                self.set_tool(Tool::Shape);
+                picked = true;
             }
+        }
+        picked
+    }
+
+    fn shapes_group(&mut self, ui: &mut Ui, compact: bool) {
+        let width = if compact { SHAPES_COMPACT_W } else { SHAPES_W };
+        self.with_group(ui, "Shapes", width, |app, ui, c| {
+            let x = if compact {
+                // Folded: the current shape, opening the gallery.
+                let rect = r(c.min.x + 2.0, c.min.y + 2.0, 48.0, 62.0);
+                let resp = app.stacked_dropdown_at(ui, rect, "shape_menu", Icon::Shape(app.s.shape), "Shapes");
+                if app.s.tool == Tool::Shape {
+                    app.button_bg(ui, rect, &resp, true);
+                }
+                egui::Popup::menu(&resp).show(|ui| {
+                    let (frame, _) = ui.allocate_exact_size(GALLERY, Sense::hover());
+                    if app.shape_gallery(ui, frame) {
+                        ui.close();
+                    }
+                });
+                c.min.x + 52.0 + 6.0
+            } else {
+                let frame = Rect::from_min_size(egui::pos2(c.min.x, c.center().y - GALLERY.y / 2.0), GALLERY);
+                app.shape_gallery(ui, frame);
+                frame.max.x + 6.0
+            };
             // Outline and Fill drop-downs.
-            let x = frame.max.x + 6.0;
             for (i, outline) in [true, false].into_iter().enumerate() {
                 let (icon, tip, key) = if outline {
                     (Icon::Outline, "Shape outline", "outline")
@@ -472,10 +588,19 @@ impl PaintApp {
                 let rect = r(x, c.min.y + 3.0 + i as f32 * 31.0, 52.0, 29.0);
                 let resp = app.dropdown_at(ui, rect, key, icon, tip);
                 let cur = if outline { app.s.outline } else { app.s.fill };
-                egui::Popup::menu(&resp).width(170.0).show(|ui| {
+                egui::Popup::menu(&resp).width(200.0).show(|ui| {
                     for st in ShapeStyle::ALL {
                         let name = if outline { st.outline_name() } else { st.fill_name() };
-                        if ui.add(egui::Button::new(name).selected(cur == st)).clicked() {
+                        let style_icon = match st {
+                            ShapeStyle::None => Icon::Close,
+                            ShapeStyle::Solid => icon,
+                            ShapeStyle::Crayon => Icon::Brush(BrushKind::Crayon),
+                            ShapeStyle::Marker => Icon::Brush(BrushKind::Marker),
+                            ShapeStyle::Oil => Icon::Brush(BrushKind::Oil),
+                            ShapeStyle::NaturalPencil => Icon::Brush(BrushKind::NaturalPencil),
+                            ShapeStyle::Watercolor => Icon::Brush(BrushKind::Watercolor),
+                        };
+                        if app.menu_item(ui, style_icon, name, "", cur == st, true) {
                             if outline {
                                 app.s.outline = st;
                             } else {
@@ -564,10 +689,41 @@ impl PaintApp {
         if tip.is_empty() { resp } else { resp.on_hover_text(tip) }
     }
 
-    fn colors_group(&mut self, ui: &mut Ui) {
-        let cell = 21.0;
+    /// The 10x3 palette (two standard rows, one custom row) with its top-left at `origin`.
+    fn palette_swatches(&mut self, ui: &mut Ui, origin: egui::Pos2) {
+        let cell = SWATCH;
+        for i in 0..30 {
+            let (col, row) = ((i % 10) as f32, (i / 10) as f32);
+            let rect = r(origin.x + col * cell, origin.y + row * cell, cell, cell);
+            let color = if let Some(rgb) = PALETTE.get(i) {
+                Color32::from_rgb(rgb[0], rgb[1], rgb[2])
+            } else {
+                self.s.custom_colors.get(i - 20).copied().unwrap_or(Color32::TRANSPARENT)
+            };
+            let resp = self.color_circle_at(ui, rect, &format!("pal{i}"), color, false, "");
+            if color == Color32::TRANSPARENT {
+                if resp.clicked() {
+                    self.push(Action::EditColors);
+                }
+                continue;
+            }
+            // Shift+click (or right-click) a swatch sets color 2.
+            if resp.clicked() && ui.input(|i| i.modifiers.shift) {
+                self.s.color2 = color;
+            } else if resp.clicked() {
+                self.set_active_color(color);
+            }
+            if resp.secondary_clicked() {
+                self.s.color2 = color;
+            }
+        }
+    }
+
+    fn colors_group(&mut self, ui: &mut Ui, compact: bool) {
+        let cell = SWATCH;
         let pal_w = cell * 10.0;
-        self.with_group(ui, "Colors", 36.0 + 8.0 + pal_w + 8.0 + 46.0, |app, ui, c| {
+        let width = if compact { COLORS_COMPACT_W } else { COLORS_W };
+        self.with_group(ui, "Colors", width, |app, ui, c| {
             // Color 1 / Color 2, stacked.
             let x = c.min.x + 2.0;
             let c1 = app.color_circle_at(ui, r(x, c.min.y + 1.0, 32.0, 32.0), "c1", app.s.color1, app.active_slot == 1, "Color 1 (foreground)");
@@ -578,34 +734,22 @@ impl PaintApp {
             if c2.clicked() {
                 app.active_slot = 2;
             }
-            // Palette: 2 standard rows + 1 custom row.
             let px0 = c.min.x + 44.0;
-            let py0 = c.center().y - 1.5 * cell;
-            for i in 0..30 {
-                let (col, row) = ((i % 10) as f32, (i / 10) as f32);
-                let rect = r(px0 + col * cell, py0 + row * cell, cell, cell);
-                let color = if let Some(rgb) = PALETTE.get(i) {
-                    Color32::from_rgb(rgb[0], rgb[1], rgb[2])
-                } else {
-                    app.s.custom_colors.get(i - 20).copied().unwrap_or(Color32::TRANSPARENT)
-                };
-                let resp = app.color_circle_at(ui, rect, &format!("pal{i}"), color, false, "");
-                if color == Color32::TRANSPARENT {
-                    if resp.clicked() {
+            if compact {
+                // Folded: the palette and Edit colors in a drop-down.
+                let resp = app.stacked_dropdown_at(ui, r(px0, c.min.y + 2.0, 48.0, 62.0), "palette_menu", Icon::Palette, "Colors");
+                egui::Popup::menu(&resp).show(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(vec2(pal_w, 3.0 * cell), Sense::hover());
+                    app.palette_swatches(ui, rect.min);
+                    ui.separator();
+                    if app.menu_item(ui, Icon::Plus, "Edit colors", "", false, true) {
                         app.push(Action::EditColors);
                     }
-                    continue;
-                }
-                // Shift+click (or right-click) a swatch sets color 2.
-                if resp.clicked() && ui.input(|i| i.modifiers.shift) {
-                    app.s.color2 = color;
-                } else if resp.clicked() {
-                    app.set_active_color(color);
-                }
-                if resp.secondary_clicked() {
-                    app.s.color2 = color;
-                }
+                });
+                return;
             }
+            // Palette: 2 standard rows + 1 custom row.
+            app.palette_swatches(ui, egui::pos2(px0, c.center().y - 1.5 * cell));
             // Edit colors (rainbow ring).
             let rect = r(px0 + pal_w + 8.0, c.min.y + 2.0, 44.0, 62.0);
             let resp = ui.interact(rect, ui.id().with("edit_colors"), Sense::click());

@@ -59,6 +59,8 @@ pub enum Icon {
     Plus,
     Flip,
     RemoveBg,
+    Palette,
+    Picture,
 }
 
 fn g(r: Rect, x: f32, y: f32) -> Pos2 {
@@ -208,6 +210,30 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
             dashed_rect(p, r, 2.5, 2.5, 21.5, 21.5, s);
             p.circle_filled(g(r, 12.0, 9.0), r.width() / 24.0 * 3.2, accent);
             filled(p, r, &[(6.0, 20.0), (7.5, 15.0), (12.0, 13.5), (16.5, 15.0), (18.0, 20.0)], accent);
+        }
+        Icon::Palette => {
+            // Painter's palette with a thumb hole and paint dots.
+            let pts: Vec<Pos2> = (0..=32)
+                .map(|i| {
+                    let a = i as f32 / 32.0 * std::f32::consts::TAU;
+                    g(r, 12.0 + 9.5 * a.cos(), 12.0 + 8.0 * a.sin())
+                })
+                .collect();
+            p.add(Shape::line(pts, s));
+            p.circle_stroke(g(r, 15.5, 16.0), r.width() / 24.0 * 1.8, s);
+            for (x, y, c) in [
+                (7.5, 11.0, Color32::from_rgb(0xE8, 0x3B, 0x3B)),
+                (10.5, 7.5, Color32::from_rgb(0xF5, 0xB4, 0x00)),
+                (15.0, 7.5, Color32::from_rgb(0x2E, 0xA0, 0x43)),
+                (18.0, 11.0, Color32::from_rgb(0x1E, 0x6F, 0xD9)),
+            ] {
+                p.circle_filled(g(r, x, y), r.width() / 24.0 * 1.7, c);
+            }
+        }
+        Icon::Picture => {
+            p.rect_stroke(Rect::from_min_max(g(r, 3.0, 5.0), g(r, 21.0, 19.0)), 2.0, s, StrokeKind::Middle);
+            pl(p, r, &[(5.0, 17.0), (10.0, 11.0), (13.5, 14.5), (16.0, 12.0), (19.5, 16.5)], s);
+            p.circle_filled(g(r, 16.0, 8.5), r.width() / 24.0 * 1.6, accent);
         }
         Icon::Crop => {
             pl(p, r, &[(7.0, 2.0), (7.0, 17.0), (22.0, 17.0)], s);

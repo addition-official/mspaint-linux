@@ -114,9 +114,16 @@ pub struct Layout {
     pub lines: Vec<(usize, usize, f32)>,
 }
 
+/// Scale for an em size of `px` pixels. ab_glyph scales by the font's ascent-to-descent
+/// height, which is larger than the em, so passing `px` directly draws text too small.
+pub fn em_scale(font: &FontVec, px: f32) -> PxScale {
+    let upem = font.units_per_em().unwrap_or(1.0);
+    PxScale::from(px * font.height_unscaled() / upem)
+}
+
 /// Greedy word-wrap layout within `width`.
 pub fn layout(font: &FontVec, px: f32, text: &str, origin: Pos2, width: f32, align: u8) -> Layout {
-    let sf = font.as_scaled(PxScale::from(px));
+    let sf = font.as_scaled(em_scale(font, px));
     let line_height = sf.height() + sf.line_gap();
     let chars: Vec<char> = text.chars().collect();
     let adv = |c: char| sf.h_advance(font.glyph_id(c));
@@ -199,7 +206,8 @@ pub fn render(
     let Some(font) = fm.font(&style.family, style.bold, style.italic) else { return dirty };
     let px = style.px();
     let lay = layout(&font, px, text, rect.min, rect.width(), style.align);
-    let sf = font.as_scaled(PxScale::from(px));
+    let scale = em_scale(&font, px);
+    let sf = font.as_scaled(scale);
     let ascent = sf.ascent();
     let chars: Vec<char> = text.chars().collect();
     // Render glyphs into a temporary pixmap clipped to the text box.
@@ -212,7 +220,7 @@ pub fn render(
         }
         let p = lay.caret[i];
         let gid = font.glyph_id(c);
-        let glyph = gid.with_scale_and_position(PxScale::from(px), ab_glyph::point(p.x - rect.min.x, p.y - rect.min.y + ascent));
+        let glyph = gid.with_scale_and_position(scale, ab_glyph::point(p.x - rect.min.x, p.y - rect.min.y + ascent));
         if let Some(og) = font.outline_glyph(glyph) {
             let bb = og.px_bounds();
             og.draw(|gx, gy, cov| {
