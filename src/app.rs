@@ -945,9 +945,15 @@ impl PaintApp {
             let br = Rect::from_min_size(egui::pos2(rect.max.x - bw * (i + 1) as f32, rect.min.y), vec2(bw, rect.height()));
             let resp = ui.interact(br, ui.id().with(("caption", i)), Sense::click());
             let close = icon == Icon::Close;
-            let fg = if close && resp.hovered() { Color32::WHITE } else { pal.text };
+            let pressed = resp.is_pointer_button_down_on();
+            let fg = if close && resp.hovered() { Color32::WHITE } else { pal.icon_fg(true, pressed) };
             if resp.hovered() {
-                let fill = if close { Color32::from_rgb(0xC4, 0x2B, 0x1C) } else { pal.hover };
+                let fill = match (close, pressed) {
+                    (true, false) => Color32::from_rgb(0xC4, 0x2B, 0x1C),
+                    (true, true) => Color32::from_rgb(0xC8, 0x40, 0x31),
+                    (false, false) => pal.hover,
+                    (false, true) => pal.pressed,
+                };
                 ui.painter().rect_filled(br, 0.0, fill);
             }
             icons::paint(ui.painter(), Rect::from_center_size(br.center(), vec2(16.0, 16.0)), icon, fg, pal.accent);
@@ -963,7 +969,6 @@ impl PaintApp {
 
     /// The row under the title bar: File and View menus, quick-access buttons, settings.
     fn menu_row(&mut self, ui: &mut egui::Ui) {
-        let pal = self.pal;
         ui.spacing_mut().interact_size.y = 32.0;
         ui.horizontal_centered(|ui| {
             ui.set_min_height(40.0);
@@ -991,10 +996,8 @@ impl PaintApp {
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.add_space(8.0);
-                    let resp = egui::containers::menu::MenuButton::from_button(
-                        Button::new("").min_size(vec2(36.0, 32.0)).frame(false),
-                    )
-                    .ui(ui, |ui| {
+                    let gear = self.icon_button(ui, Icon::Gear, true);
+                    egui::Popup::menu(&gear).show(|ui| {
                         ui.set_min_width(220.0);
                         ui.label(RichText::new("App theme").strong());
                         for (t, n) in [(ThemePref::Light, "Light"), (ThemePref::Dark, "Dark"), (ThemePref::System, "Use system setting")] {
@@ -1010,9 +1013,7 @@ impl PaintApp {
                             self.push(Action::About);
                         }
                     });
-                    let r = Rect::from_center_size(resp.0.rect.center(), vec2(20.0, 20.0));
-                    icons::paint(ui.painter(), r, Icon::Gear, pal.text, pal.accent);
-                    resp.0.on_hover_text("Settings");
+                    gear.on_hover_text("Settings");
                 });
             });
         });
@@ -1057,12 +1058,20 @@ impl PaintApp {
         true
     }
 
+    /// Flat icon button in the Win11 style (subtle hover and pressed fills).
     fn quick_button(&self, ui: &mut egui::Ui, icon: Icon, tip: &str, enabled: bool) -> bool {
-        let resp = ui.add_enabled(enabled, Button::new("").min_size(vec2(36.0, 32.0)).frame(false));
-        let fg = if enabled { self.pal.text } else { self.pal.text_dim.gamma_multiply(0.6) };
-        let r = Rect::from_center_size(resp.rect.center(), vec2(20.0, 20.0));
-        icons::paint(ui.painter(), r, icon, fg, self.pal.accent);
-        resp.on_hover_text(tip).clicked()
+        let resp = self.icon_button(ui, icon, enabled);
+        enabled && resp.on_hover_text(tip).clicked()
+    }
+
+    fn icon_button(&self, ui: &mut egui::Ui, icon: Icon, enabled: bool) -> egui::Response {
+        let sense = if enabled { Sense::click() } else { Sense::hover() };
+        let (rect, resp) = ui.allocate_exact_size(vec2(36.0, 32.0), sense);
+        let pressed = enabled && resp.is_pointer_button_down_on();
+        self.pal.paint_button(ui.painter(), rect, enabled && resp.hovered(), pressed, false);
+        let r = Rect::from_center_size(rect.center(), vec2(20.0, 20.0));
+        icons::paint(ui.painter(), r, icon, self.pal.icon_fg(enabled, pressed), self.pal.accent);
+        resp
     }
 
     fn file_menu(&mut self, ui: &mut egui::Ui) {
@@ -1956,9 +1965,7 @@ fn primary_button(label: &str, pal: Palette) -> Button<'static> {
 fn check_item(ui: &mut egui::Ui, pal: &Palette, label: &str, shortcut: &str, checked: bool) -> bool {
     let width = ui.available_width().max(190.0);
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
-    if resp.hovered() {
-        ui.painter().rect_filled(rect, 4.0, pal.hover);
-    }
+    pal.paint_button(ui.painter(), rect, resp.hovered(), resp.is_pointer_button_down_on(), false);
     let p = ui.painter();
     if checked {
         p.text(egui::pos2(rect.min.x + 10.0, rect.center().y), egui::Align2::LEFT_CENTER, "✔", egui::FontId::proportional(13.0), pal.text);

@@ -38,20 +38,29 @@ fn r(x: f32, y: f32, w: f32, h: f32) -> Rect {
 }
 
 impl PaintApp {
-    fn button_bg(&self, ui: &Ui, rect: Rect, hovered: bool, selected: bool) {
-        let pal = self.pal;
-        if selected {
-            ui.painter().rect_filled(rect, 4.0, pal.selected);
-            ui.painter()
-                .rect_stroke(rect, 4.0, Stroke::new(1.0, pal.accent.gamma_multiply(0.45)), StrokeKind::Inside);
-        } else if hovered {
-            ui.painter().rect_filled(rect, 4.0, pal.hover);
-        }
+    /// Fluent button background for `resp` (hover and pressed states) in `rect`.
+    pub fn button_bg(&self, ui: &Ui, rect: Rect, resp: &Response, selected: bool) {
+        let enabled = resp.sense.senses_click();
+        self.pal.paint_button(
+            ui.painter(),
+            rect,
+            enabled && resp.hovered(),
+            enabled && resp.is_pointer_button_down_on(),
+            selected,
+        );
     }
 
     fn paint_icon(&self, ui: &Ui, center: egui::Pos2, size: f32, icon: Icon, enabled: bool) {
-        let fg = if enabled { self.pal.text } else { self.pal.text_dim.gamma_multiply(0.6) };
+        self.paint_icon_fg(ui, center, size, icon, self.pal.icon_fg(enabled, false));
+    }
+
+    fn paint_icon_fg(&self, ui: &Ui, center: egui::Pos2, size: f32, icon: Icon, fg: Color32) {
         icons::paint(ui.painter(), Rect::from_center_size(center, vec2(size, size)), icon, fg, self.pal.accent);
+    }
+
+    /// Icon color for a button response (dims while pressed).
+    fn resp_fg(&self, resp: &Response, enabled: bool) -> Color32 {
+        self.pal.icon_fg(enabled, enabled && resp.is_pointer_button_down_on())
     }
 
     fn paint_chevron(&self, ui: &Ui, center: egui::Pos2) {
@@ -82,9 +91,9 @@ impl PaintApp {
     ) -> Response {
         let sense = if enabled { Sense::click() } else { Sense::hover() };
         let resp = ui.interact(rect, ui.id().with(key), sense);
-        self.button_bg(ui, rect, enabled && resp.hovered(), selected);
+        self.button_bg(ui, rect, &resp, selected);
         let size = (rect.height() - 8.0).clamp(14.0, 20.0);
-        self.paint_icon(ui, rect.center(), size, icon, enabled);
+        self.paint_icon_fg(ui, rect.center(), size, icon, self.resp_fg(&resp, enabled));
         resp.on_hover_text(tip)
     }
 
@@ -95,13 +104,17 @@ impl PaintApp {
         let bottom = Rect::from_min_max(egui::pos2(rect.min.x, rect.max.y - CHEVRON_H), rect.max);
         let main = ui.interact(top, ui.id().with((key, "main")), Sense::click());
         let chev = ui.interact(bottom, ui.id().with((key, "chev")), Sense::click());
-        self.button_bg(ui, rect, false, selected);
+        // Win11 split button: hovering either part lightly highlights the whole button and
+        // the part under the pointer more strongly; the pressed part gets the pressed fill.
+        let pal = self.pal;
+        pal.paint_button(ui.painter(), rect, false, false, selected);
         if main.hovered() || chev.hovered() {
-            ui.painter().rect_filled(rect, 4.0, self.pal.hover.gamma_multiply(if selected { 0.5 } else { 1.0 }));
-            let hot = if main.hovered() { top } else { bottom };
-            ui.painter().rect_filled(hot, 4.0, self.pal.hover);
+            ui.painter().rect_filled(rect, 4.0, pal.hover.gamma_multiply(0.6));
+            let (hot, resp) = if main.hovered() { (top, &main) } else { (bottom, &chev) };
+            let fill = if resp.is_pointer_button_down_on() { pal.pressed } else { pal.hover };
+            ui.painter().rect_filled(hot, 4.0, fill);
         }
-        self.paint_icon(ui, top.center() + vec2(0.0, 2.0), 22.0, icon, true);
+        self.paint_icon_fg(ui, top.center() + vec2(0.0, 2.0), 22.0, icon, self.resp_fg(&main, true));
         self.paint_chevron(ui, bottom.center());
         (main.on_hover_text(tip), chev.on_hover_text(format!("{tip} options")))
     }
@@ -110,9 +123,9 @@ impl PaintApp {
     /// Size button works like this (the whole button opens the list).
     fn stacked_dropdown_at(&self, ui: &mut Ui, rect: Rect, key: &str, icon: Icon, tip: &str) -> Response {
         let resp = ui.interact(rect, ui.id().with(key), Sense::click());
-        self.button_bg(ui, rect, resp.hovered(), false);
+        self.button_bg(ui, rect, &resp, false);
         let top = Rect::from_min_max(rect.min, egui::pos2(rect.max.x, rect.max.y - CHEVRON_H));
-        self.paint_icon(ui, top.center() + vec2(0.0, 2.0), 22.0, icon, true);
+        self.paint_icon_fg(ui, top.center() + vec2(0.0, 2.0), 22.0, icon, self.resp_fg(&resp, true));
         self.paint_chevron(ui, egui::pos2(rect.center().x, rect.max.y - CHEVRON_H / 2.0));
         resp.on_hover_text(tip)
     }
@@ -120,9 +133,10 @@ impl PaintApp {
     /// Icon with a small chevron to its right; the whole button opens a drop-down.
     fn dropdown_at(&self, ui: &mut Ui, rect: Rect, key: &str, icon: Icon, tip: &str) -> Response {
         let resp = ui.interact(rect, ui.id().with(key), Sense::click());
-        self.button_bg(ui, rect, resp.hovered(), false);
+        self.button_bg(ui, rect, &resp, false);
         let icon_size = (rect.height() - 8.0).clamp(14.0, 20.0);
-        self.paint_icon(ui, egui::pos2(rect.min.x + 4.0 + icon_size / 2.0, rect.center().y), icon_size, icon, true);
+        let fg = self.resp_fg(&resp, true);
+        self.paint_icon_fg(ui, egui::pos2(rect.min.x + 4.0 + icon_size / 2.0, rect.center().y), icon_size, icon, fg);
         self.paint_chevron(ui, egui::pos2(rect.max.x - 8.0, rect.center().y));
         resp.on_hover_text(tip)
     }
@@ -291,9 +305,7 @@ impl PaintApp {
     fn menu_item_icon(&self, ui: &mut Ui, icon: Icon, label: &str, checked: bool) -> bool {
         let width = ui.available_width().max(180.0);
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
-        if resp.hovered() {
-            ui.painter().rect_filled(rect, 4.0, self.pal.hover);
-        }
+        self.button_bg(ui, rect, &resp, false);
         self.paint_icon(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), 16.0, icon, true);
         ui.painter().text(
             egui::pos2(rect.min.x + 34.0, rect.center().y),
@@ -353,7 +365,7 @@ impl PaintApp {
                 for (i, k) in BrushKind::ALL.into_iter().enumerate() {
                     let (row, resp) = ui.allocate_exact_size(vec2(290.0, 40.0), Sense::click());
                     let sel = app.s.tool == Tool::Brush && app.s.brush == k;
-                    app.button_bg(ui, row, resp.hovered(), sel);
+                    app.button_bg(ui, row, &resp, sel);
                     app.paint_icon(ui, egui::pos2(row.min.x + 20.0, row.center().y), 20.0, Icon::Brush(k), true);
                     ui.painter().text(
                         egui::pos2(row.min.x + 40.0, row.center().y),
@@ -472,11 +484,7 @@ impl PaintApp {
                     for &sz in size_presets(tool) {
                         let cur = app.size_for(tool);
                         let (rect, resp) = ui.allocate_exact_size(vec2(170.0, 26.0), Sense::click());
-                        if (cur - sz).abs() < 0.01 {
-                            ui.painter().rect_filled(rect, 4.0, app.pal.selected);
-                        } else if resp.hovered() {
-                            ui.painter().rect_filled(rect, 4.0, app.pal.hover);
-                        }
+                        app.button_bg(ui, rect, &resp, (cur - sz).abs() < 0.01);
                         ui.painter().text(
                             rect.left_center() + vec2(8.0, 0.0),
                             egui::Align2::LEFT_CENTER,
@@ -580,9 +588,7 @@ impl PaintApp {
             // Edit colors (rainbow ring).
             let rect = r(px0 + pal_w + 8.0, c.min.y + 2.0, 44.0, 62.0);
             let resp = ui.interact(rect, ui.id().with("edit_colors"), Sense::click());
-            if resp.hovered() {
-                ui.painter().rect_filled(rect, 4.0, app.pal.hover);
-            }
+            app.button_bg(ui, rect, &resp, false);
             let ctr = rect.center();
             for i in 0..36 {
                 let a0 = i as f32 / 36.0 * std::f32::consts::TAU;
@@ -614,13 +620,8 @@ impl PaintApp {
     /// Square toggle used by the text toolbar; selected state gets an accent border.
     fn toggle_box(&self, ui: &mut Ui, selected: bool, tip: &str, paint: impl FnOnce(&Ui, Rect, Color32)) -> bool {
         let (rect, resp) = ui.allocate_exact_size(vec2(36.0, 32.0), Sense::click());
-        if selected {
-            ui.painter().rect_filled(rect, 4.0, self.pal.selected);
-            ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.0, self.pal.accent), StrokeKind::Inside);
-        } else if resp.hovered() {
-            ui.painter().rect_filled(rect, 4.0, self.pal.hover);
-        }
-        paint(ui, rect, self.pal.text);
+        self.button_bg(ui, rect, &resp, selected);
+        paint(ui, rect, self.resp_fg(&resp, true));
         resp.on_hover_text(tip).clicked()
     }
 

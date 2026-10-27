@@ -44,9 +44,7 @@ impl PaintApp {
             ui.label(egui::RichText::new("Layers").size(15.0).strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let (r, resp) = ui.allocate_exact_size(vec2(30.0, 28.0), Sense::click());
-                if resp.hovered() {
-                    ui.painter().rect_filled(r, 4.0, pal.hover);
-                }
+                pal.paint_button(ui.painter(), r, resp.hovered(), resp.is_pointer_button_down_on(), false);
                 icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(18.0, 18.0)), Icon::Plus, pal.text, pal.accent);
                 if resp.on_hover_text("Add layer").clicked() {
                     self.doc.add_layer(&s);
@@ -66,12 +64,7 @@ impl PaintApp {
                     self.layer_drag = Some(i);
                 }
                 let p = ui.painter();
-                if selected {
-                    p.rect_filled(row, 6.0, pal.selected);
-                    p.rect_stroke(row, 6.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
-                } else if resp.hovered() {
-                    p.rect_filled(row, 6.0, pal.hover);
-                }
+                pal.paint_button(p, row, resp.hovered(), resp.is_pointer_button_down_on(), selected);
                 // Thumbnail on a checkerboard so transparency is visible.
                 let thumb_area = Rect::from_min_size(row.min + vec2(8.0, 8.0), THUMB);
                 if let Some(t) = self.layer_thumbs.get(i) {
@@ -93,9 +86,7 @@ impl PaintApp {
                 // Visibility toggle.
                 let eye = Rect::from_center_size(egui::pos2(row.max.x - 20.0, row.center().y), vec2(28.0, 28.0));
                 let eye_resp = ui.interact(eye, ui.id().with(("eye", i)), Sense::click());
-                if eye_resp.hovered() {
-                    ui.painter().rect_filled(eye, 4.0, pal.hover);
-                }
+                pal.paint_button(ui.painter(), eye, eye_resp.hovered(), eye_resp.is_pointer_button_down_on(), false);
                 let icon = if layer.visible { Icon::Eye } else { Icon::EyeOff };
                 icons::paint(ui.painter(), Rect::from_center_size(eye.center(), vec2(18.0, 18.0)), icon, pal.text_dim, pal.accent);
                 let tip = if layer.visible { "Hide layer" } else { "Show layer" };
@@ -169,9 +160,7 @@ impl PaintApp {
         ui.add_space(2.0);
         ui.separator();
         let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
-        if resp.hovered() {
-            ui.painter().rect_filled(row, 6.0, pal.hover);
-        }
+        pal.paint_button(ui.painter(), row, resp.hovered(), resp.is_pointer_button_down_on(), false);
         let sw = Rect::from_min_size(row.min + vec2(8.0, 8.0), vec2(THUMB.x, 28.0));
         if self.doc.background_visible {
             ui.painter().rect_filled(sw, 3.0, self.doc.background);
@@ -188,9 +177,7 @@ impl PaintApp {
         );
         let eye = Rect::from_center_size(egui::pos2(row.max.x - 20.0, row.center().y), vec2(28.0, 28.0));
         let eye_resp = ui.interact(eye, ui.id().with("bg_eye"), Sense::click());
-        if eye_resp.hovered() {
-            ui.painter().rect_filled(eye, 4.0, pal.hover);
-        }
+        pal.paint_button(ui.painter(), eye, eye_resp.hovered(), eye_resp.is_pointer_button_down_on(), false);
         let icon = if self.doc.background_visible { Icon::Eye } else { Icon::EyeOff };
         icons::paint(ui.painter(), Rect::from_center_size(eye.center(), vec2(18.0, 18.0)), icon, pal.text_dim, pal.accent);
         if eye_resp.on_hover_text("Show or hide the background (Ctrl+Shift+H)").clicked() {

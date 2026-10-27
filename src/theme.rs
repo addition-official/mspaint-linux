@@ -25,8 +25,12 @@ pub struct Palette {
     pub text_dim: Color32,
     pub separator: Color32,
     pub accent: Color32,
+    /// Button hover / pressed overlays (Fluent "subtle fill" tokens), and the
+    /// selected-tool fill and border.
     pub hover: Color32,
+    pub pressed: Color32,
     pub selected: Color32,
+    pub selected_border: Color32,
     pub status: Color32,
     pub canvas_shadow: Color32,
 }
@@ -44,8 +48,10 @@ impl Palette {
                 text_dim: Color32::from_rgb(0xA8, 0xA8, 0xA8),
                 separator: Color32::from_rgb(0x3A, 0x3A, 0x3A),
                 accent: Color32::from_rgb(0x60, 0xCD, 0xFF),
-                hover: Color32::from_rgb(0x2D, 0x2D, 0x2D),
-                selected: Color32::from_rgb(0x38, 0x38, 0x38),
+                hover: Color32::from_white_alpha(18),
+                pressed: Color32::from_white_alpha(10),
+                selected: Color32::from_rgba_unmultiplied(0x60, 0xCD, 0xFF, 34),
+                selected_border: Color32::from_rgba_unmultiplied(0x60, 0xCD, 0xFF, 170),
                 status: Color32::from_rgb(0x1C, 0x1C, 0x1C),
                 canvas_shadow: Color32::from_black_alpha(140),
             }
@@ -60,11 +66,42 @@ impl Palette {
                 text_dim: Color32::from_rgb(0x5F, 0x5F, 0x5F),
                 separator: Color32::from_rgb(0xE0, 0xE0, 0xE0),
                 accent: Color32::from_rgb(0x00, 0x5F, 0xB8),
-                hover: Color32::from_rgb(0xEC, 0xEC, 0xEC),
-                selected: Color32::from_rgb(0xE3, 0xE9, 0xF2),
+                hover: Color32::from_black_alpha(16),
+                pressed: Color32::from_black_alpha(9),
+                selected: Color32::from_rgba_unmultiplied(0x00, 0x5F, 0xB8, 26),
+                selected_border: Color32::from_rgba_unmultiplied(0x00, 0x5F, 0xB8, 150),
                 status: Color32::from_rgb(0xF3, 0xF3, 0xF3),
                 canvas_shadow: Color32::from_black_alpha(40),
             }
+        }
+    }
+}
+
+impl Palette {
+    /// Windows 11 (Fluent) button background: nothing at rest, a subtle fill on hover,
+    /// a lighter fill while pressed (the content dims, see `icon_fg`), and for the
+    /// selected tool a tinted fill with an accent border.
+    pub fn paint_button(&self, p: &egui::Painter, rect: egui::Rect, hovered: bool, pressed: bool, selected: bool) {
+        let r = 4.0;
+        if selected {
+            p.rect_filled(rect, r, self.selected);
+            p.rect_stroke(rect, r, Stroke::new(1.0, self.selected_border), egui::StrokeKind::Inside);
+        }
+        if pressed {
+            p.rect_filled(rect, r, self.pressed);
+        } else if hovered {
+            p.rect_filled(rect, r, self.hover);
+        }
+    }
+
+    /// Icon/text color for a button: dimmed while pressed, gray when disabled.
+    pub fn icon_fg(&self, enabled: bool, pressed: bool) -> Color32 {
+        if !enabled {
+            self.text_dim.gamma_multiply(0.6)
+        } else if pressed {
+            self.text_dim
+        } else {
+            self.text
         }
     }
 }
@@ -96,9 +133,10 @@ pub fn apply(ctx: &egui::Context, pal: &Palette) {
     v.widgets.hovered.weak_bg_fill = pal.hover;
     v.widgets.hovered.bg_fill = pal.hover;
     v.widgets.hovered.bg_stroke = Stroke::NONE;
-    v.widgets.active.weak_bg_fill = pal.selected;
+    v.widgets.active.weak_bg_fill = pal.pressed;
+    v.widgets.active.bg_fill = pal.pressed;
     v.widgets.active.bg_stroke = Stroke::NONE;
-    v.widgets.open.weak_bg_fill = pal.selected;
+    v.widgets.open.weak_bg_fill = pal.hover;
     v.window_stroke = Stroke::new(1.0, pal.separator);
     // Fluent sliders: filled track and round thumb.
     v.slider_trailing_fill = true;
