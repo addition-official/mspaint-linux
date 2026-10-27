@@ -21,7 +21,7 @@ included.
 | **Layers** | Layers panel with thumbnails: add, duplicate, merge down, delete, show/hide, drag to reorder. A Background tile (any color, or hidden for a transparent canvas). Transparent areas show a checkerboard, and the eraser erases to transparency |
 | **Image** | Crop, Resize and skew, Rotate 90°/180° or Custom rotate (any angle), Flip, Invert colors, Remove background, drag-to-resize canvas |
 | **Text** | Any installed font, size, bold, italic, underline, strikethrough (Ctrl+B/I/U), left/center/right alignment, background fill, word wrap |
-| **Colors** | Color 1 / Color 2 (right-click or Shift+click a swatch for Color 2), the classic 20-color palette, 10 custom colors, Edit colors (picker, RGB or HSV, hex) |
+| **Colors** | Color 1 / Color 2 (right-click or Shift+click a swatch for Color 2), the classic 20-color palette, 10 custom colors, Edit colors (spectrum, value slider, RGB or HSV, hex) |
 | **View** | Zoom 10% to 800% (Ctrl+wheel, Ctrl+PageUp/PageDown, slider, magnifier), fit to window, rulers, gridlines, status bar, thumbnail, full screen |
 | **Files** | Open / Save / Save as PNG, JPEG, BMP, GIF, TIFF, WEBP and ICO (layers are flattened); also opens TGA, PNM, QOI, HDR and more. Recent files, Import to canvas, Print, drag and drop, open from the command line |
 | **Clipboard** | Paste, Paste from file, Cut, Copy and Copy visible layers (Ctrl+Shift+C), shared with other apps (Wayland and X11). Pasting a larger image grows the canvas |
@@ -44,10 +44,10 @@ included.
 
 ### Easiest: install the .deb (no Rust needed)
 
-Needs Kubuntu 24.04 or newer (64-bit). Download `mspaint-linux_0.2.1-1_amd64.deb`, then:
+Needs Kubuntu 24.04 or newer (64-bit). Download `mspaint-linux_0.2.2-1_amd64.deb`, then:
 
 ```bash
-sudo apt install ./mspaint-linux_0.2.1-1_amd64.deb
+sudo apt install ./mspaint-linux_0.2.2-1_amd64.deb
 ```
 
 Paint then shows up in the application launcher. To remove it: `sudo apt remove mspaint-linux`.
@@ -134,7 +134,8 @@ Source layout:
 | File | Purpose |
 | --- | --- |
 | `src/app.rs` | App state, menus, shortcuts, files, dialogs, status bar |
-| `src/ribbon.rs` | The Windows 11 style toolbar |
+| `src/ribbon.rs` | The Windows 11 style toolbar, which folds groups into drop-downs on narrow windows |
+| `src/color_dialog.rs` | The Edit colors and Background color editor |
 | `src/canvas.rs` | Canvas view, zoom/scroll, rulers, gridlines, mouse interaction |
 | `src/layers_panel.rs` | Layers panel and Background tile |
 | `src/tool_sliders.rs` | Size, opacity and tolerance sliders beside the canvas |
