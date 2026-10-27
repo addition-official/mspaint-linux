@@ -12,7 +12,7 @@ pub struct StrokeCtx {
     pub seed: u32,
     /// Oil brush bristle offsets and strengths.
     pub bristles: Vec<(egui::Vec2, f32)>,
-    /// Distance painted so far (oil and watercolour run out of paint).
+    /// Distance painted so far (oil and watercolor run out of paint).
     pub distance: f32,
 }
 
@@ -77,7 +77,7 @@ pub fn hard_line(layer: &mut Pixmap, a: Pos2, b: Pos2, size: f32, color: Color32
     IRect::from_points((a.x, a.y), (b.x, b.y), s as f32 + 1.0)
 }
 
-/// Colour eraser: square stamps that replace pixels of `from` (in `image`) with `to`.
+/// Color eraser: square stamps that replace pixels of `from` (in `image`) with `to`.
 pub fn color_erase(layer: &mut Pixmap, image: &Pixmap, a: Pos2, b: Pos2, size: f32, from: Color32, to: Color32) -> IRect {
     let s = size.max(1.0).round() as i32;
     let off = (s - 1) / 2;
@@ -154,7 +154,7 @@ pub fn brush_segment(
 ) -> IRect {
     let pad = size + 4.0;
     let dirty = IRect::from_points((a.x, a.y), (b.x, b.y), pad);
-    // Like real paint, the oil and watercolour brushes run dry over a long stroke;
+    // Like real paint, the oil and watercolor brushes run dry over a long stroke;
     // start a new stroke to "reload" the brush.
     ctx.distance += (b - a).length();
     let paint_left = (1.0 - ctx.distance / (500.0 + size * 20.0)).clamp(0.0, 1.0);

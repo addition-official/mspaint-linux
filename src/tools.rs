@@ -41,7 +41,7 @@ impl BrushKind {
             BrushKind::Crayon => "Crayon",
             BrushKind::Marker => "Marker",
             BrushKind::NaturalPencil => "Natural pencil",
-            BrushKind::Watercolor => "Watercolour brush",
+            BrushKind::Watercolor => "Watercolor brush",
         }
     }
     /// Opacity the stroke layer is composited with.
@@ -165,12 +165,12 @@ impl ShapeStyle {
     pub fn outline_name(self) -> &'static str {
         match self {
             ShapeStyle::None => "No outline",
-            ShapeStyle::Solid => "Solid colour",
+            ShapeStyle::Solid => "Solid color",
             ShapeStyle::Crayon => "Crayon",
             ShapeStyle::Marker => "Marker",
             ShapeStyle::Oil => "Oil",
             ShapeStyle::NaturalPencil => "Natural pencil",
-            ShapeStyle::Watercolor => "Watercolour",
+            ShapeStyle::Watercolor => "Watercolor",
         }
     }
     pub fn fill_name(self) -> &'static str {

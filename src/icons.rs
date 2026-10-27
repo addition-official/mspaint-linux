@@ -95,7 +95,7 @@ fn arc(p: &Painter, r: Rect, cx: f32, cy: f32, rad: f32, a0: f32, a1: f32, s: St
     p.add(Shape::line(pts, s));
 }
 
-/// Paint `icon` inside `r` with foreground `fg` and accent colour `accent`.
+/// Paint `icon` inside `r` with foreground `fg` and accent color `accent`.
 pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
     let w = (r.width() / 24.0 * 1.5).max(1.0);
     let s = Stroke::new(w, fg);

@@ -124,7 +124,7 @@ pub fn set_pixel(p: &mut Pixmap, x: i32, y: i32, c: [u8; 4]) {
 #[inline]
 pub fn max_pixel(p: &mut Pixmap, x: i32, y: i32, c: Color32, alpha: f32) {
     if let Some(i) = idx(p, x, y) {
-        // The colour's own alpha scales the coverage (e.g. a fading brush).
+        // The color's own alpha scales the coverage (e.g. a fading brush).
         let [r, g, b, ca] = c.to_srgba_unmultiplied();
         let a = (alpha.clamp(0.0, 1.0) * ca as f32) as u8;
         let d = p.data_mut();
@@ -263,7 +263,7 @@ fn blend_region(dst: &mut Pixmap, src: &Pixmap, r: IRect, under: bool) {
     }
 }
 
-/// `dst[r] = dst[r] over <solid colour>` (a solid, opaque background underneath).
+/// `dst[r] = dst[r] over <solid color>` (a solid, opaque background underneath).
 pub fn under_color_region(dst: &mut Pixmap, c: Color32, r: IRect) {
     let r = r.clamp_to(dst.width(), dst.height());
     if r.is_empty() {
@@ -489,8 +489,8 @@ pub fn rotate_any(src: &Pixmap, deg: f32) -> Pixmap {
     out
 }
 
-/// Background removal without a neural network: estimate the background colour from
-/// the image border, flood it in from every border pixel with a colour tolerance and
+/// Background removal without a neural network: estimate the background color from
+/// the image border, flood it in from every border pixel with a color tolerance and
 /// make it transparent, softening the edge by one pixel. Works well for objects on
 /// plain or gently varying backgrounds (Paint's AI version handles busy scenes).
 pub fn remove_background(p: &mut Pixmap) {
@@ -512,7 +512,7 @@ pub fn remove_background(p: &mut Pixmap) {
         border.push((0, y));
         border.push((w - 1, y));
     }
-    // Median border colour per channel.
+    // Median border color per channel.
     let mut chans: [Vec<i32>; 4] = Default::default();
     for &(x, y) in &border {
         let c = px(x, y);
@@ -537,7 +537,7 @@ pub fn remove_background(p: &mut Pixmap) {
             continue;
         }
         let c = px(x, y);
-        // Grow through pixels close to the background colour or to their neighbour.
+        // Grow through pixels close to the background color or to their neighbor.
         if dist(c, &bg) > tol * 2 {
             continue;
         }

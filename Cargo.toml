@@ -36,7 +36,7 @@ section = "graphics"
 priority = "optional"
 extended-description = """\
 A clone of Windows 11 Paint for Linux, tuned for KDE Plasma / Kubuntu. \
-Pencil, brushes, shapes, text, fill, colour picker, selections, crop, \
+Pencil, brushes, shapes, text, fill, color picker, selections, crop, \
 resize/skew, rotate/flip, zoom, rulers, gridlines and light/dark themes."""
 depends = "libc6 (>= 2.39), libgl1, libegl1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-6, libxcursor1, libxrandr2, libxi6"
 recommends = "xdg-desktop-portal-kde"

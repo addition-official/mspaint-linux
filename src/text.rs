@@ -16,9 +16,9 @@ pub struct TextStyle {
     pub italic: bool,
     pub underline: bool,
     pub strikethrough: bool,
-    /// Fill the text box with the secondary colour.
+    /// Fill the text box with the secondary color.
     pub opaque: bool,
-    /// 0 = left, 1 = centre, 2 = right.
+    /// 0 = left, 1 = center, 2 = right.
     pub align: u8,
 }
 
@@ -276,14 +276,14 @@ mod tests {
     }
 
     #[test]
-    fn centres_and_right_aligns() {
+    fn centers_and_right_aligns() {
         let mut fm = FontManager::new();
         let font = fm.font(&fm.default_family(), false, false).expect("a system font");
         let left = layout(&font, 15.0, "hi", pos2(0.0, 0.0), 200.0, 0);
-        let centre = layout(&font, 15.0, "hi", pos2(0.0, 0.0), 200.0, 1);
+        let center = layout(&font, 15.0, "hi", pos2(0.0, 0.0), 200.0, 1);
         let right = layout(&font, 15.0, "hi", pos2(0.0, 0.0), 200.0, 2);
         let w = left.caret[2].x;
-        assert!((centre.caret[0].x - (200.0 - w) / 2.0).abs() < 0.5);
+        assert!((center.caret[0].x - (200.0 - w) / 2.0).abs() < 0.5);
         assert!((right.caret[2].x - 200.0).abs() < 0.5);
     }
 }

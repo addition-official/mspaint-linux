@@ -4,36 +4,36 @@ A clone of **Windows 11 Paint** for Linux, built for **Kubuntu / KDE Plasma**. I
 [egui](https://github.com/emilk/egui) and compiles to a single binary.
 
 It recreates the Windows 11 Paint layout: the Windows 11 style title bar, the File / View row with quick
-Save, Undo and Redo buttons, the toolbar (Clipboard, Image, Tools, Brushes, Shapes, Size, Colours), the
-centred canvas with resize handles, and the status bar with a zoom slider. Light and dark themes are
+Save, Undo and Redo buttons, the toolbar (Clipboard, Image, Tools, Brushes, Shapes, Size, Colors), the
+centerd canvas with resize handles, and the status bar with a zoom slider. Light and dark themes are
 included.
 
 ## Features
 
 | Area | What's there |
 | --- | --- |
-| **Tools** | Pencil, Fill with colour (with tolerance), Text, Eraser, Colour picker, Magnifier |
-| **Brushes** | Brush, Calligraphy brush, Calligraphy pen, Airbrush, Oil, Crayon, Marker, Natural pencil, Watercolour. The menu shows each brush's stroke, and oil and watercolour run out of paint over a long stroke |
+| **Tools** | Pencil, Fill with color (with tolerance), Text, Eraser, Color picker, Magnifier |
+| **Brushes** | Brush, Calligraphy brush, Calligraphy pen, Airbrush, Oil, Crayon, Marker, Natural pencil, Watercolor. The menu shows each brush's stroke, and oil and watercolor run out of paint over a long stroke |
 | **Sliders** | Size (pencil, brushes, eraser) and opacity (pencil, brushes) beside the canvas, with a live size preview; tolerance for the fill tool |
 | **Shapes** | Line, Curve (two bends), Oval, Rectangle, Rounded rectangle, Polygon, Triangle, Right triangle, Diamond, Pentagon, Hexagon, 4 arrows, 4-, 5- and 6-point stars, 3 callouts, Heart, Lightning |
-| **Shape styles** | Outline and fill: none, solid, crayon, marker, oil, natural pencil, watercolour. Shapes stay editable (move or resize with handles) until you click away. Hold Shift for squares, circles and 45° lines |
+| **Shape styles** | Outline and fill: none, solid, crayon, marker, oil, natural pencil, watercolor. Shapes stay editable (move or resize with handles) until you click away. Hold Shift for squares, circles and 45° lines |
 | **Selection** | Rectangle and free-form, select all, invert, delete (Delete or Backspace), transparent selection, move, resize (Shift keeps the aspect ratio), **free rotation** with the handle above it, Ctrl+drag to copy, Shift+drag to smear, nudge with the arrow keys |
-| **Layers** | Layers panel with thumbnails: add, duplicate, merge down, delete, show/hide, drag to reorder. A Background tile (any colour, or hidden for a transparent canvas). Transparent areas show a checkerboard, and the eraser erases to transparency |
-| **Image** | Crop, Resize and skew, Rotate 90°/180° or Custom rotate (any angle), Flip, Invert colours, Remove background, drag-to-resize canvas |
-| **Text** | Any installed font, size, bold, italic, underline, strikethrough (Ctrl+B/I/U), left/centre/right alignment, background fill, word wrap |
-| **Colours** | Colour 1 / Colour 2 (right-click or Shift+click a swatch for Colour 2), the classic 20-colour palette, 10 custom colours, Edit colours (picker, RGB or HSV, hex) |
+| **Layers** | Layers panel with thumbnails: add, duplicate, merge down, delete, show/hide, drag to reorder. A Background tile (any color, or hidden for a transparent canvas). Transparent areas show a checkerboard, and the eraser erases to transparency |
+| **Image** | Crop, Resize and skew, Rotate 90°/180° or Custom rotate (any angle), Flip, Invert colors, Remove background, drag-to-resize canvas |
+| **Text** | Any installed font, size, bold, italic, underline, strikethrough (Ctrl+B/I/U), left/center/right alignment, background fill, word wrap |
+| **Colors** | Color 1 / Color 2 (right-click or Shift+click a swatch for Color 2), the classic 20-color palette, 10 custom colors, Edit colors (picker, RGB or HSV, hex) |
 | **View** | Zoom 10% to 800% (Ctrl+wheel, Ctrl+PageUp/PageDown, slider, magnifier), fit to window, rulers, gridlines, status bar, thumbnail, full screen |
 | **Files** | Open / Save / Save as PNG, JPEG, BMP, GIF, TIFF, WEBP and ICO (layers are flattened); also opens TGA, PNM, QOI, HDR and more. Recent files, Import to canvas, Print, drag and drop, open from the command line |
 | **Clipboard** | Paste, Paste from file, Cut, Copy and Copy visible layers (Ctrl+Shift+C), shared with other apps (Wayland and X11). Pasting a larger image grows the canvas |
-| **Image properties** | Size in pixels, inches or centimetres; Colour or Black and white; last saved, size on disk |
+| **Image properties** | Size in pixels, inches or centimeters; Color or Black and white; last saved, size on disk |
 | **History** | Undo / redo (up to 100 steps) |
 
 ### KDE / Kubuntu integration
 
 - **Native KDE file dialogs** through the XDG desktop portal (`xdg-desktop-portal-kde`).
-- **Set as desktop background** (Fill, Tile, Centre) through Plasma's `plasma-apply-wallpaperimage`.
-- Uses the desktop font (**Noto Sans** on Kubuntu) and follows the Plasma light/dark colour scheme.
-- Draws a Windows 11 style title bar by default (drag to move, double-click to maximise, resize from
+- **Set as desktop background** (Fill, Tile, Center) through Plasma's `plasma-apply-wallpaperimage`.
+- Uses the desktop font (**Noto Sans** on Kubuntu) and follows the Plasma light/dark color scheme.
+- Draws a Windows 11 style title bar by default (drag to move, double-click to maximize, resize from
   the window edges). If you prefer Plasma's own title bar, turn on **Settings (gear) → Use system title bar**.
 - Native Wayland and X11 support, with a `.desktop` entry so Paint shows up in the launcher and under "Open with" for images.
 - Opens files in your XDG Pictures folder by default.
@@ -107,14 +107,14 @@ standard Kubuntu install already has them.
 | Ctrl+Shift+X | Crop to selection |
 | Ctrl+W | Resize and skew |
 | Ctrl+E | Image properties |
-| Ctrl+Shift+I | Invert colours |
+| Ctrl+Shift+I | Invert colors |
 | Ctrl++ / Ctrl+- | Bigger / smaller brush, line or eraser |
 | Ctrl+PageUp / Ctrl+PageDown / Ctrl+wheel | Zoom in / out |
 | Ctrl+1 / Ctrl+0 | Zoom to 100% / Fit to window |
 | Ctrl+R / Ctrl+G | Rulers / Gridlines |
 | Ctrl+Shift+N | New layer |
-| Ctrl+Shift+H / Ctrl+Shift+B | Show or hide the background / Background colour |
-| P, E, B, I, T, Z, S | Pencil, Eraser, Fill, Colour picker, Text, Magnifier, Select |
+| Ctrl+Shift+H / Ctrl+Shift+B | Show or hide the background / Background color |
+| P, E, B, I, T, Z, S | Pencil, Eraser, Fill, Color picker, Text, Magnifier, Select |
 | Ctrl+B / Ctrl+I / Ctrl+U | Bold / Italic / Underline (in a text box) |
 | F11 | Full screen |
 | Middle-drag | Pan the canvas |

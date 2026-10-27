@@ -1,4 +1,4 @@
-//! The Windows 11 style toolbar ("ribbon"): Image, Tools, Brushes, Shapes, Size, Colours.
+//! The Windows 11 style toolbar ("ribbon"): Image, Tools, Brushes, Shapes, Size, Colors.
 
 use crate::app::{Action, PaintApp};
 use crate::icons::{self, Icon};
@@ -310,10 +310,10 @@ impl PaintApp {
         self.with_group(ui, "Tools", 104.0, |app, ui, c| {
             let items = [
                 (Tool::Pencil, Icon::Pencil, "Pencil"),
-                (Tool::Fill, Icon::Fill, "Fill with colour"),
+                (Tool::Fill, Icon::Fill, "Fill with color"),
                 (Tool::Text, Icon::Text, "Text"),
                 (Tool::Eraser, Icon::Eraser, "Eraser"),
-                (Tool::Picker, Icon::Picker, "Colour picker"),
+                (Tool::Picker, Icon::Picker, "Color picker"),
                 (Tool::Magnifier, Icon::Magnifier, "Magnifier"),
             ];
             let (bw, bh, gap) = (32.0, 30.0, 2.0);
@@ -386,7 +386,7 @@ impl PaintApp {
                     for seg in pts.windows(2) {
                         crate::brush::brush_segment(&mut layer, k, seg[0], seg[1], 10.0, ink, &mut sc);
                     }
-                    // Apply the brush's layer opacity (marker, watercolour...).
+                    // Apply the brush's layer opacity (marker, watercolor...).
                     let op = k.layer_opacity();
                     if op < 1.0 {
                         for px in layer.data_mut().as_chunks_mut::<4>().0.iter_mut() {
@@ -531,14 +531,14 @@ impl PaintApp {
     fn colors_group(&mut self, ui: &mut Ui) {
         let cell = 21.0;
         let pal_w = cell * 10.0;
-        self.with_group(ui, "Colours", 36.0 + 8.0 + pal_w + 8.0 + 46.0, |app, ui, c| {
-            // Colour 1 / Colour 2, stacked.
+        self.with_group(ui, "Colors", 36.0 + 8.0 + pal_w + 8.0 + 46.0, |app, ui, c| {
+            // Color 1 / Color 2, stacked.
             let x = c.min.x + 2.0;
-            let c1 = app.color_circle_at(ui, r(x, c.min.y + 1.0, 32.0, 32.0), "c1", app.s.color1, app.active_slot == 1, "Colour 1 (foreground)");
+            let c1 = app.color_circle_at(ui, r(x, c.min.y + 1.0, 32.0, 32.0), "c1", app.s.color1, app.active_slot == 1, "Color 1 (foreground)");
             if c1.clicked() {
                 app.active_slot = 1;
             }
-            let c2 = app.color_circle_at(ui, r(x, c.min.y + 33.0, 32.0, 32.0), "c2", app.s.color2, app.active_slot == 2, "Colour 2 (background)");
+            let c2 = app.color_circle_at(ui, r(x, c.min.y + 33.0, 32.0, 32.0), "c2", app.s.color2, app.active_slot == 2, "Color 2 (background)");
             if c2.clicked() {
                 app.active_slot = 2;
             }
@@ -560,7 +560,7 @@ impl PaintApp {
                     }
                     continue;
                 }
-                // Shift+click (or right-click) a swatch sets colour 2.
+                // Shift+click (or right-click) a swatch sets color 2.
                 if resp.clicked() && ui.input(|i| i.modifiers.shift) {
                     app.s.color2 = color;
                 } else if resp.clicked() {
@@ -570,9 +570,9 @@ impl PaintApp {
                     app.s.color2 = color;
                 }
             }
-            // Edit colours (rainbow ring).
+            // Edit colors (rainbow ring).
             let rect = r(px0 + pal_w + 8.0, c.min.y + 2.0, 44.0, 62.0);
-            let resp = ui.interact(rect, ui.id().with("edit_colours"), Sense::click());
+            let resp = ui.interact(rect, ui.id().with("edit_colors"), Sense::click());
             if resp.hovered() {
                 ui.painter().rect_filled(rect, 4.0, app.pal.hover);
             }
@@ -590,7 +590,7 @@ impl PaintApp {
                 ui.painter().add(egui::Shape::convex_polygon(pts, Color32::from(col), Stroke::NONE));
             }
             ui.painter().text(ctr, egui::Align2::CENTER_CENTER, "+", egui::FontId::proportional(13.0), app.pal.text);
-            if resp.on_hover_text("Edit colours").clicked() {
+            if resp.on_hover_text("Edit colors").clicked() {
                 app.push(Action::EditColors);
             }
         });
@@ -674,7 +674,7 @@ impl PaintApp {
             }
             ui.separator();
             let accent = self.pal.accent;
-            for (align, icon, tip) in [(0u8, Icon::AlignLeft, "Align left"), (1, Icon::AlignCenter, "Centre"), (2, Icon::AlignRight, "Align right")] {
+            for (align, icon, tip) in [(0u8, Icon::AlignLeft, "Align left"), (1, Icon::AlignCenter, "Center"), (2, Icon::AlignRight, "Align right")] {
                 let paint = move |ui: &Ui, rect: Rect, fg: Color32| {
                     icons::paint(ui.painter(), Rect::from_center_size(rect.center(), vec2(20.0, 20.0)), icon, fg, accent);
                 };

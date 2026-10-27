@@ -228,7 +228,7 @@ impl PaintApp {
         if ui.button("Resize and skew").clicked() {
             self.push(Action::ResizeDialog);
         }
-        if ui.button("Invert colour").clicked() {
+        if ui.button("Invert color").clicked() {
             self.push(Action::InvertColors);
         }
         if ui.button("Remove background").clicked() {
@@ -533,7 +533,7 @@ impl PaintApp {
         let color = self.stroke_color(secondary);
         let size = self.s.size();
         let r = match self.s.tool {
-            // Right-dragging the eraser only replaces colour 1 with colour 2.
+            // Right-dragging the eraser only replaces color 1 with color 2.
             Tool::Eraser if secondary => {
                 brush::color_erase(&mut self.doc.layer, &self.doc.image, a, b, size, self.s.color1, self.s.color2)
             }

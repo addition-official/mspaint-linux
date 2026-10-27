@@ -163,7 +163,7 @@ impl PaintApp {
         }
     }
 
-    /// The Background tile at the bottom of the layer list: its colour and visibility.
+    /// The Background tile at the bottom of the layer list: its color and visibility.
     fn background_tile(&mut self, ui: &mut Ui) {
         let pal = self.pal;
         ui.add_space(2.0);
@@ -196,26 +196,26 @@ impl PaintApp {
         if eye_resp.on_hover_text("Show or hide the background (Ctrl+Shift+H)").clicked() {
             let (c, v) = (self.doc.background, self.doc.background_visible);
             self.doc.set_background(c, !v);
-        } else if resp.on_hover_text("Background colour (Ctrl+Shift+B)").clicked() {
+        } else if resp.on_hover_text("Background color (Ctrl+Shift+B)").clicked() {
             self.show_bg_picker = true;
         }
     }
 
-    /// Small window for choosing the Background tile colour.
+    /// Small window for choosing the Background tile color.
     pub fn background_picker(&mut self, ctx: &egui::Context) {
         if !self.show_bg_picker {
             return;
         }
         let mut open = true;
         let mut c = self.doc.background;
-        egui::Window::new("Background colour")
+        egui::Window::new("Background color")
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
                 egui::widgets::color_picker::color_picker_color32(ui, &mut c, egui::color_picker::Alpha::Opaque);
                 ui.horizontal(|ui| {
-                    for (name, col) in [("White", Color32::WHITE), ("Black", Color32::BLACK), ("Colour 1", self.s.color1), ("Colour 2", self.s.color2)] {
+                    for (name, col) in [("White", Color32::WHITE), ("Black", Color32::BLACK), ("Color 1", self.s.color1), ("Color 2", self.s.color2)] {
                         if ui.button(name).clicked() {
                             c = col;
                         }

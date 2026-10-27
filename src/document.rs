@@ -97,7 +97,7 @@ pub struct PendingShape {
     pub geom: Geom,
     /// Curve tool: 0 = straight line, 1 = first bend set, 2 = done.
     pub stage: u8,
-    /// Drawn with the right mouse button: colours swapped.
+    /// Drawn with the right mouse button: colors swapped.
     pub swapped: bool,
     pub seed: u32,
 }
@@ -283,7 +283,7 @@ impl Document {
         let (w, h) = (self.width(), self.height());
         let below: Vec<&Pixmap> = self.layers[..self.active].iter().filter(|l| l.visible).map(|l| &l.pix).collect();
         let above: Vec<&Pixmap> = self.layers[self.active + 1..].iter().filter(|l| l.visible).map(|l| &l.pix).collect();
-        // The Background tile is applied as a solid colour in `refresh`, not cached.
+        // The Background tile is applied as a solid color in `refresh`, not cached.
         self.below = (!below.is_empty()).then(|| pixels::flatten(w, h, below.into_iter()));
         self.above = (!above.is_empty()).then(|| pixels::flatten(w, h, above.into_iter()));
         if self.display.width() != w || self.display.height() != h {
@@ -1042,7 +1042,7 @@ mod tests {
         d.image = img;
         d.flood_fill(0, 0, Color32::RED, 30);
         assert_eq!(px(&d, 9, 0), Color32::RED, "tolerance covers the gradient");
-        // Filling with a colour inside the tolerance must terminate.
+        // Filling with a color inside the tolerance must terminate.
         d.flood_fill(0, 0, Color32::from_rgb(250, 10, 10), 255);
     }
 
@@ -1103,7 +1103,7 @@ mod tests {
     }
 
     #[test]
-    fn colour_eraser_only_replaces_colour_1() {
+    fn color_eraser_only_replaces_color_1() {
         let mut d = Document::new(20, 3);
         let mut img = d.image.clone();
         for x in 0..10 {

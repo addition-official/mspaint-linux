@@ -361,7 +361,7 @@ pub fn render(layer: &mut Pixmap, kind: ShapeKind, geom: &Geom, sp: &ShapeParams
             line
         };
         if let Some(path) = path_from(&[line], false) {
-            // Lines and curves always use the outline colour; "No outline" still draws them solid.
+            // Lines and curves always use the outline color; "No outline" still draws them solid.
             let style = if sp.outline == ShapeStyle::None { ShapeStyle::Solid } else { sp.outline };
             draw_part(layer, style, sp.outline_color, &|tmp| {
                 tmp.stroke_path(&path, &paint_for(sp.outline_color, true), &stroke, t, None);

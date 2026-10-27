@@ -63,7 +63,7 @@ pub enum Action {
     SizeDown,
     AddLayer,
     ToggleBackground,
-    BackgroundColour,
+    BackgroundColor,
     CopyVisible,
     SetTool(Tool),
     CustomRotate,
@@ -75,7 +75,7 @@ pub enum Action {
 pub enum Dialog {
     Unsaved(Action),
     Resize(ResizeState),
-    /// Size in pixels; `unit`: 0 = pixels, 1 = inches, 2 = centimetres.
+    /// Size in pixels; `unit`: 0 = pixels, 1 = inches, 2 = centimeters.
     Properties { w: u32, h: u32, unit: u8, bw: bool },
     About,
     Message(String),
@@ -177,7 +177,7 @@ pub struct PaintApp {
     pub system_titlebar: bool,
     decorations_applied: Option<bool>,
     pub on_window_edge: bool,
-    /// Window corner radius we currently draw (0 when maximised or using system decorations).
+    /// Window corner radius we currently draw (0 when maximized or using system decorations).
     pub corner: u8,
     system_checked: f64,
     pub show_layers: bool,
@@ -628,7 +628,7 @@ impl PaintApp {
                 let (c, v) = (self.doc.background, self.doc.background_visible);
                 self.doc.set_background(c, !v);
             }
-            Action::BackgroundColour => {
+            Action::BackgroundColor => {
                 self.show_layers = true;
                 self.show_bg_picker = true;
             }
@@ -703,7 +703,7 @@ impl PaintApp {
         }
         let fill = match mode {
             "tile" => "tile",
-            "centre" => "pad",
+            "center" => "pad",
             _ => "preserveAspectCrop",
         };
         let res = std::process::Command::new("plasma-apply-wallpaperimage")
@@ -771,7 +771,7 @@ impl PaintApp {
             (cs, Key::X, A::Crop),
             (cs, Key::N, A::AddLayer),
             (cs, Key::H, A::ToggleBackground),
-            (cs, Key::B, A::BackgroundColour),
+            (cs, Key::B, A::BackgroundColor),
             (cs, Key::C, A::CopyVisible),
             (cmd, Key::P, A::Print),
             (cmd, Key::N, A::New),
@@ -938,8 +938,8 @@ impl PaintApp {
         let bw = 46.0;
         let buttons = [
             (Icon::Close, "Close"),
-            (if maximized { Icon::Restore } else { Icon::Maximize }, if maximized { "Restore down" } else { "Maximise" }),
-            (Icon::Minimize, "Minimise"),
+            (if maximized { Icon::Restore } else { Icon::Maximize }, if maximized { "Restore down" } else { "Maximize" }),
+            (Icon::Minimize, "Minimize"),
         ];
         for (i, (icon, tip)) in buttons.into_iter().enumerate() {
             let br = Rect::from_min_size(egui::pos2(rect.max.x - bw * (i + 1) as f32, rect.min.y), vec2(bw, rect.height()));
@@ -1112,7 +1112,7 @@ impl PaintApp {
         }
         ui.separator();
         ui.menu_button("Set as desktop background", |ui| {
-            for (label, mode) in [("Fill", "fill"), ("Tile", "tile"), ("Centre", "centre")] {
+            for (label, mode) in [("Fill", "fill"), ("Tile", "tile"), ("Center", "center")] {
                 if ui.button(label).clicked() {
                     self.push(Action::Wallpaper(mode));
                 }
@@ -1398,14 +1398,14 @@ impl PaintApp {
                     ui.label(RichText::new("Units").strong());
                     ui.horizontal(|ui| {
                         ui.radio_value(unit, 1, "Inches");
-                        ui.radio_value(unit, 2, "Centimetres");
+                        ui.radio_value(unit, 2, "Centimeters");
                         ui.radio_value(unit, 0, "Pixels");
                     });
                     ui.add_space(4.0);
-                    ui.label(RichText::new("Colour").strong());
+                    ui.label(RichText::new("Color").strong());
                     ui.horizontal(|ui| {
                         ui.radio_value(bw, true, "Black and white");
-                        ui.radio_value(bw, false, "Colour");
+                        ui.radio_value(bw, false, "Color");
                     });
                     ui.add_space(8.0);
                     // Show the size in the chosen unit; store pixels.
@@ -1636,13 +1636,13 @@ impl PaintApp {
         }
         let mut open = true;
         let mut done = false;
-        egui::Window::new("Edit colours")
+        egui::Window::new("Edit colors")
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
                 egui::widgets::color_picker::color_picker_color32(ui, &mut self.edit_color, egui::color_picker::Alpha::Opaque);
-                // Numeric fields: RGB or HSV, as in Paint's Edit colours dialog.
+                // Numeric fields: RGB or HSV, as in Paint's Edit colors dialog.
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.edit_hsv, false, "RGB");
                     ui.selectable_value(&mut self.edit_hsv, true, "HSV");
@@ -1682,11 +1682,11 @@ impl PaintApp {
                 });
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Set as colour 1").clicked() {
+                    if ui.button("Set as color 1").clicked() {
                         self.s.color1 = self.edit_color;
                         done = true;
                     }
-                    if ui.button("Set as colour 2").clicked() {
+                    if ui.button("Set as color 2").clicked() {
                         self.s.color2 = self.edit_color;
                         done = true;
                     }
@@ -1746,7 +1746,7 @@ impl PaintApp {
             ThemePref::Light => false,
             ThemePref::Dark => true,
             ThemePref::System => {
-                // Re-check the Plasma colour scheme every few seconds so we follow changes live.
+                // Re-check the Plasma color scheme every few seconds so we follow changes live.
                 let now = ctx.input(|i| i.time);
                 if self.system_dark.is_none() || now - self.system_checked > 3.0 {
                     self.system_checked = now;
@@ -1795,7 +1795,7 @@ impl eframe::App for PaintApp {
             ctx.send_viewport_cmd(ViewportCommand::Decorations(self.system_titlebar));
         }
         // Windows 11 windows have rounded corners. We draw them ourselves on a transparent
-        // window whenever we own the decorations and the window isn't maximised/fullscreen.
+        // window whenever we own the decorations and the window isn't maximized/fullscreen.
         let (maximized, fullscreen) =
             ctx.input(|i| (i.viewport().maximized.unwrap_or(false), i.viewport().fullscreen.unwrap_or(false)));
         self.corner = if self.system_titlebar || maximized || fullscreen { 0 } else { WINDOW_RADIUS };

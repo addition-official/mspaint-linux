@@ -2,8 +2,8 @@
 //!
 //! Windows 11 Paint shows the brush footprint as the cursor (a circle for the pencil and
 //! brushes, a square for the eraser) and tool-shaped cursors for the fill bucket and the
-//! colour picker. Desktop cursor themes have no such cursors, so these are drawn here,
-//! black with a white halo so they stay visible on any colour. Tools that do have a
+//! color picker. Desktop cursor themes have no such cursors, so these are drawn here,
+//! black with a white halo so they stay visible on any color. Tools that do have a
 //! fitting system cursor (crosshair, I-beam, move/resize arrows, magnifier) use it,
 //! because system cursors never lag behind the pointer.
 
@@ -76,7 +76,7 @@ impl PaintApp {
                 for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (-1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0)] {
                     icons::paint(&p, r.translate(vec2(dx, dy)), icon, halo(), halo());
                 }
-                // The bucket's paint shows the current colour 1.
+                // The bucket's paint shows the current color 1.
                 icons::paint(&p, r, icon, Color32::BLACK, self.s.color1);
             }
             CanvasCursor::Os(_) => unreachable!(),

@@ -1,4 +1,4 @@
-//! Windows 11 Paint look: Fluent-ish colours, rounded controls, desktop font.
+//! Windows 11 Paint look: Fluent-ish colors, rounded controls, desktop font.
 
 use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, Stroke, Visuals};
 use std::sync::Arc;
@@ -132,7 +132,7 @@ pub fn install_fonts(ctx: &egui::Context, fm: &crate::text::FontManager) {
     ctx.set_fonts(defs);
 }
 
-/// Whether the KDE Plasma colour scheme is dark, read from `kdeglobals`.
+/// Whether the KDE Plasma color scheme is dark, read from `kdeglobals`.
 /// (winit cannot report the system theme on X11, and only overrides on Wayland.)
 pub fn kde_prefers_dark() -> Option<bool> {
     let cfg = std::env::var_os("XDG_CONFIG_HOME")
