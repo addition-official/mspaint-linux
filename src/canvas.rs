@@ -3,6 +3,8 @@
 
 use crate::app::{Action, Drag, Hit, PaintApp};
 use crate::brush::{self, StrokeCtx};
+use crate::cursor::{CanvasCursor, FILL_HOTSPOT, PICKER_HOTSPOT};
+use crate::icons::Icon;
 use crate::document::{Overlay, PendingShape, TextBox};
 use crate::pixels::{self, IRect};
 use crate::shapes::Geom;
@@ -93,6 +95,15 @@ fn keep_aspect(start: Rect, r: Rect, h: u8) -> Rect {
     Rect::from_two_pos(anchor, corner)
 }
 
+/// Canvas resize handles: 0 right edge, 1 bottom edge, 2 corner.
+fn canvas_handle_cursor(h: u8) -> CursorIcon {
+    match h {
+        0 => CursorIcon::ResizeHorizontal,
+        1 => CursorIcon::ResizeVertical,
+        _ => CursorIcon::ResizeNwSe,
+    }
+}
+
 fn handle_cursor(h: Hit) -> CursorIcon {
     match h {
         Hit::Inside => CursorIcon::Move,
@@ -165,6 +176,9 @@ impl PaintApp {
             self.image_rect = img;
             self.canvas_input(ui, &resp, img);
             self.canvas_paint(ui, img);
+            if let (Some(c), Some(at)) = (self.canvas_cursor, ui.input(|i| i.pointer.latest_pos())) {
+                self.apply_canvas_cursor(ui.ctx(), c, at);
+            }
             if self.s.tool == Tool::Select && self.drag.is_none() {
                 resp.context_menu(|ui| self.context_menu(ui));
             }
@@ -252,6 +266,7 @@ impl PaintApp {
         });
         let hovered = resp.contains_pointer();
         self.cursor_img = if hovered || self.drag.is_some() { ptr.map(to_img) } else { None };
+        self.canvas_cursor = None;
 
         if hovered && (zoom_delta - 1.0).abs() > 1e-4 {
             self.set_zoom(self.zoom * zoom_delta, ptr);
@@ -260,6 +275,8 @@ impl PaintApp {
         // Continue an ongoing drag.
         if let Some(drag) = self.drag.clone() {
             if let Some(ps_) = ptr {
+                // Keep the tool's cursor while the button is held.
+                self.canvas_cursor = Some(self.drag_cursor(&drag, to_img(ps_), to_scr));
                 self.drag_move(drag, to_img(ps_), ps_, shift);
             }
             if !down {
@@ -272,9 +289,9 @@ impl PaintApp {
         let Some(p_scr) = ptr else { return };
         let p = to_img(p_scr);
 
-        // Hover cursors.
-        if hovered {
-            self.update_cursor(ui, p_scr, img, to_scr);
+        // Hover cursors (not over the floating sliders/popups, which take the pointer).
+        if hovered && !self.on_window_edge {
+            self.canvas_cursor = Some(self.hover_cursor(p_scr, p, img, to_scr));
         }
         if !hovered || ui.ctx().any_popup_open() || self.on_window_edge {
             return;
@@ -750,61 +767,78 @@ impl PaintApp {
         }
     }
 
-    fn update_cursor(&self, ui: &Ui, p_scr: Pos2, img: Rect, to_scr: impl Fn(Pos2) -> Pos2) {
-        let ctx = ui.ctx();
-        if self.canvas_handle_hit(p_scr, img).is_some() {
-            ctx.set_cursor_icon(CursorIcon::ResizeNwSe);
-            return;
+    /// The tool's own cursor at image point `c`.
+    fn tool_cursor(&self, c: Pos2, to_scr: impl Fn(Pos2) -> Pos2) -> CanvasCursor {
+        let z = self.zoom;
+        match self.s.tool {
+            Tool::Pencil | Tool::Brush => CanvasCursor::Circle { diameter: self.s.size() * z },
+            Tool::Eraser => {
+                // The eraser stamps whole pixels: show exactly the square it will erase.
+                let s = self.s.size().round().max(1.0);
+                let tl = pos2(c.x.floor() - ((s - 1.0) / 2.0).floor(), c.y.floor() - ((s - 1.0) / 2.0).floor());
+                CanvasCursor::Square { rect: Rect::from_min_size(to_scr(tl), vec2(s, s) * z) }
+            }
+            Tool::Fill => CanvasCursor::Icon { icon: Icon::Fill, hotspot: FILL_HOTSPOT },
+            Tool::Picker => CanvasCursor::Icon { icon: Icon::Picker, hotspot: PICKER_HOTSPOT },
+            Tool::Text => CanvasCursor::Os(CursorIcon::Text),
+            Tool::Magnifier => CanvasCursor::Os(CursorIcon::ZoomIn),
+            Tool::Select | Tool::Shape => CanvasCursor::Os(CursorIcon::Crosshair),
+        }
+    }
+
+    /// Cursor while a mouse button is held.
+    fn drag_cursor(&self, drag: &Drag, c: Pos2, to_scr: impl Fn(Pos2) -> Pos2) -> CanvasCursor {
+        match drag {
+            Drag::Stroke { .. } => self.tool_cursor(c, to_scr),
+            Drag::Box { hit, .. } => CanvasCursor::Os(handle_cursor(*hit)),
+            Drag::CanvasResize { handle, .. } => CanvasCursor::Os(canvas_handle_cursor(*handle)),
+            Drag::Pan { .. } | Drag::Rotate { .. } => CanvasCursor::Os(CursorIcon::Grabbing),
+            Drag::ShapeNew { .. }
+            | Drag::CurveBend
+            | Drag::PolygonPoint
+            | Drag::LineEnd { .. }
+            | Drag::Marquee { .. }
+            | Drag::Lasso { .. }
+            | Drag::TextNew { .. } => CanvasCursor::Os(CursorIcon::Crosshair),
+        }
+    }
+
+    /// Cursor while hovering: handles first, then the tool's cursor.
+    fn hover_cursor(&self, p_scr: Pos2, c: Pos2, img: Rect, to_scr: impl Fn(Pos2) -> Pos2) -> CanvasCursor {
+        let os = CanvasCursor::Os;
+        if let Some(h) = self.canvas_handle_hit(p_scr, img) {
+            return os(canvas_handle_cursor(h));
         }
         match &self.doc.overlay {
             Overlay::Float(f) => {
                 let r = Rect::from_min_max(to_scr(f.rect.min), to_scr(f.rect.max));
                 if (rotate_handle(r) - p_scr).length() <= 9.0 {
-                    ctx.set_cursor_icon(CursorIcon::Grab);
-                    return;
+                    return os(CursorIcon::Grab);
                 }
                 if let Some(h) = hit_box(r, p_scr, true) {
-                    ctx.set_cursor_icon(handle_cursor(h));
-                    return;
+                    return os(handle_cursor(h));
                 }
             }
             Overlay::Shape(sh) => {
                 if let Geom::Boxed(r) = &sh.geom {
                     let r = Rect::from_min_max(to_scr(r.min), to_scr(r.max));
                     if let Some(h) = hit_box(r, p_scr, true) {
-                        ctx.set_cursor_icon(handle_cursor(h));
-                        return;
+                        return os(handle_cursor(h));
                     }
                 }
             }
             Overlay::Text(tb) => {
                 let r = Rect::from_min_max(to_scr(tb.rect.min), to_scr(tb.rect.max));
                 match hit_box(r, p_scr, true) {
-                    Some(Hit::Handle(h)) => {
-                        ctx.set_cursor_icon(handle_cursor(Hit::Handle(h)));
-                        return;
-                    }
-                    _ if r.expand(4.0).contains(p_scr) && !r.shrink(4.0).contains(p_scr) => {
-                        ctx.set_cursor_icon(CursorIcon::Move);
-                        return;
-                    }
-                    _ if r.contains(p_scr) => {
-                        ctx.set_cursor_icon(CursorIcon::Text);
-                        return;
-                    }
+                    Some(Hit::Handle(h)) => return os(handle_cursor(Hit::Handle(h))),
+                    _ if r.expand(4.0).contains(p_scr) && !r.shrink(4.0).contains(p_scr) => return os(CursorIcon::Move),
+                    _ if r.contains(p_scr) => return os(CursorIcon::Text),
                     _ => {}
                 }
             }
             _ => {}
         }
-        let icon = match self.s.tool {
-            Tool::Text => CursorIcon::Text,
-            Tool::Magnifier => CursorIcon::ZoomIn,
-            Tool::Eraser | Tool::Brush | Tool::Pencil if self.s.size() * self.zoom >= 4.0 => CursorIcon::None,
-            Tool::Fill | Tool::Picker => CursorIcon::Default,
-            _ => CursorIcon::Crosshair,
-        };
-        ctx.set_cursor_icon(icon);
+        self.tool_cursor(c, to_scr)
     }
 
     // -----------------------------------------------------------------------
@@ -929,28 +963,6 @@ impl PaintApp {
             let hr = Rect::from_center_size(h, vec2(HANDLE, HANDLE));
             p.rect_filled(hr, 1.5, if pal.dark { Color32::from_gray(60) } else { Color32::WHITE });
             p.rect_stroke(hr, 1.5, Stroke::new(1.0, pal.text_dim), StrokeKind::Inside);
-        }
-
-        // Brush / eraser footprint.
-        if let Some(c) = self.cursor_img
-            && matches!(self.s.tool, Tool::Brush | Tool::Eraser | Tool::Pencil)
-            && matches!(self.drag, None | Some(Drag::Stroke { .. }))
-            && matches!(self.doc.overlay, Overlay::None | Overlay::Stroke)
-            && self.s.size() * z >= 4.0
-            && img.expand(20.0).contains(to_scr(c))
-        {
-            let size = self.s.size() * z;
-            let center = to_scr(c);
-            let fg = if pal.dark { Color32::WHITE } else { Color32::BLACK };
-            if self.s.tool == Tool::Eraser {
-                let s = self.s.size().round();
-                let tl = pos2(c.x.floor() - ((s - 1.0) / 2.0).floor(), c.y.floor() - ((s - 1.0) / 2.0).floor());
-                let r = Rect::from_min_size(to_scr(tl), vec2(s, s) * z);
-                p.rect_stroke(r, 0.0, Stroke::new(1.0, fg), StrokeKind::Outside);
-            } else {
-                p.circle_stroke(center, size / 2.0, Stroke::new(1.0, fg));
-                p.circle_stroke(center, size / 2.0 + 1.0, Stroke::new(1.0, Color32::from_white_alpha(140)));
-            }
         }
     }
 

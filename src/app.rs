@@ -193,6 +193,8 @@ pub struct PaintApp {
     pub brush_preview_dark: Option<bool>,
     pub show_thumbnail: bool,
     pub edit_hsv: bool,
+    /// Cursor to show over the canvas this frame (None: leave the pointer alone).
+    pub canvas_cursor: Option<crate::cursor::CanvasCursor>,
 }
 
 impl PaintApp {
@@ -260,6 +262,7 @@ impl PaintApp {
             brush_preview_dark: None,
             show_thumbnail: false,
             edit_hsv: false,
+            canvas_cursor: None,
             system_checked: 0.0,
         };
         if let Some(path) = open {

@@ -3,6 +3,7 @@
 mod app;
 mod brush;
 mod canvas;
+mod cursor;
 mod document;
 mod icons;
 mod layers_panel;
