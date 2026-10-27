@@ -182,7 +182,7 @@ impl PaintApp {
         icons::paint(ui.painter(), Rect::from_center_size(eye.center(), vec2(18.0, 18.0)), icon, pal.text_dim, pal.accent);
         if eye_resp.on_hover_text("Show or hide the background (Ctrl+Shift+H)").clicked() {
             let (c, v) = (self.doc.background, self.doc.background_visible);
-            self.doc.set_background(c, !v);
+            self.doc.set_background(c, !v, true);
         } else if resp.on_hover_text("Background color (Ctrl+Shift+B)").clicked() {
             self.show_bg_picker = true;
         }
@@ -210,9 +210,14 @@ impl PaintApp {
                 });
             });
         if c != self.doc.background {
-            self.doc.set_background(c, true);
+            // One undo step per visit to the picker, not one per drag movement.
+            self.doc.set_background(c, true, !self.bg_edit_recorded);
+            self.bg_edit_recorded = true;
         }
         self.show_bg_picker = open;
+        if !open {
+            self.bg_edit_recorded = false;
+        }
     }
 
     /// Light/dark checkerboard used behind transparent pixels.

@@ -18,7 +18,8 @@ pub const DEFAULT_H: u32 = 648;
 pub const ZOOM_MIN: f32 = 0.1;
 const WINDOW_RADIUS: u8 = 8;
 pub const ZOOM_MAX: f32 = 8.0;
-const ZOOM_STEPS: [f32; 14] = [0.1, 0.125, 0.25, 0.33, 0.5, 0.66, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0];
+/// Zoom presets (the same list as the zoom menu); zoom in/out and Ctrl+wheel step through them.
+pub const ZOOM_STEPS: [f32; 13] = [0.1, 0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -100,6 +101,8 @@ pub struct ResizeState {
     pub skew_y: f32,
     pub base_w: f32,
     pub base_h: f32,
+    /// The first field has been given keyboard focus.
+    pub focused: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -195,6 +198,12 @@ pub struct PaintApp {
     pub edit_hsv: bool,
     /// Cursor to show over the canvas this frame (None: leave the pointer alone).
     pub canvas_cursor: Option<crate::cursor::CanvasCursor>,
+    /// A plain V key press was seen (so its release is not a Ctrl+V paste).
+    v_press_seen: bool,
+    /// The Background color picker already recorded an undo step.
+    pub bg_edit_recorded: bool,
+    /// Accumulated Ctrl+wheel zoom, applied as preset steps.
+    pub zoom_accum: f32,
 }
 
 impl PaintApp {
@@ -263,6 +272,9 @@ impl PaintApp {
             show_thumbnail: false,
             edit_hsv: false,
             canvas_cursor: None,
+            v_press_seen: false,
+            bg_edit_recorded: false,
+            zoom_accum: 1.0,
             system_checked: 0.0,
         };
         if let Some(path) = open {
@@ -585,6 +597,7 @@ impl PaintApp {
                     skew_y: 0.0,
                     base_w: bw,
                     base_h: bh,
+                    focused: false,
                 }));
             }
             Action::RotateRight => self.doc.transform(&s, pixels::rotate_cw),
@@ -626,7 +639,7 @@ impl PaintApp {
             }
             Action::ToggleBackground => {
                 let (c, v) = (self.doc.background, self.doc.background_visible);
-                self.doc.set_background(c, !v);
+                self.doc.set_background(c, !v, true);
             }
             Action::BackgroundColor => {
                 self.show_layers = true;
@@ -644,7 +657,7 @@ impl PaintApp {
                         let landscape = self.doc.width() > self.doc.height();
                         self.dialog = Some(Dialog::Print(PrintState { printers, printer: default, copies: 1, fit: true, landscape }));
                     }
-                    Some(_) => self.dialog = Some(Dialog::Message("No printers are set up. Add one in System Settings → Printers.".into())),
+                    Some(_) => self.dialog = Some(Dialog::Message("No printers are set up. Add one in System Settings > Printers.".into())),
                     None => {
                         self.dialog = Some(Dialog::Message(
                             "Printing needs CUPS (the lp and lpstat commands), which Kubuntu installs by default.".into(),
@@ -807,10 +820,15 @@ impl PaintApp {
             match e {
                 egui::Event::Copy => self.push(Action::Copy),
                 egui::Event::Cut => self.push(Action::Cut),
-                // Ctrl+V with an image on the clipboard produces no Paste event, so we react
-                // to the key release instead (and to Paste for text clipboards).
-                egui::Event::Key { key: Key::V, pressed: false, modifiers, .. } if modifiers.command => {
-                    self.push(Action::Paste)
+                // egui swallows the key *press* of Ctrl+V (and only emits a Paste event when
+                // the clipboard holds text), so an image paste is recognized by a V release
+                // without a matching press. Checking the modifiers on release is unreliable:
+                // Ctrl is often let go before V.
+                egui::Event::Key { key: Key::V, pressed: true, .. } => self.v_press_seen = true,
+                egui::Event::Key { key: Key::V, pressed: false, .. } => {
+                    if !std::mem::take(&mut self.v_press_seen) {
+                        self.push(Action::Paste);
+                    }
                 }
                 egui::Event::Key { key: Key::Delete | Key::Backspace, pressed: true, .. } => self.push(Action::DeleteSelection),
                 // Single-letter tool keys.
@@ -1181,6 +1199,8 @@ impl PaintApp {
         ui.horizontal_centered(|ui| {
             let item = |ui: &mut egui::Ui, icon: Icon, text: String, width: f32| {
                 ui.allocate_ui_with_layout(vec2(width, 24.0), Layout::left_to_right(Align::Center), |ui| {
+                    // Fixed width so the fields don't shift as the text changes.
+                    ui.set_min_width(width);
                     let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
                     icons::paint(ui.painter(), r, icon, pal.text_dim, pal.accent);
                     ui.label(RichText::new(text).size(12.0).color(pal.text_dim));
@@ -1198,12 +1218,27 @@ impl PaintApp {
                 (Some(Drag::Marquee { start, cur }), _) => {
                     format!("{} × {}px", (cur.x - start.x).abs().round(), (cur.y - start.y).abs().round())
                 }
+                (Some(Drag::TextNew { start, cur }), _) => {
+                    format!("{} × {}px", (cur.x - start.x).abs().round(), (cur.y - start.y).abs().round())
+                }
                 (_, Some(f)) => format!("{} × {}px", f.rect.width().round(), f.rect.height().round()),
-                _ => String::new(),
+                // Shapes and text boxes show their size while drawn or edited, as in Paint.
+                _ => match &self.doc.overlay {
+                    Overlay::Shape(sh) => {
+                        let b = sh.geom.bounds();
+                        format!("{} × {}px", b.width().round(), b.height().round())
+                    }
+                    Overlay::Text(tb) => format!("{} × {}px", tb.rect.width().round(), tb.rect.height().round()),
+                    _ => String::new(),
+                },
             };
             item(ui, Icon::SelectionSize, sel, 130.0);
             ui.separator();
-            item(ui, Icon::CanvasSize, format!("{} × {}px", self.doc.width(), self.doc.height()), 140.0);
+            let canvas = match &self.drag {
+                Some(Drag::CanvasResize { size, .. }) => *size,
+                _ => vec2(self.doc.width() as f32, self.doc.height() as f32),
+            };
+            item(ui, Icon::CanvasSize, format!("{} × {}px", canvas.x, canvas.y), 140.0);
             if let Some(size) = self.doc.file_size {
                 ui.separator();
                 item(ui, Icon::Disk, format!("Size: {}", human_size(size)), 120.0);
@@ -1228,7 +1263,7 @@ impl PaintApp {
                 }
                 let label = format!("{}%", (self.zoom * 100.0).round());
                 ui.menu_button(label, |ui| {
-                    for z in [8.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.75, 0.5, 0.25, 0.125] {
+                    for z in ZOOM_STEPS.iter().rev().copied() {
                         if ui.button(format!("{}%", z * 100.0)).clicked() {
                             self.set_zoom(z, None);
                         }
@@ -1249,6 +1284,8 @@ impl PaintApp {
         let Some(dialog) = self.dialog.take() else { return };
         let mut keep = true;
         let pal = self.pal;
+        // Enter presses the default button; Esc cancels (handled at the end).
+        let enter = ctx.input(|i| i.key_pressed(Key::Enter));
         let modal = |id: &str, ctx: &egui::Context, f: &mut dyn FnMut(&mut egui::Ui)| {
             egui::Modal::new(egui::Id::new(id)).show(ctx, |ui| {
                 // Dialog controls get visible borders, like Fluent text boxes and buttons.
@@ -1282,6 +1319,7 @@ impl PaintApp {
                         }
                     });
                 });
+                let choice = choice.or(enter.then_some(0));
                 match choice {
                     Some(0) => {
                         keep = false;
@@ -1324,7 +1362,12 @@ impl PaintApp {
                     egui::Grid::new("resize_grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                         let max = if st.by_percent { 500.0 } else { 20000.0 };
                         ui.label("Horizontal");
-                        if ui.add(egui::DragValue::new(&mut st.w).range(1.0..=max).speed(1.0)).changed() && st.keep_aspect {
+                        let first = ui.add(egui::DragValue::new(&mut st.w).range(1.0..=max).speed(1.0));
+                        if !st.focused {
+                            first.request_focus();
+                            st.focused = true;
+                        }
+                        if first.changed() && st.keep_aspect {
                             st.h = if st.by_percent { st.w } else { (st.w * aspect).round() };
                         }
                         ui.end_row();
@@ -1355,6 +1398,7 @@ impl PaintApp {
                         }
                     });
                 });
+                let result = result.or(enter.then_some(true));
                 if let Some(ok) = result {
                     keep = false;
                     if ok {
@@ -1367,13 +1411,14 @@ impl PaintApp {
                         let (sx, sy) = (st.skew_x, st.skew_y);
                         let bg = Color32::TRANSPARENT;
                         let s = self.s.clone();
-                        self.doc.transform(&s, move |p| {
+                        let unchanged = (nw, nh) == (st.base_w.round() as u32, st.base_h.round() as u32) && sx == 0.0 && sy == 0.0;
+                        if !unchanged { self.doc.transform(&s, move |p| {
                             let mut out = if (nw, nh) != (p.width(), p.height()) { pixels::resize(p, nw, nh) } else { p.clone() };
                             if sx != 0.0 || sy != 0.0 {
                                 out = pixels::skew(&out, sx, sy, bg);
                             }
                             out
-                        });
+                        }); }
                     }
                 }
             }
@@ -1455,6 +1500,7 @@ impl PaintApp {
                         }
                     });
                 });
+                let result = result.or(enter.then_some(true));
                 if let Some(ok) = result {
                     keep = false;
                     if ok {
@@ -1491,7 +1537,7 @@ impl PaintApp {
                         close = true;
                     }
                 });
-                if close {
+                if close || enter {
                     keep = false;
                 }
             }
@@ -1516,6 +1562,7 @@ impl PaintApp {
                         }
                     });
                 });
+                let result = result.or(enter.then_some(true));
                 if let Some(ok) = result {
                     keep = false;
                     if ok && *angle != 0.0 {
@@ -1565,6 +1612,7 @@ impl PaintApp {
                         }
                     });
                 });
+                let result = result.or(enter.then_some(true));
                 if let Some(ok) = result {
                     keep = false;
                     if ok {
@@ -1588,7 +1636,7 @@ impl PaintApp {
                         close = true;
                     }
                 });
-                if close {
+                if close || enter {
                     keep = false;
                 }
             }
@@ -1596,7 +1644,7 @@ impl PaintApp {
         if keep && self.dialog.is_none() {
             self.dialog = Some(dialog);
         }
-        if ctx.input(|i| i.key_pressed(Key::Escape)) && !matches!(self.dialog, Some(Dialog::Unsaved(_))) {
+        if ctx.input(|i| i.key_pressed(Key::Escape)) {
             self.dialog = None;
         }
     }

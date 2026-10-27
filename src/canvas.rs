@@ -268,8 +268,13 @@ impl PaintApp {
         self.cursor_img = if hovered || self.drag.is_some() { ptr.map(to_img) } else { None };
         self.canvas_cursor = None;
 
+        // Ctrl+wheel steps through the zoom presets, anchored at the pointer.
         if hovered && (zoom_delta - 1.0).abs() > 1e-4 {
-            self.set_zoom(self.zoom * zoom_delta, ptr);
+            self.zoom_accum *= zoom_delta;
+            if self.zoom_accum > 1.05 || self.zoom_accum < 1.0 / 1.05 {
+                self.zoom_step(if self.zoom_accum > 1.0 { 1 } else { -1 }, ptr);
+                self.zoom_accum = 1.0;
+            }
         }
 
         // Continue an ongoing drag.
@@ -373,7 +378,8 @@ impl PaintApp {
             }
             Tool::Magnifier => self.zoom_step(if secondary { -1 } else { 1 }, Some(p_scr)),
             Tool::Text => {
-                if !secondary {
+                // Text boxes only start on the canvas itself.
+                if !secondary && inside {
                     self.drag = Some(Drag::TextNew { start: p, cur: p });
                 }
             }
@@ -722,7 +728,8 @@ impl PaintApp {
                     if sh.kind.is_boxed() && (b.width() < 1.0 || b.height() < 1.0) {
                         cancel = true;
                     }
-                    if sh.kind == ShapeKind::Line && b.width() < 0.5 && b.height() < 0.5 {
+                    // A stray click with a line, curve or polygon draws nothing.
+                    if !sh.kind.is_boxed() && b.width() < 0.5 && b.height() < 0.5 {
                         cancel = true;
                     }
                 }

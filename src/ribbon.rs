@@ -243,12 +243,13 @@ impl PaintApp {
                 }
                 ui.separator();
                 ui.label(RichText::new("Selection options").small().color(app.pal.text_dim));
-                for (icon, label, a) in [
-                    (Icon::SelectAll, "Select all", Action::SelectAll),
-                    (Icon::Invert, "Invert selection", Action::InvertSelection),
-                    (Icon::Delete, "Delete", Action::DeleteSelection),
+                let has_sel = app.doc.floating().is_some();
+                for (icon, label, a, enabled) in [
+                    (Icon::SelectAll, "Select all", Action::SelectAll, true),
+                    (Icon::Invert, "Invert selection", Action::InvertSelection, true),
+                    (Icon::Delete, "Delete", Action::DeleteSelection, has_sel),
                 ] {
-                    if app.menu_item_icon(ui, icon, label, false) {
+                    if app.menu_item(ui, icon, label, "", false, enabled) {
                         app.push(a);
                     }
                 }
@@ -303,17 +304,34 @@ impl PaintApp {
 
     /// Menu entry with an icon in a fixed gutter; `checked` shows a tick on the right.
     fn menu_item_icon(&self, ui: &mut Ui, icon: Icon, label: &str, checked: bool) -> bool {
-        let width = ui.available_width().max(180.0);
-        let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+        self.menu_item(ui, icon, label, "", checked, true)
+    }
+
+    /// Menu entry: icon gutter, label, optional shortcut on the right, check mark,
+    /// and a disabled state.
+    pub fn menu_item(&self, ui: &mut Ui, icon: Icon, label: &str, shortcut: &str, checked: bool, enabled: bool) -> bool {
+        let width = ui.available_width().clamp(190.0, 260.0);
+        let sense = if enabled { Sense::click() } else { Sense::hover() };
+        let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), sense);
         self.button_bg(ui, rect, &resp, false);
-        self.paint_icon(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), 16.0, icon, true);
+        let fg = self.pal.icon_fg(enabled, false);
+        self.paint_icon_fg(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), 16.0, icon, fg);
         ui.painter().text(
             egui::pos2(rect.min.x + 34.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             label,
             egui::FontId::proportional(13.5),
-            self.pal.text,
+            fg,
         );
+        if !shortcut.is_empty() {
+            ui.painter().text(
+                egui::pos2(rect.max.x - 10.0, rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                shortcut,
+                egui::FontId::proportional(12.5),
+                self.pal.text_dim,
+            );
+        }
         if checked {
             ui.painter().text(
                 egui::pos2(rect.max.x - 10.0, rect.center().y),
@@ -323,10 +341,10 @@ impl PaintApp {
                 self.pal.accent,
             );
         }
-        if resp.clicked() {
+        if enabled && resp.clicked() {
             ui.close();
         }
-        resp.clicked()
+        enabled && resp.clicked()
     }
 
     fn tools_group(&mut self, ui: &mut Ui) {
@@ -499,12 +517,13 @@ impl PaintApp {
                         );
                         if resp.clicked() {
                             *app.size_mut_for(tool) = sz;
+                            ui.close();
                         }
                     }
                     ui.separator();
                     let max = if tool == Tool::Eraser { 100.0 } else { 50.0 };
                     let size = app.size_mut_for(tool);
-                    ui.add(egui::Slider::new(size, 1.0..=max).step_by(1.0).suffix("px"));
+                    ui.add(egui::Slider::new(size, 1.0..=max).step_by(1.0).fixed_decimals(0).suffix("px"));
                 });
         });
     }

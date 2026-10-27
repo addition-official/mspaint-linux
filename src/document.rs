@@ -132,6 +132,8 @@ pub struct Layer {
 struct Snapshot {
     layers: Vec<Layer>,
     active: usize,
+    background: Color32,
+    background_visible: bool,
 }
 
 impl Snapshot {
@@ -268,13 +270,15 @@ impl Document {
     fn snapshot(&self) -> Snapshot {
         let mut layers = self.layers.clone();
         layers[self.active].pix = self.image.clone();
-        Snapshot { layers, active: self.active }
+        Snapshot { layers, active: self.active, background: self.background, background_visible: self.background_visible }
     }
 
     fn restore(&mut self, mut snap: Snapshot) {
         let img = std::mem::replace(&mut snap.layers[snap.active].pix, placeholder());
         self.layers = snap.layers;
         self.active = snap.active;
+        self.background = snap.background;
+        self.background_visible = snap.background_visible;
         self.replace_image(img);
     }
 
@@ -356,9 +360,13 @@ impl Document {
         Color32::TRANSPARENT
     }
 
-    pub fn set_background(&mut self, c: Color32, visible: bool) {
+    /// Change the Background tile; `record` adds an undo step.
+    pub fn set_background(&mut self, c: Color32, visible: bool, record: bool) {
         if c == self.background && visible == self.background_visible {
             return;
+        }
+        if record {
+            self.begin_edit();
         }
         self.background = c;
         self.background_visible = visible;
@@ -652,7 +660,7 @@ impl Document {
             return;
         }
         self.overlay = Overlay::Float(Floating {
-            pix: pixels::copy_rect(&self.image, r),
+            pix: self.selection_pixels(s, r),
             rect: irect_to_rect(r),
             origin: Some((r, None)),
             origin_cleared: false,
@@ -660,6 +668,18 @@ impl Document {
             tex_dirty: true,
             outline: None,
         });
+    }
+
+    /// Pixels for a new selection. On the bottom layer, with "Transparent selection"
+    /// off, the selection carries the Background tile color like classic Paint, so
+    /// moving it covers what's underneath (with it on, only the drawing moves).
+    fn selection_pixels(&self, s: &Settings, r: IRect) -> Pixmap {
+        let mut pix = pixels::copy_rect(&self.image, r);
+        if self.active == 0 && self.background_visible && !s.transparent_selection {
+            let all = IRect::from_size(pix.width(), pix.height());
+            pixels::under_color_region(&mut pix, self.background, all);
+        }
+        pix
     }
 
     pub fn select_all(&mut self, s: &Settings) {
@@ -693,7 +713,7 @@ impl Document {
             maskpix.fill_path(&path, &pixels::paint_for(Color32::WHITE, false), FillRule::Winding, Transform::identity(), None);
         }
         let mask: Vec<bool> = maskpix.data().as_chunks::<4>().0.iter().map(|p| p[3] > 127).collect();
-        let mut pix = pixels::copy_rect(&self.image, r);
+        let mut pix = self.selection_pixels(s, r);
         for (px, m) in pix.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(&mask) {
             if !m {
                 px.fill(0);
@@ -940,9 +960,12 @@ impl Document {
             fl.tex_dirty = true;
             return;
         }
-        self.begin_edit();
         let mut img = self.image.clone();
         f(&mut img);
+        if img.data() == self.image.data() {
+            return; // nothing changed: no undo step
+        }
+        self.begin_edit();
         self.replace_image(img);
     }
 
@@ -1062,8 +1085,7 @@ mod tests {
 
     #[test]
     fn moving_selection_leaves_transparency() {
-        let mut s = Settings::default();
-        s.color2 = Color32::from_rgb(0, 0, 255);
+        let s = Settings { color2: Color32::from_rgb(0, 0, 255), ..Default::default() };
         let mut d = Document::new(40, 40);
         d.flood_fill(0, 0, Color32::WHITE, 0);
         let mut img = d.image.clone();
@@ -1148,7 +1170,7 @@ mod tests {
         assert_eq!(d.layers.len(), 2, "undo restores the merged layer");
         // Hiding the background makes the canvas transparent.
         d.set_active_layer(&s, 1);
-        d.set_background(Color32::WHITE, false);
+        d.set_background(Color32::WHITE, false, true);
         assert_eq!(get_pixel(&d.flattened(), 3, 5).unwrap(), Color32::RED);
         d.set_active_layer(&s, 0);
         d.toggle_layer_visible(&s, 0);
@@ -1169,6 +1191,47 @@ mod tests {
         d.stamp_float(&s, true);
         d.commit_overlay(&s);
         assert_eq!(px(&d, 2, 2).a(), 128, "semi-transparent pixel unchanged");
+    }
+
+    #[test]
+    fn opaque_selection_covers_what_is_underneath() {
+        let mut s = Settings::default();
+        let mut d = Document::new(40, 20);
+        // A yellow block on the right; select an empty (white-looking) area on the left.
+        let mut img = d.image.clone();
+        for y in 0..20 {
+            for x in 20..40 {
+                pixels::set_pixel(&mut img, x, y, Color32::YELLOW.to_array());
+            }
+        }
+        d.image = img;
+        d.select_rect(&s, IRect::new(0, 0, 10, 10));
+        d.lift(&s);
+        if let Some(f) = d.floating_mut() {
+            f.rect = f.rect.translate(vec2(25.0, 5.0));
+        }
+        d.commit_overlay(&s);
+        assert_eq!(px(&d, 30, 10), Color32::WHITE, "opaque selection covers the yellow");
+        // With transparent selection the yellow shows through.
+        s.transparent_selection = true;
+        d.select_rect(&s, IRect::new(0, 0, 10, 10));
+        d.lift(&s);
+        if let Some(f) = d.floating_mut() {
+            f.rect = f.rect.translate(vec2(25.0, 0.0));
+        }
+        d.commit_overlay(&s);
+        // Rows 0..5 of the target were not covered by the first move.
+        assert_eq!(px(&d, 30, 2), Color32::YELLOW);
+    }
+
+    #[test]
+    fn background_change_is_undoable() {
+        let s = Settings::default();
+        let mut d = Document::new(4, 4);
+        d.set_background(Color32::RED, true, true);
+        assert_eq!(vis(&d, 1, 1), Color32::RED);
+        d.undo(&s);
+        assert_eq!(vis(&d, 1, 1), Color32::WHITE);
     }
 
     #[test]
