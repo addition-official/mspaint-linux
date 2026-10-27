@@ -106,6 +106,17 @@ impl PaintApp {
         (main.on_hover_text(tip), chev.on_hover_text(format!("{tip} options")))
     }
 
+    /// Big single drop-down: icon on top, chevron underneath, one hover area. Win11's
+    /// Size button works like this (the whole button opens the list).
+    fn stacked_dropdown_at(&self, ui: &mut Ui, rect: Rect, key: &str, icon: Icon, tip: &str) -> Response {
+        let resp = ui.interact(rect, ui.id().with(key), Sense::click());
+        self.button_bg(ui, rect, resp.hovered(), false);
+        let top = Rect::from_min_max(rect.min, egui::pos2(rect.max.x, rect.max.y - CHEVRON_H));
+        self.paint_icon(ui, top.center() + vec2(0.0, 2.0), 22.0, icon, true);
+        self.paint_chevron(ui, egui::pos2(rect.center().x, rect.max.y - CHEVRON_H / 2.0));
+        resp.on_hover_text(tip)
+    }
+
     /// Icon with a small chevron to its right; the whole button opens a drop-down.
     fn dropdown_at(&self, ui: &mut Ui, rect: Rect, key: &str, icon: Icon, tip: &str) -> Response {
         let resp = ui.interact(rect, ui.id().with(key), Sense::click());
@@ -449,12 +460,8 @@ impl PaintApp {
 
     fn size_group(&mut self, ui: &mut Ui) {
         self.with_group(ui, "Size", 52.0, |app, ui, c| {
-            let (main, chev) = app.split_btn_at(ui, r(c.min.x + 2.0, c.min.y + 2.0, 48.0, 62.0), "size", Icon::Size, false, "Size");
-            // Both halves open the size list.
-            if main.clicked() {
-                egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&chev));
-            }
-            egui::Popup::menu(&chev)
+            let resp = app.stacked_dropdown_at(ui, r(c.min.x + 2.0, c.min.y + 2.0, 48.0, 62.0), "size", Icon::Size, "Size");
+            egui::Popup::menu(&resp)
                 .width(180.0)
                 .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
