@@ -5,6 +5,15 @@ use crate::icons::{self, Icon};
 use crate::tools::{BrushKind, SelectMode, ShapeKind, ShapeStyle, Tool, size_presets};
 use egui::{Color32, PopupCloseBehavior, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, Vec2, vec2};
 
+const TOOLS: [(Tool, Icon, &str); 6] = [
+    (Tool::Pencil, Icon::Pencil, "Pencil"),
+    (Tool::Fill, Icon::Fill, "Fill"),
+    (Tool::Text, Icon::Text, "Text"),
+    (Tool::Eraser, Icon::Eraser, "Eraser"),
+    (Tool::Picker, Icon::Picker, "Color picker"),
+    (Tool::Magnifier, Icon::Magnifier, "Magnifier"),
+];
+
 /// Group widths, full and folded (see `ribbon`).
 const SWATCH: f32 = 21.0;
 const COLORS_W: f32 = 36.0 + 8.0 + SWATCH * 10.0 + 8.0 + 46.0;
@@ -160,17 +169,20 @@ impl PaintApp {
 
     pub fn ribbon(&mut self, ui: &mut Ui) {
         // Like Windows 11 Paint, fold groups into drop-downs when the window is too
-        // narrow: first the color palette, then the shape gallery, then the Image group.
-        let fixed = 94.0 + 104.0 + 52.0 + 52.0 + 52.0 + 7.0 * 17.0;
-        let widths = |c: [bool; 3]| {
+        // narrow: the color palette, the shape gallery, the Image group, the clipboard
+        // and finally the tools, in that order.
+        let fixed = 52.0 + 52.0 + 52.0 + 7.0 * 17.0;
+        let widths = |c: [bool; 5]| {
             fixed
                 + if c[0] { COLORS_COMPACT_W } else { COLORS_W }
                 + if c[1] { SHAPES_COMPACT_W } else { SHAPES_W }
                 + if c[2] { IMAGE_COMPACT_W } else { IMAGE_W }
+                + if c[3] { 52.0 } else { 94.0 }
+                + if c[4] { 52.0 } else { 104.0 }
         };
         let avail = ui.available_width();
-        let mut compact = [false; 3];
-        for i in 0..3 {
+        let mut compact = [false; 5];
+        for i in 0..5 {
             if widths(compact) <= avail {
                 break;
             }
@@ -181,11 +193,11 @@ impl PaintApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                    self.clipboard_group(ui);
+                    self.clipboard_group(ui, compact[3]);
                     self.separator_v(ui);
                     self.image_group(ui, compact[2]);
                     self.separator_v(ui);
-                    self.tools_group(ui);
+                    self.tools_group(ui, compact[4]);
                     self.separator_v(ui);
                     self.brushes_group(ui);
                     self.separator_v(ui);
@@ -214,7 +226,30 @@ impl PaintApp {
         );
     }
 
-    fn clipboard_group(&mut self, ui: &mut Ui) {
+    fn clipboard_group(&mut self, ui: &mut Ui, compact: bool) {
+        if compact {
+            // Folded: Paste, with Cut and Copy in its menu.
+            self.with_group(ui, "Clipboard", 52.0, |app, ui, c| {
+                let (main, chev) = app.split_btn_at(ui, r(c.min.x + 4.0, c.min.y + 2.0, 44.0, 62.0), "paste", Icon::Paste, false, "Paste (Ctrl+V)");
+                if main.clicked() {
+                    app.push(Action::Paste);
+                }
+                egui::Popup::menu(&chev).width(200.0).show(|ui| {
+                    let has_sel = app.doc.floating().is_some();
+                    for (icon, label, sc, a, en) in [
+                        (Icon::Paste, "Paste", "Ctrl+V", Action::Paste, true),
+                        (Icon::Import, "Paste from file", "", Action::Import, true),
+                        (Icon::Cut, "Cut", "Ctrl+X", Action::Cut, has_sel),
+                        (Icon::Copy, "Copy", "Ctrl+C", Action::Copy, has_sel),
+                    ] {
+                        if app.menu_item(ui, icon, label, sc, false, en) {
+                            app.push(a);
+                        }
+                    }
+                });
+            });
+            return;
+        }
         self.with_group(ui, "Clipboard", 94.0, |app, ui, c| {
             let (main, chev) = app.split_btn_at(ui, r(c.min.x + 2.0, c.min.y + 2.0, 44.0, 62.0), "paste", Icon::Paste, false, "Paste (Ctrl+V)");
             if main.clicked() {
@@ -440,26 +475,45 @@ impl PaintApp {
         enabled && resp.clicked()
     }
 
-    fn tools_group(&mut self, ui: &mut Ui) {
-        self.with_group(ui, "Tools", 104.0, |app, ui, c| {
-            let items = [
-                (Tool::Pencil, Icon::Pencil, "Pencil"),
-                (Tool::Fill, Icon::Fill, "Fill with color"),
-                (Tool::Text, Icon::Text, "Text"),
-                (Tool::Eraser, Icon::Eraser, "Eraser"),
-                (Tool::Picker, Icon::Picker, "Color picker"),
-                (Tool::Magnifier, Icon::Magnifier, "Magnifier"),
-            ];
-            let (bw, bh, gap) = (32.0, 30.0, 2.0);
-            let x0 = c.center().x - (3.0 * bw + 2.0 * gap) / 2.0;
-            let y0 = c.center().y - (2.0 * bh + gap) / 2.0;
-            for (i, (t, icon, tip)) in items.into_iter().enumerate() {
-                let (col, row) = ((i % 3) as f32, (i / 3) as f32);
-                let rect = r(x0 + col * (bw + gap), y0 + row * (bh + gap), bw, bh);
-                if app.btn_at(ui, rect, tip, icon, app.s.tool == t, tip).clicked() {
-                    app.set_tool(t);
-                }
+    /// The 3x2 tool buttons centered in `c`; true when one was clicked.
+    fn tool_buttons(&mut self, ui: &mut Ui, c: Rect) -> bool {
+        let (bw, bh, gap) = (32.0, 30.0, 2.0);
+        let x0 = c.center().x - (3.0 * bw + 2.0 * gap) / 2.0;
+        let y0 = c.center().y - (2.0 * bh + gap) / 2.0;
+        let mut picked = false;
+        for (i, (t, icon, tip)) in TOOLS.into_iter().enumerate() {
+            let (col, row) = ((i % 3) as f32, (i / 3) as f32);
+            let rect = r(x0 + col * (bw + gap), y0 + row * (bh + gap), bw, bh);
+            if self.btn_at(ui, rect, tip, icon, self.s.tool == t, tip).clicked() {
+                self.set_tool(t);
+                picked = true;
             }
+        }
+        picked
+    }
+
+    fn tools_group(&mut self, ui: &mut Ui, compact: bool) {
+        if compact {
+            // Folded: the current tool, opening the six tools.
+            self.with_group(ui, "Tools", 52.0, |app, ui, c| {
+                let current = TOOLS.iter().find(|(t, ..)| *t == app.s.tool);
+                let icon = current.map(|(_, i, _)| *i).unwrap_or(Icon::Pencil);
+                let rect = r(c.min.x + 2.0, c.min.y + 2.0, 48.0, 62.0);
+                let resp = app.stacked_dropdown_at(ui, rect, "tool_menu", icon, "Tools");
+                if current.is_some() {
+                    app.button_bg(ui, rect, &resp, true);
+                }
+                egui::Popup::menu(&resp).show(|ui| {
+                    let (area, _) = ui.allocate_exact_size(vec2(104.0, 66.0), Sense::hover());
+                    if app.tool_buttons(ui, area) {
+                        ui.close();
+                    }
+                });
+            });
+            return;
+        }
+        self.with_group(ui, "Tools", 104.0, |app, ui, c| {
+            app.tool_buttons(ui, c);
         });
     }
 

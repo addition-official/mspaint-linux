@@ -116,6 +116,37 @@ pub struct TextBox {
     pub text: String,
     /// Caret position in chars.
     pub caret: usize,
+    /// Ctrl+Z while typing: earlier (text, caret) states of this box.
+    pub history: Vec<(String, usize)>,
+    /// In a run of typed characters, which undoes as one step.
+    pub typing: bool,
+}
+
+impl TextBox {
+    pub fn new(rect: Rect) -> Self {
+        Self { rect, text: String::new(), caret: 0, history: Vec::new(), typing: false }
+    }
+
+    /// Remember the state before an edit. Typed characters are grouped per word.
+    pub fn record(&mut self, typing: bool) {
+        if !(typing && self.typing) {
+            self.history.push((self.text.clone(), self.caret));
+        }
+        self.typing = typing;
+    }
+
+    /// Undo the last edit; false when there is nothing left to undo in the box.
+    pub fn undo(&mut self) -> bool {
+        self.typing = false;
+        match self.history.pop() {
+            Some((text, caret)) => {
+                self.text = text;
+                self.caret = caret;
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 pub enum Overlay {
@@ -151,6 +182,27 @@ impl Snapshot {
     }
 }
 
+/// One undo step. Only structural edits store the whole layer stack; the common
+/// edits store what they changed, so big pictures keep a long history.
+enum Step {
+    /// The whole layer stack: layer operations, transforms, selections.
+    Full(Snapshot),
+    /// One rectangle of one layer: strokes, shapes, text and fills.
+    Region { state: u64, layer: usize, rect: IRect, pix: Pixmap },
+    /// Layer visibility and the Background tile, without pixels.
+    Props { state: u64, visible: Vec<bool>, background: Color32, background_visible: bool },
+}
+
+impl Step {
+    fn bytes(&self) -> usize {
+        match self {
+            Step::Full(s) => s.bytes(),
+            Step::Region { pix, .. } => pix.data().len(),
+            Step::Props { visible, .. } => 64 + visible.len(),
+        }
+    }
+}
+
 fn placeholder() -> Pixmap {
     Pixmap::new(1, 1).unwrap()
 }
@@ -179,8 +231,8 @@ pub struct Document {
     pub dirty_tex: Option<IRect>,
     /// The image size changed: the texture must be recreated.
     pub size_changed: bool,
-    undo: Vec<Snapshot>,
-    redo: Vec<Snapshot>,
+    undo: Vec<Step>,
+    redo: Vec<Step>,
     /// Id of the current state: every recorded edit gets a new one and undo/redo restore
     /// them, so undoing back to the saved state counts as unmodified.
     state: u64,
@@ -315,14 +367,79 @@ impl Document {
 
     /// Record the current state for undo before modifying it.
     pub fn begin_edit(&mut self) {
-        self.undo.push(self.snapshot());
+        let snap = self.snapshot();
+        self.push_step(Step::Full(snap));
+    }
+
+    /// Record rectangle `r` of the active layer before changing only that part of it.
+    fn begin_region_edit(&mut self, r: IRect) {
+        let r = r.clamp_to(self.width(), self.height());
+        if r.is_empty() {
+            return;
+        }
+        let pix = pixels::copy_rect(&self.image, r);
+        self.push_step(Step::Region { state: self.state, layer: self.active, rect: r, pix });
+    }
+
+    /// Record layer visibility and the Background tile before changing them.
+    fn begin_props_edit(&mut self) {
+        let step = self.props_step();
+        self.push_step(step);
+    }
+
+    fn props_step(&self) -> Step {
+        Step::Props {
+            state: self.state,
+            visible: self.layers.iter().map(|l| l.visible).collect(),
+            background: self.background,
+            background_visible: self.background_visible,
+        }
+    }
+
+    fn push_step(&mut self, step: Step) {
+        self.undo.push(step);
         self.redo.clear();
         self.next_state += 1;
         self.state = self.next_state;
         self.layers_rev += 1;
-        let mut total: usize = self.undo.iter().map(Snapshot::bytes).sum();
+        let mut total: usize = self.undo.iter().map(Step::bytes).sum();
         while (total > HISTORY_BYTES || self.undo.len() > HISTORY_MAX) && self.undo.len() > 1 {
             total -= self.undo.remove(0).bytes();
+        }
+    }
+
+    /// Apply an undo or redo step; returns the step that reverses it.
+    fn apply_step(&mut self, step: Step) -> Step {
+        match step {
+            Step::Full(snap) => {
+                let current = self.snapshot();
+                self.restore(snap);
+                Step::Full(current)
+            }
+            Step::Region { state, layer, rect, pix } => {
+                // Later steps were undone first, so the layer stack is as it was then;
+                // only the active layer may differ (switching layers is not an edit).
+                self.activate(layer);
+                let current = pixels::copy_rect(&self.image, rect);
+                pixels::draw_exact(&mut self.image, &pix, rect.x0, rect.y0);
+                self.refresh(rect);
+                self.layers_rev += 1;
+                let back = Step::Region { state: self.state, layer, rect, pix: current };
+                self.state = state;
+                back
+            }
+            Step::Props { state, visible, background, background_visible } => {
+                let back = self.props_step();
+                for (l, v) in self.layers.iter_mut().zip(visible) {
+                    l.visible = v;
+                }
+                self.background = background;
+                self.background_visible = background_visible;
+                self.state = state;
+                self.layers_rev += 1;
+                self.rebuild();
+                back
+            }
         }
     }
 
@@ -336,17 +453,17 @@ impl Document {
     pub fn undo(&mut self, settings: &Settings) {
         // Undoing while a selection is being moved reverts the move.
         self.commit_overlay(settings);
-        if let Some(prev) = self.undo.pop() {
-            self.redo.push(self.snapshot());
-            self.restore(prev);
+        if let Some(step) = self.undo.pop() {
+            let back = self.apply_step(step);
+            self.redo.push(back);
         }
     }
 
     pub fn redo(&mut self, settings: &Settings) {
         self.commit_overlay(settings);
-        if let Some(next) = self.redo.pop() {
-            self.undo.push(self.snapshot());
-            self.restore(next);
+        if let Some(step) = self.redo.pop() {
+            let back = self.apply_step(step);
+            self.undo.push(back);
         }
     }
 
@@ -381,7 +498,7 @@ impl Document {
             return;
         }
         if record {
-            self.begin_edit();
+            self.begin_props_edit();
         }
         self.background = c;
         self.background_visible = visible;
@@ -400,6 +517,14 @@ impl Document {
             return;
         }
         self.commit_overlay(s);
+        self.activate(i);
+    }
+
+    /// Make layer `i` the active one (its pixels move into `image`).
+    fn activate(&mut self, i: usize) {
+        if i == self.active || i >= self.layers.len() {
+            return;
+        }
         let img = std::mem::replace(&mut self.image, placeholder());
         self.layers[self.active].pix = img;
         self.image = std::mem::replace(&mut self.layers[i].pix, placeholder());
@@ -516,7 +641,7 @@ impl Document {
 
     pub fn toggle_layer_visible(&mut self, s: &Settings, i: usize) {
         self.commit_overlay(s);
-        self.begin_edit();
+        self.begin_props_edit();
         self.layers[i].visible = !self.layers[i].visible;
         self.rebuild();
     }
@@ -592,15 +717,18 @@ impl Document {
         self.layer_erase = false;
     }
 
+    /// Start a stroke. Its undo step is recorded when it ends, for just the area it touched.
     pub fn begin_stroke(&mut self, opacity: f32, erase: bool) {
         self.commit_overlay_noop();
-        self.begin_edit();
         self.layer_opacity = opacity;
         self.layer_erase = erase;
         self.overlay = Overlay::Stroke;
     }
 
     pub fn end_stroke(&mut self) {
+        if let Some(bb) = self.layer_bbox {
+            self.begin_region_edit(bb);
+        }
         self.commit_layer();
         self.overlay = Overlay::None;
     }
@@ -623,6 +751,21 @@ impl Document {
                 sh.geom, sh.swapped, s.outline, s.fill, s.color1, s.color2, s.shape_size
             ),
             Overlay::Text(t) => format!("T{:?}{:?}{:?}{:?}{}", t.rect, t.text, s.text, s.color1, s.color2.to_hex()),
+            // Its pixels changing is flagged by `tex_dirty`, which the app clears after this.
+            Overlay::Float(f) if self.float_in_layer() => {
+                let key = format!("F{:?}{}{:?}", f.rect, s.transparent_selection, s.color2);
+                if f.tex_dirty {
+                    self.render_key.clear();
+                }
+                key
+            }
+            Overlay::Float(_) => {
+                // Layers above were hidden: the selection is drawn as a texture again.
+                if self.render_key.starts_with('F') {
+                    self.clear_float_layer();
+                }
+                return;
+            }
             _ => return,
         };
         if key == self.render_key {
@@ -649,6 +792,12 @@ impl Document {
                 let (rect, txt) = (t.rect, t.text.clone());
                 text::render(&mut self.layer, fm, &s.text, &txt, rect, s.color1, s.color2)
             }
+            Overlay::Float(f) => {
+                let r = f.rect;
+                let p = self.effective_float(s).expect("float");
+                pixels::draw_scaled(&mut self.layer, &p, r.min.x, r.min.y, r.width(), r.height());
+                IRect::from_points((r.min.x, r.min.y), (r.max.x, r.max.y), 2.0)
+            }
             _ => unreachable!(),
         };
         if let Some(c) = cleared {
@@ -659,6 +808,21 @@ impl Document {
 
     // -----------------------------------------------------------------------
     // Selection
+
+    /// A floating selection is normally drawn on top as its own texture. With visible
+    /// layers above the active one it is rendered into the stroke layer instead, so it
+    /// appears at its layer's depth (under those layers).
+    pub fn float_in_layer(&self) -> bool {
+        matches!(self.overlay, Overlay::Float(_)) && self.layers[self.active + 1..].iter().any(|l| l.visible)
+    }
+
+    /// Remove a selection rendered into the stroke layer (see `float_in_layer`).
+    fn clear_float_layer(&mut self) {
+        if let Some(r) = self.layer_clear() {
+            self.refresh(r);
+        }
+        self.render_key.clear();
+    }
 
     pub fn floating(&self) -> Option<&Floating> {
         match &self.overlay {
@@ -888,15 +1052,24 @@ impl Document {
         }
         self.lift(s);
         self.overlay = Overlay::None;
+        self.clear_float_layer();
     }
 
     /// Finish whatever overlay is active, baking it into the image.
     pub fn commit_overlay(&mut self, s: &Settings) {
         match std::mem::replace(&mut self.overlay, Overlay::None) {
             Overlay::None => {}
-            Overlay::Stroke => self.commit_layer(),
+            Overlay::Stroke => {
+                // A stroke interrupted (e.g. by Ctrl+Z while drawing) still gets its step.
+                if let Some(bb) = self.layer_bbox {
+                    self.begin_region_edit(bb);
+                }
+                self.commit_layer();
+            }
             Overlay::Shape(_) => {
-                self.begin_edit();
+                if let Some(bb) = self.layer_bbox {
+                    self.begin_region_edit(bb);
+                }
                 self.commit_layer();
             }
             Overlay::Text(t) => {
@@ -905,11 +1078,14 @@ impl Document {
                         self.refresh(r);
                     }
                 } else {
-                    self.begin_edit();
+                    if let Some(bb) = self.layer_bbox {
+                        self.begin_region_edit(bb);
+                    }
                     self.commit_layer();
                 }
             }
             Overlay::Float(f) => {
+                self.clear_float_layer();
                 if f.changed {
                     let mut p = f.pix;
                     if s.transparent_selection {
@@ -934,7 +1110,10 @@ impl Document {
                 self.overlay = Overlay::None;
                 self.render_key.clear();
             }
-            Overlay::Float(f) if !f.changed => self.overlay = Overlay::None,
+            Overlay::Float(f) if !f.changed => {
+                self.overlay = Overlay::None;
+                self.clear_float_layer();
+            }
             _ => {}
         }
     }
@@ -1005,6 +1184,7 @@ impl Document {
         // again would make the first undo land on the half-done move.
         let recorded = f.origin_cleared;
         self.overlay = Overlay::None;
+        self.clear_float_layer();
         if !recorded {
             self.begin_edit();
         }
@@ -1030,7 +1210,7 @@ impl Document {
     pub fn flood_fill(&mut self, x: i32, y: i32, c: Color32, tolerance: u8) {
         let mut img = self.image.clone();
         if let Some(r) = pixels::flood_fill(&mut img, x, y, c, tolerance) {
-            self.begin_edit();
+            self.begin_region_edit(r);
             self.image = img;
             self.refresh(r);
         }
@@ -1062,6 +1242,7 @@ impl Document {
     /// "Don't save": drop pending work so the document no longer counts as unsaved.
     pub fn forget_changes(&mut self) {
         self.overlay = Overlay::None;
+        self.clear_float_layer();
         self.saved_state = Some(self.state);
     }
 }
@@ -1302,8 +1483,38 @@ mod tests {
             seed: 1,
         });
         assert!(!d.modified() && d.has_unsaved_work());
+        d.render_overlay(&s, &mut FontManager::new());
         d.commit_overlay(&s);
         assert!(d.modified());
+        // Its undo step covers just the shape's area and restores it exactly.
+        assert!(matches!(d.undo.last(), Some(Step::Region { .. })));
+        let drawn = px(&d, 2, 5);
+        d.undo(&s);
+        assert_eq!(px(&d, 2, 5), Color32::TRANSPARENT);
+        assert!(!d.modified());
+        d.redo(&s);
+        assert_eq!(px(&d, 2, 5), drawn);
+    }
+
+    #[test]
+    fn region_undo_switches_back_to_its_layer() {
+        let s = Settings::default();
+        let mut d = Document::new(20, 20);
+        d.begin_stroke(1.0, false);
+        let r = crate::brush::hard_line(&mut d.layer, pos2(2.0, 2.0), pos2(10.0, 2.0), 1.0, Color32::BLACK);
+        d.layer_touched(r);
+        d.end_stroke();
+        d.add_layer(&s);
+        d.set_active_layer(&s, 0);
+        d.toggle_layer_visible(&s, 1);
+        assert!(matches!(d.undo.last(), Some(Step::Props { .. })));
+        d.undo(&s); // visibility
+        d.undo(&s); // new layer
+        d.undo(&s); // the stroke on layer 0
+        assert_eq!(d.layers.len(), 1);
+        assert_eq!(px(&d, 5, 2), Color32::TRANSPARENT);
+        d.redo(&s);
+        assert_eq!(px(&d, 5, 2), Color32::BLACK);
     }
 
     #[test]

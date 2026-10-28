@@ -101,22 +101,22 @@ pub fn color_erase(layer: &mut Pixmap, image: &Pixmap, a: Pos2, b: Pos2, size: f
     IRect::from_points((a.x, a.y), (b.x, b.y), s as f32 + 1.0)
 }
 
-fn stroke_line(layer: &mut Pixmap, a: Pos2, b: Pos2, width: f32, color: Color32) {
-    let mut pb = PathBuilder::new();
-    pb.move_to(a.x, a.y);
-    if a == b {
-        pb.line_to(b.x + 0.01, b.y);
-    } else {
-        pb.line_to(b.x, b.y);
-    }
-    if let Some(path) = pb.finish() {
-        let stroke = Stroke {
-            width: width.max(0.5),
-            line_cap: LineCap::Round,
-            line_join: LineJoin::Round,
-            ..Default::default()
-        };
-        layer.stroke_path(&path, &paint_for(color, true), &stroke, Transform::identity(), None);
+/// Fill `path` with max coverage (see `max_line`): rendered as a mask first, so the
+/// anti-aliased edges of overlapping pieces of one stroke don't add up.
+fn fill_max(layer: &mut Pixmap, path: &tiny_skia::Path, color: Color32) {
+    let b = path.bounds();
+    let (x0, y0) = (b.left().floor() as i32 - 1, b.top().floor() as i32 - 1);
+    let (w, h) = ((b.width().ceil() as u32) + 3, (b.height().ceil() as u32) + 3);
+    let Some(mut mask) = Pixmap::new(w, h) else { return };
+    let paint = paint_for(Color32::WHITE, true);
+    let t = Transform::from_translate(-x0 as f32, -y0 as f32);
+    mask.fill_path(path, &paint, FillRule::Winding, t, None);
+    mask.stroke_path(path, &paint, &Stroke { width: 1.0, ..Default::default() }, t, None);
+    for (i, px) in mask.data().as_chunks::<4>().0.iter().enumerate() {
+        if px[3] > 0 {
+            let (x, y) = (x0 + (i as u32 % w) as i32, y0 + (i as u32 / w) as i32);
+            max_pixel(layer, x, y, color, px[3] as f32 / 255.0);
+        }
     }
 }
 
@@ -124,6 +124,18 @@ fn stroke_line(layer: &mut Pixmap, a: Pos2, b: Pos2, width: f32, color: Color32)
 /// segments of a translucent stroke don't build up into darker beads.
 fn max_line(layer: &mut Pixmap, a: Pos2, b: Pos2, width: f32, color: Color32) {
     let r = (width / 2.0).max(0.5);
+    // Long diagonal segments would scan a huge bounding box: split them so each piece
+    // only scans a band around the line (overlaps are harmless with max coverage).
+    let len = (b - a).length();
+    let piece = (r * 4.0).max(8.0);
+    if len > piece {
+        let n = (len / piece).ceil() as usize;
+        for i in 0..n {
+            let (t0, t1) = (i as f32 / n as f32, (i + 1) as f32 / n as f32);
+            max_line(layer, a + (b - a) * t0, a + (b - a) * t1, width, color);
+        }
+        return;
+    }
     let x0 = (a.x.min(b.x) - r - 1.0).floor() as i32;
     let x1 = (a.x.max(b.x) + r + 1.0).ceil() as i32;
     let y0 = (a.y.min(b.y) - r - 1.0).floor() as i32;
@@ -182,7 +194,7 @@ pub fn brush_segment(
     ctx.distance += (b - a).length();
     let paint_left = (1.0 - ctx.distance / (500.0 + size * 20.0)).clamp(0.0, 1.0);
     match kind {
-        BrushKind::Brush => stroke_line(layer, a, b, size, color),
+        BrushKind::Brush => max_line(layer, a, b, size, color),
         BrushKind::CalligraphyLeft | BrushKind::CalligraphyRight => {
             let ang: f32 = if kind == BrushKind::CalligraphyLeft { 45f32 } else { 135f32 }.to_radians();
             let n = egui::vec2(ang.cos(), -ang.sin()) * (size.max(2.0) / 2.0);
@@ -193,10 +205,7 @@ pub fn brush_segment(
             pb.line_to(a.x - n.x, a.y - n.y);
             pb.close();
             if let Some(path) = pb.finish() {
-                let paint = paint_for(color, true);
-                layer.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
-                let stroke = Stroke { width: 1.0, ..Default::default() };
-                layer.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                fill_max(layer, &path, color);
             }
         }
         BrushKind::Airbrush => {

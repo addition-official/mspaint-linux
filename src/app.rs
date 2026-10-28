@@ -188,6 +188,8 @@ pub struct PaintApp {
     pub corner: u8,
     /// Window title last sent to the window manager.
     last_title: String,
+    /// The mouse button that started the current drag.
+    pub drag_button: egui::PointerButton,
     system_checked: f64,
     pub show_layers: bool,
     pub checker_tex: Option<TextureHandle>,
@@ -264,6 +266,7 @@ impl PaintApp {
             on_window_edge: false,
             corner: WINDOW_RADIUS,
             last_title: String::new(),
+            drag_button: egui::PointerButton::Primary,
             show_layers: p.layers,
             checker_tex: None,
             layer_thumbs: Vec::new(),
@@ -458,7 +461,9 @@ impl PaintApp {
         // The display already holds visible layers, background and any pending
         // shape or text; add a floating (moved) selection on top.
         let mut flat = self.doc.display.clone();
-        if let (Some(f), Some(p)) = (self.doc.floating(), self.doc.effective_float(&self.s)) {
+        if let (Some(f), Some(p)) = (self.doc.floating(), self.doc.effective_float(&self.s))
+            && !self.doc.float_in_layer()
+        {
             pixels::draw_scaled(&mut flat, &p, f.rect.min.x, f.rect.min.y, f.rect.width(), f.rect.height());
         }
         let pix = match self.doc.floating() {
@@ -587,7 +592,14 @@ impl PaintApp {
             }
             Action::Undo => {
                 self.drag = None;
-                self.doc.undo(&s);
+                // In a text box, Ctrl+Z undoes typing; with nothing typed left it removes the box.
+                if let Overlay::Text(tb) = &mut self.doc.overlay {
+                    if !tb.undo() {
+                        self.doc.cancel_overlay();
+                    }
+                } else {
+                    self.doc.undo(&s);
+                }
             }
             Action::Redo => {
                 self.drag = None;
@@ -820,8 +832,12 @@ impl PaintApp {
             }
             self.text_input(ctx);
             if let Overlay::Text(_) = self.doc.overlay {
-                // Only allow shortcuts with Ctrl while typing.
-                let ctrl = ctx.input(|i| i.modifiers.command);
+                // Only allow shortcuts with Ctrl while typing. Look at the key events too:
+                // a quick Ctrl+Z can be pressed and released within one frame.
+                let ctrl = ctx.input(|i| {
+                    i.modifiers.command
+                        || i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, modifiers, .. } if modifiers.command))
+                });
                 if !ctrl {
                     return;
                 }
@@ -934,21 +950,26 @@ impl PaintApp {
             let byte = |t: &str, c: usize| t.char_indices().nth(c).map(|(b, _)| b).unwrap_or(t.len());
             match e {
                 egui::Event::Text(s) | egui::Event::Paste(s) => {
+                    // A typed word undoes as one step; a space or a paste starts a new one.
+                    tb.record(!s.contains(char::is_whitespace) && s.chars().count() == 1);
                     let b = byte(&tb.text, tb.caret);
                     tb.text.insert_str(b, &s);
                     tb.caret += s.chars().count();
                 }
                 egui::Event::Key { key, pressed: true, modifiers, .. } if !modifiers.command => match key {
                     Key::Backspace if tb.caret > 0 => {
+                        tb.record(false);
                         let b = byte(&tb.text, tb.caret - 1);
                         tb.text.remove(b);
                         tb.caret -= 1;
                     }
                     Key::Delete if tb.caret < n => {
+                        tb.record(false);
                         let b = byte(&tb.text, tb.caret);
                         tb.text.remove(b);
                     }
                     Key::Enter => {
+                        tb.record(false);
                         let b = byte(&tb.text, tb.caret);
                         tb.text.insert(b, '\n');
                         tb.caret += 1;

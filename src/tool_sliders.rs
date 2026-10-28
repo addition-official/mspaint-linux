@@ -20,9 +20,13 @@ impl PaintApp {
             return;
         }
         let pal = self.pal;
-        let height = 200.0;
-        let total = sliders.len() as f32 * (height + 46.0);
-        let pos = egui::pos2(self.viewport.min.x + 12.0, self.viewport.center().y - total / 2.0);
+        // Shorter sliders in a short window, so the panel never covers the ribbon.
+        let n = sliders.len() as f32;
+        let fit = (self.viewport.height() - 24.0) / n - 46.0;
+        let height = fit.clamp(60.0, 200.0);
+        let total = n * (height + 46.0);
+        let top = (self.viewport.center().y - total / 2.0).max(self.viewport.min.y + 12.0);
+        let pos = egui::pos2(self.viewport.min.x + 12.0, top);
         let mut preview = false;
         egui::Area::new(egui::Id::new("tool_sliders"))
             .fixed_pos(pos)

@@ -167,6 +167,21 @@ pub fn install_fonts(ctx: &egui::Context, fm: &crate::text::FontManager) {
             break;
         }
     }
+    // Fallback for Chinese, Japanese and Korean file names and text (Kubuntu ships
+    // Noto Sans CJK); without it they show as boxes.
+    for fam in ["Noto Sans CJK SC", "Noto Sans CJK JP", "Noto Sans CJK KR", "Droid Sans Fallback"] {
+        if fm.families.iter().any(|f| f == fam)
+            && let Some((bytes, index)) = fm.font_bytes(fam, false)
+        {
+            let mut fd = FontData::from_owned(bytes);
+            fd.index = index;
+            defs.font_data.insert("cjk".into(), Arc::new(fd));
+            for family in [FontFamily::Proportional, FontFamily::Monospace] {
+                defs.families.entry(family).or_default().push("cjk".into());
+            }
+            break;
+        }
+    }
     ctx.set_fonts(defs);
 }
 

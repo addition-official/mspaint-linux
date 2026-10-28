@@ -191,7 +191,11 @@ impl PaintApp {
         let mut child = ui.new_child(UiBuilder::new().max_rect(area));
         let out = sa.show(&mut child, |ui| {
             let (rect, resp) = ui.allocate_exact_size(content, Sense::click_and_drag());
-            let img = Rect::from_min_size(rect.min + offset, img_size);
+            // Snap to the physical pixel grid so 100% zoom maps picture pixels 1:1
+            // (a half-pixel offset would blur every edge).
+            let ppp = ui.ctx().pixels_per_point();
+            let min = ((rect.min + offset).to_vec2() * ppp).round() / ppp;
+            let img = Rect::from_min_size(min.to_pos2(), img_size);
             self.image_rect = img;
             self.canvas_input(ui, &resp, img);
             self.canvas_paint(ui, img);
@@ -279,17 +283,26 @@ impl PaintApp {
         let z = self.zoom;
         let to_img = |p: Pos2| ((p - img.min) / z).to_pos2();
         let to_scr = |p: Pos2| img.min + p.to_vec2() * z;
-        let (ptr, pp, ps, pm, down, shift, zoom_delta, dbl, ctrl) = ui.input(|i| {
+        let drag_button = self.drag_button;
+        let (ptr, pp, ps, pm, down, shift, zoom_delta, dbl, ctrl, press_at, moves) = ui.input(|i| {
             (
                 i.pointer.latest_pos(),
                 i.pointer.button_pressed(egui::PointerButton::Primary),
                 i.pointer.button_pressed(egui::PointerButton::Secondary),
                 i.pointer.button_pressed(egui::PointerButton::Middle),
-                i.pointer.any_down(),
+                // A drag ends when *its* button is released, even if another is held.
+                i.pointer.button_down(drag_button),
                 i.modifiers.shift,
                 i.zoom_delta(),
                 i.pointer.button_double_clicked(egui::PointerButton::Primary),
                 i.modifiers.command,
+                i.pointer.press_origin(),
+                // Every pointer position of this frame, so slow frames don't flatten
+                // a curved stroke into one straight segment.
+                i.events
+                    .iter()
+                    .filter_map(|e| if let egui::Event::PointerMoved(p) = e { Some(*p) } else { None })
+                    .collect::<Vec<_>>(),
             )
         });
         let hovered = resp.contains_pointer();
@@ -327,7 +340,14 @@ impl PaintApp {
 
         // Continue an ongoing drag.
         if let Some(drag) = self.drag.clone() {
-            if let Some(ps_) = ptr {
+            if matches!(drag, Drag::Stroke { .. }) && moves.len() > 1 {
+                for m in &moves[..moves.len() - 1] {
+                    if let Some(d) = self.drag.clone() {
+                        self.drag_move(d, to_img(*m), *m, shift);
+                    }
+                }
+            }
+            if let (Some(ps_), Some(drag)) = (ptr, self.drag.clone()) {
                 // Keep the tool's cursor while the button is held.
                 self.canvas_cursor = Some(self.drag_cursor(&drag, to_img(ps_), to_scr));
                 self.drag_move(drag, to_img(ps_), ps_, shift);
@@ -339,7 +359,9 @@ impl PaintApp {
             return;
         }
 
-        let Some(p_scr) = ptr else { return };
+        // A press starts where the button went down, not where the pointer is by the
+        // end of a (possibly slow) frame.
+        let Some(p_scr) = (if pp || ps || pm { press_at.or(ptr) } else { ptr }) else { return };
         let p = to_img(p_scr);
 
         // Hover cursors (not over the floating sliders/popups, which take the pointer).
@@ -350,6 +372,7 @@ impl PaintApp {
             return;
         }
         if pm {
+            self.drag_button = egui::PointerButton::Middle;
             self.drag = Some(Drag::Pan { last: p_scr });
             return;
         }
@@ -357,6 +380,7 @@ impl PaintApp {
             return;
         }
         let secondary = ps && !pp;
+        self.drag_button = if secondary { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
 
         // Canvas resize handles.
         if !secondary && let Some(h) = self.canvas_handle_hit(p_scr, img) {
@@ -816,7 +840,7 @@ impl PaintApp {
                     let lh = self.s.text.px() * 1.4 + 6.0;
                     r = Rect::from_min_size(start, vec2(240.0_f32.max(self.s.text.px() * 8.0), lh));
                 }
-                self.doc.overlay = Overlay::Text(TextBox { rect: r, text: String::new(), caret: 0 });
+                self.doc.overlay = Overlay::Text(TextBox::new(r));
             }
             Drag::CanvasResize { size, .. } => {
                 let s = self.s.clone();
@@ -934,7 +958,9 @@ impl PaintApp {
         // Floating selection.
         if let Some(f) = self.doc.floating() {
             let r = Rect::from_min_max(to_scr(f.rect.min), to_scr(f.rect.max));
-            if let Some(t) = &self.float_tex {
+            if let Some(t) = &self.float_tex
+                && !self.doc.float_in_layer()
+            {
                 t.paint(p, r);
             }
             if let Some(outline) = &f.outline {
