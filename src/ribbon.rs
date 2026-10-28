@@ -97,6 +97,12 @@ impl PaintApp {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Clicks on toolbar buttons while a menu is open only close the menu, as in Windows
+    /// (the button underneath must not act too). Items inside menus stay clickable.
+    pub fn click_sense(&self, ui: &Ui) -> Sense {
+        if self.popup_was_open && !egui::containers::menu::is_in_menu(ui) { Sense::hover() } else { Sense::click() }
+    }
+
     fn btn_at_enabled(
         &self,
         ui: &mut Ui,
@@ -107,7 +113,7 @@ impl PaintApp {
         tip: &str,
         enabled: bool,
     ) -> Response {
-        let sense = if enabled { Sense::click() } else { Sense::hover() };
+        let sense = if enabled { self.click_sense(ui) } else { Sense::hover() };
         let resp = ui.interact(rect, ui.id().with(key), sense);
         self.button_bg(ui, rect, &resp, selected);
         let size = (rect.height() - 8.0).clamp(14.0, 20.0);
@@ -120,8 +126,8 @@ impl PaintApp {
     fn split_btn_at(&self, ui: &mut Ui, rect: Rect, key: &str, icon: Icon, selected: bool, tip: &str) -> (Response, Response) {
         let top = Rect::from_min_max(rect.min, egui::pos2(rect.max.x, rect.max.y - CHEVRON_H));
         let bottom = Rect::from_min_max(egui::pos2(rect.min.x, rect.max.y - CHEVRON_H), rect.max);
-        let main = ui.interact(top, ui.id().with((key, "main")), Sense::click());
-        let chev = ui.interact(bottom, ui.id().with((key, "chev")), Sense::click());
+        let main = ui.interact(top, ui.id().with((key, "main")), self.click_sense(ui));
+        let chev = ui.interact(bottom, ui.id().with((key, "chev")), self.click_sense(ui));
         // Win11 split button: hovering either part lightly highlights the whole button and
         // the part under the pointer more strongly; the pressed part gets the pressed fill.
         let pal = self.pal;
@@ -140,7 +146,7 @@ impl PaintApp {
     /// Big single drop-down: icon on top, chevron underneath, one hover area. Win11's
     /// Size button works like this (the whole button opens the list).
     fn stacked_dropdown_at(&self, ui: &mut Ui, rect: Rect, key: &str, icon: Icon, tip: &str) -> Response {
-        let resp = ui.interact(rect, ui.id().with(key), Sense::click());
+        let resp = ui.interact(rect, ui.id().with(key), self.click_sense(ui));
         self.button_bg(ui, rect, &resp, false);
         let top = Rect::from_min_max(rect.min, egui::pos2(rect.max.x, rect.max.y - CHEVRON_H));
         self.paint_icon_fg(ui, top.center() + vec2(0.0, 2.0), 22.0, icon, self.resp_fg(&resp, true));
@@ -150,7 +156,7 @@ impl PaintApp {
 
     /// Icon with a small chevron to its right; the whole button opens a drop-down.
     fn dropdown_at(&self, ui: &mut Ui, rect: Rect, key: &str, icon: Icon, tip: &str) -> Response {
-        let resp = ui.interact(rect, ui.id().with(key), Sense::click());
+        let resp = ui.interact(rect, ui.id().with(key), self.click_sense(ui));
         self.button_bg(ui, rect, &resp, false);
         let icon_size = (rect.height() - 8.0).clamp(14.0, 20.0);
         let fg = self.resp_fg(&resp, true);
@@ -414,7 +420,7 @@ impl PaintApp {
     }
 
     /// Menu entry with an icon in a fixed gutter; `checked` shows a tick on the right.
-    fn menu_item_icon(&self, ui: &mut Ui, icon: Icon, label: &str, checked: bool) -> bool {
+    fn menu_item_icon(&mut self, ui: &mut Ui, icon: Icon, label: &str, checked: bool) -> bool {
         self.menu_item(ui, icon, label, "", checked, true)
     }
 
@@ -437,11 +443,16 @@ impl PaintApp {
 
     /// Menu entry: icon gutter, label, optional shortcut on the right, check mark,
     /// and a disabled state.
-    pub fn menu_item(&self, ui: &mut Ui, icon: Icon, label: &str, shortcut: &str, checked: bool, enabled: bool) -> bool {
+    pub fn menu_item(&mut self, ui: &mut Ui, icon: Icon, label: &str, shortcut: &str, checked: bool, enabled: bool) -> bool {
         let width = ui.available_width().clamp(190.0, 260.0);
         let sense = if enabled { Sense::click() } else { Sense::hover() };
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), sense);
-        self.button_bg(ui, rect, &resp, false);
+        if enabled && std::mem::take(&mut self.focus_first_item) {
+            resp.request_focus();
+        }
+        // Keyboard focus looks like hover, as in Windows menus.
+        let focused = resp.has_focus();
+        self.pal.paint_button(ui.painter(), rect, resp.hovered() || focused, enabled && resp.is_pointer_button_down_on(), false);
         let fg = self.pal.icon_fg(enabled, false);
         self.paint_icon_fg(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), 16.0, icon, fg);
         ui.painter().text(
@@ -723,7 +734,7 @@ impl PaintApp {
     }
 
     fn color_circle_at(&self, ui: &mut Ui, rect: Rect, key: &str, c: Color32, selected: bool, tip: &str) -> Response {
-        let resp = ui.interact(rect, ui.id().with(key), Sense::click());
+        let resp = ui.interact(rect, ui.id().with(key), self.click_sense(ui));
         let p = ui.painter();
         let center = rect.center();
         let d = rect.width().min(rect.height()) - 5.0;
@@ -806,7 +817,7 @@ impl PaintApp {
             app.palette_swatches(ui, egui::pos2(px0, c.center().y - 1.5 * cell));
             // Edit colors (rainbow ring).
             let rect = r(px0 + pal_w + 8.0, c.min.y + 2.0, 44.0, 62.0);
-            let resp = ui.interact(rect, ui.id().with("edit_colors"), Sense::click());
+            let resp = ui.interact(rect, ui.id().with("edit_colors"), app.click_sense(ui));
             app.button_bg(ui, rect, &resp, false);
             let ctr = rect.center();
             for i in 0..36 {

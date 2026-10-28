@@ -188,6 +188,10 @@ pub struct PaintApp {
     pub corner: u8,
     /// Window title last sent to the window manager.
     last_title: String,
+    /// The next menu item drawn takes keyboard focus (menu opened from the keyboard).
+    pub focus_first_item: bool,
+    /// A menu or drop-down was open at the start of this frame (see `click_sense`).
+    pub popup_was_open: bool,
     /// The mouse button that started the current drag.
     pub drag_button: egui::PointerButton,
     system_checked: f64,
@@ -267,6 +271,8 @@ impl PaintApp {
             corner: WINDOW_RADIUS,
             last_title: String::new(),
             drag_button: egui::PointerButton::Primary,
+            popup_was_open: false,
+            focus_first_item: false,
             show_layers: p.layers,
             checker_tex: None,
             layer_thumbs: Vec::new(),
@@ -1075,9 +1081,10 @@ impl PaintApp {
             ui.spacing_mut().button_padding = vec2(12.0, 6.0);
             egui::MenuBar::new().ui(ui, |ui| {
                 // Wide, airy menu titles like Win11 (the menu bar style overrides button padding).
-                ui.menu_button(RichText::new("  File  ").size(14.0), |ui| self.file_menu(ui));
+                let file = ui.menu_button(RichText::new("  File  ").size(14.0), |ui| self.file_menu(ui)).response;
                 ui.add_space(4.0);
-                ui.menu_button(RichText::new("  View  ").size(14.0), |ui| self.view_menu(ui));
+                let view = ui.menu_button(RichText::new("  View  ").size(14.0), |ui| self.view_menu(ui)).response;
+                self.menu_bar_keys(ui.ctx(), &file, &view);
                 ui.add_space(6.0);
                 ui.separator();
                 ui.add_space(2.0);
@@ -1116,6 +1123,31 @@ impl PaintApp {
                 });
             });
         });
+    }
+
+    /// Menu bar behavior egui doesn't have: with one menu open, hovering the other
+    /// switches to it; Alt+F and Alt+V open them; arrow keys move through the items.
+    fn menu_bar_keys(&mut self, ctx: &egui::Context, file: &egui::Response, view: &egui::Response) {
+        use egui::Popup;
+        let (fid, vid) = (Popup::default_response_id(file), Popup::default_response_id(view));
+        if Popup::is_id_open(ctx, fid) && view.hovered() {
+            Popup::open_id(ctx, vid);
+        } else if Popup::is_id_open(ctx, vid) && file.hovered() {
+            Popup::open_id(ctx, fid);
+        }
+        for (key, id) in [(Key::F, fid), (Key::V, vid)] {
+            if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::ALT, key))) {
+                Popup::open_id(ctx, id);
+                self.focus_first_item = true;
+            }
+        }
+        if Popup::is_any_open(ctx) {
+            let (down, up) = ctx.input(|i| (i.key_pressed(Key::ArrowDown), i.key_pressed(Key::ArrowUp)));
+            if (down || up) && ctx.memory(|m| m.focused().is_none()) {
+                // Nothing focused yet: start at the first item (egui then moves focus).
+                self.focus_first_item = true;
+            }
+        }
     }
 
     /// Without system decorations we have to offer resizing from the window edges.
@@ -1164,7 +1196,7 @@ impl PaintApp {
     }
 
     fn icon_button(&self, ui: &mut egui::Ui, icon: Icon, enabled: bool) -> egui::Response {
-        let sense = if enabled { Sense::click() } else { Sense::hover() };
+        let sense = if enabled { self.click_sense(ui) } else { Sense::hover() };
         let (rect, resp) = ui.allocate_exact_size(vec2(36.0, 32.0), sense);
         let pressed = enabled && resp.is_pointer_button_down_on();
         self.pal.paint_button(ui.painter(), rect, enabled && resp.hovered(), pressed, false);
@@ -1373,7 +1405,7 @@ impl PaintApp {
         match &mut dialog {
             Dialog::Unsaved(action) => {
                 let name = self.doc.name();
-                let choice = modal("unsaved", ctx, 420.0, "Paint", &["Save", "Don't save", "Cancel"], &mut |ui| {
+                let choice = modal("unsaved", ctx, 420.0, "Paint", &["&Save", "Do&n't save", "Cancel"], &mut |ui| {
                     ui.label(format!("Do you want to save your work to {name}?"));
                 });
                 let choice = choice.or(enter.then_some(0));
@@ -1796,6 +1828,7 @@ impl eframe::App for PaintApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.apply_theme(&ctx);
+        self.popup_was_open = egui::Popup::is_any_open(&ctx);
 
         // Closing with unsaved changes asks first.
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.doc.has_unsaved_work() {
@@ -2022,8 +2055,16 @@ pub fn content_dialog(
                     let n = buttons.len() as f32;
                     let bw = (inner - 8.0 * (n - 1.0)) / n;
                     for (i, label) in buttons.iter().enumerate() {
-                        let b = if i == 0 { primary_button(label, pal) } else { Button::new(*label) };
-                        if ui.add_sized([bw, 32.0], b).clicked() {
+                        let fg = if i == 0 { if pal.dark { Color32::BLACK } else { Color32::WHITE } } else { pal.text };
+                        let (job, key) = access_label(label, fg);
+                        let mut b = Button::new(job).min_size(vec2(100.0, 30.0));
+                        if i == 0 {
+                            b = b.fill(pal.accent);
+                        }
+                        let pressed = key.is_some_and(|k| {
+                            ui.input(|inp| inp.key_pressed(k) && inp.modifiers.is_none())
+                        });
+                        if ui.add_sized([bw, 32.0], b).clicked() || pressed {
                             clicked = Some(i);
                         }
                     }
@@ -2035,9 +2076,26 @@ pub fn content_dialog(
     clicked
 }
 
-fn primary_button(label: &str, pal: Palette) -> Button<'static> {
-    let fg = if pal.dark { Color32::BLACK } else { Color32::WHITE };
-    Button::new(RichText::new(label.to_string()).color(fg)).fill(pal.accent).min_size(vec2(100.0, 30.0))
+/// Button text with a Windows access key: "Do&n't save" shows "Don't save" with the
+/// n underlined, and pressing N picks it.
+fn access_label(label: &str, color: Color32) -> (egui::text::LayoutJob, Option<Key>) {
+    let mut job = egui::text::LayoutJob::default();
+    let font = egui::FontId::proportional(14.0);
+    let plain = egui::TextFormat { font_id: font.clone(), color, ..Default::default() };
+    let mut key = None;
+    let mut chars = label.chars();
+    while let Some(c) = chars.next() {
+        if c == '&'
+            && let Some(k) = chars.next()
+        {
+            key = Key::from_name(&k.to_ascii_uppercase().to_string());
+            let underline = egui::TextFormat { underline: egui::Stroke::new(1.0, color), ..plain.clone() };
+            job.append(&k.to_string(), 0.0, underline);
+        } else {
+            job.append(&c.to_string(), 0.0, plain.clone());
+        }
+    }
+    (job, key)
 }
 
 /// CUPS printers and the index of the default one. None if CUPS isn't installed.
