@@ -61,6 +61,22 @@ pub enum Icon {
     RemoveBg,
     Palette,
     Picture,
+    New,
+    Open,
+    Recent,
+    Import,
+    Print,
+    Desktop,
+    Info,
+    Exit,
+    FullScreen,
+    Ruler,
+    Grid,
+    StatusBar,
+    Duplicate,
+    MergeDown,
+    MoveUp,
+    MoveDown,
 }
 
 fn g(r: Rect, x: f32, y: f32) -> Pos2 {
@@ -159,13 +175,22 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
             p.rect_stroke(Rect::from_min_max(g(r, 8.0, 7.0), g(r, 19.0, 21.0)), 2.0, s, StrokeKind::Middle);
             pl(p, r, &[(5.0, 17.0), (5.0, 5.0), (7.0, 3.0), (15.0, 3.0)], s);
         }
-        Icon::Minimize => pl(p, r, &[(6.0, 12.0), (18.0, 12.0)], Stroke::new(1.0, fg)),
+        // Caption glyphs: 10px and pixel-snapped like Windows (1px lines on .5 coordinates).
+        Icon::Minimize => {
+            let c = r.center().round();
+            p.line_segment([pos2(c.x - 5.0, c.y + 0.5), pos2(c.x + 5.0, c.y + 0.5)], Stroke::new(1.0, fg));
+        }
         Icon::Maximize => {
-            p.rect_stroke(Rect::from_min_max(g(r, 6.5, 6.5), g(r, 17.5, 17.5)), 1.5, Stroke::new(1.0, fg), StrokeKind::Middle);
+            let c = r.center().round();
+            let sq = Rect::from_min_max(pos2(c.x - 4.5, c.y - 4.5), pos2(c.x + 4.5, c.y + 4.5));
+            p.rect_stroke(sq, 1.0, Stroke::new(1.0, fg), StrokeKind::Middle);
         }
         Icon::Restore => {
-            p.rect_stroke(Rect::from_min_max(g(r, 6.0, 8.5), g(r, 15.5, 18.0)), 1.5, Stroke::new(1.0, fg), StrokeKind::Middle);
-            pl(p, r, &[(8.5, 6.0), (16.0, 6.0), (18.0, 8.0), (18.0, 15.5)], Stroke::new(1.0, fg));
+            let c = r.center().round();
+            let front = Rect::from_min_max(pos2(c.x - 4.5, c.y - 2.5), pos2(c.x + 2.5, c.y + 4.5));
+            p.rect_stroke(front, 1.0, Stroke::new(1.0, fg), StrokeKind::Middle);
+            let back = [pos2(c.x - 2.5, c.y - 4.5), pos2(c.x + 4.5, c.y - 4.5), pos2(c.x + 4.5, c.y + 2.5)];
+            p.add(Shape::line(back.to_vec(), Stroke::new(1.0, fg)));
         }
         Icon::Close => {
             pl(p, r, &[(6.5, 6.5), (17.5, 17.5)], Stroke::new(1.0, fg));
@@ -210,6 +235,89 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
             dashed_rect(p, r, 2.5, 2.5, 21.5, 21.5, s);
             p.circle_filled(g(r, 12.0, 9.0), r.width() / 24.0 * 3.2, accent);
             filled(p, r, &[(6.0, 20.0), (7.5, 15.0), (12.0, 13.5), (16.5, 15.0), (18.0, 20.0)], accent);
+        }
+        Icon::New => {
+            closed(p, r, &[(6.0, 3.0), (14.0, 3.0), (19.0, 8.0), (19.0, 21.0), (6.0, 21.0)], s);
+            pl(p, r, &[(14.0, 3.0), (14.0, 8.0), (19.0, 8.0)], s);
+        }
+        Icon::Open => {
+            closed(p, r, &[(3.0, 6.0), (9.0, 6.0), (11.0, 8.0), (20.0, 8.0), (20.0, 19.0), (3.0, 19.0)], s);
+            pl(p, r, &[(3.0, 11.0), (20.0, 11.0)], s);
+        }
+        Icon::Recent => {
+            p.circle_stroke(g(r, 12.0, 12.0), r.width() / 24.0 * 8.5, s);
+            pl(p, r, &[(12.0, 7.0), (12.0, 12.0), (15.5, 14.0)], s);
+        }
+        Icon::Import => {
+            p.rect_stroke(Rect::from_min_max(g(r, 3.0, 8.0), g(r, 16.0, 20.0)), 2.0, s, StrokeKind::Middle);
+            pl(p, r, &[(5.0, 18.0), (8.5, 14.0), (11.0, 16.5), (14.0, 13.5)], s);
+            pl(p, r, &[(21.0, 3.0), (14.0, 10.0)], sa);
+            pl(p, r, &[(14.0, 5.5), (14.0, 10.0), (18.5, 10.0)], sa);
+        }
+        Icon::Print => {
+            p.rect_stroke(Rect::from_min_max(g(r, 7.0, 3.0), g(r, 17.0, 8.0)), 1.0, s, StrokeKind::Middle);
+            p.rect_stroke(Rect::from_min_max(g(r, 3.0, 8.0), g(r, 21.0, 17.0)), 2.0, s, StrokeKind::Middle);
+            p.rect_stroke(Rect::from_min_max(g(r, 7.0, 13.0), g(r, 17.0, 21.0)), 1.0, s, StrokeKind::Middle);
+        }
+        Icon::Desktop => {
+            p.rect_stroke(Rect::from_min_max(g(r, 3.0, 4.0), g(r, 21.0, 16.0)), 2.0, s, StrokeKind::Middle);
+            pl(p, r, &[(12.0, 16.0), (12.0, 20.0)], s);
+            pl(p, r, &[(8.0, 20.0), (16.0, 20.0)], s);
+        }
+        Icon::Info => {
+            p.circle_stroke(g(r, 12.0, 12.0), r.width() / 24.0 * 8.5, s);
+            p.circle_filled(g(r, 12.0, 8.0), r.width() / 24.0 * 1.1, fg);
+            pl(p, r, &[(12.0, 11.0), (12.0, 17.0)], s);
+        }
+        Icon::Exit => {
+            pl(p, r, &[(13.0, 4.0), (5.0, 4.0), (5.0, 20.0), (13.0, 20.0)], s);
+            pl(p, r, &[(10.0, 12.0), (21.0, 12.0)], s);
+            pl(p, r, &[(17.5, 8.5), (21.0, 12.0), (17.5, 15.5)], s);
+        }
+        Icon::FullScreen => {
+            for (a, b, c) in [
+                ((4.0, 9.0), (4.0, 4.0), (9.0, 4.0)),
+                ((15.0, 4.0), (20.0, 4.0), (20.0, 9.0)),
+                ((20.0, 15.0), (20.0, 20.0), (15.0, 20.0)),
+                ((9.0, 20.0), (4.0, 20.0), (4.0, 15.0)),
+            ] {
+                pl(p, r, &[a, b, c], s);
+            }
+        }
+        Icon::Ruler => {
+            p.rect_stroke(Rect::from_min_max(g(r, 3.0, 8.0), g(r, 21.0, 16.0)), 1.5, s, StrokeKind::Middle);
+            for (i, x) in [6.5, 9.5, 12.5, 15.5, 18.5].into_iter().enumerate() {
+                pl(p, r, &[(x, 8.0), (x, if i % 2 == 0 { 12.0 } else { 10.5 })], s);
+            }
+        }
+        Icon::Grid => {
+            p.rect_stroke(Rect::from_min_max(g(r, 4.0, 4.0), g(r, 20.0, 20.0)), 1.5, s, StrokeKind::Middle);
+            for v in [9.33, 14.67] {
+                pl(p, r, &[(v, 4.0), (v, 20.0)], s);
+                pl(p, r, &[(4.0, v), (20.0, v)], s);
+            }
+        }
+        Icon::StatusBar => {
+            p.rect_stroke(Rect::from_min_max(g(r, 3.0, 5.0), g(r, 21.0, 19.0)), 2.0, s, StrokeKind::Middle);
+            pl(p, r, &[(3.0, 15.5), (21.0, 15.5)], s);
+        }
+        Icon::Duplicate => {
+            p.rect_stroke(Rect::from_min_max(g(r, 8.0, 8.0), g(r, 20.0, 20.0)), 2.0, s, StrokeKind::Middle);
+            pl(p, r, &[(4.0, 15.0), (4.0, 6.0), (6.0, 4.0), (15.0, 4.0)], s);
+        }
+        Icon::MergeDown => {
+            pl(p, r, &[(12.0, 3.0), (12.0, 13.0)], s);
+            pl(p, r, &[(8.5, 9.5), (12.0, 13.0), (15.5, 9.5)], s);
+            pl(p, r, &[(4.0, 17.0), (20.0, 17.0)], s);
+            pl(p, r, &[(4.0, 21.0), (20.0, 21.0)], s);
+        }
+        Icon::MoveUp => {
+            pl(p, r, &[(12.0, 20.0), (12.0, 5.0)], s);
+            pl(p, r, &[(6.5, 10.5), (12.0, 5.0), (17.5, 10.5)], s);
+        }
+        Icon::MoveDown => {
+            pl(p, r, &[(12.0, 4.0), (12.0, 19.0)], s);
+            pl(p, r, &[(6.5, 13.5), (12.0, 19.0), (17.5, 13.5)], s);
         }
         Icon::Palette => {
             // Painter's palette with a thumb hole and paint dots.

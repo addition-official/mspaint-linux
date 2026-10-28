@@ -305,6 +305,26 @@ impl PaintApp {
             }
         }
 
+        // Double-click closes a polygon. egui reports it on the second release, after the
+        // second press already added a point at the same place: drop that one and close.
+        if dbl
+            && let Overlay::Shape(sh) = &mut self.doc.overlay
+            && let Geom::Polygon(pts, false) = &mut sh.geom
+        {
+            let n = pts.len();
+            if n >= 2 && (pts[n - 1] - pts[n - 2]).length() * z < 6.0 {
+                pts.pop();
+            }
+            if pts.len() > 2 {
+                sh.geom = Geom::Polygon(pts.clone(), true);
+                let s = self.s.clone();
+                self.doc.render_overlay(&s, &mut self.fm);
+                self.doc.commit_overlay(&s);
+            }
+            self.drag = None;
+            return;
+        }
+
         // Continue an ongoing drag.
         if let Some(drag) = self.drag.clone() {
             if let Some(ps_) = ptr {
@@ -341,10 +361,9 @@ impl PaintApp {
         // Canvas resize handles.
         if !secondary && let Some(h) = self.canvas_handle_hit(p_scr, img) {
             self.doc.commit_overlay(&self.s);
-            self.drag = Some(Drag::CanvasResize {
-                handle: h,
-                size: vec2(self.doc.width() as f32, self.doc.height() as f32),
-            });
+            let size = vec2(self.doc.width() as f32, self.doc.height() as f32);
+            // The handles sit outside the edge: remember where on them the pointer grabbed.
+            self.drag = Some(Drag::CanvasResize { handle: h, size, grab: p.to_vec2() - size });
             return;
         }
 
@@ -468,12 +487,10 @@ impl PaintApp {
                 }
                 if let Some(hit) = hit_box(r, p_scr, true) {
                     let start_rect = f.rect;
-                    // Ctrl+drag leaves a copy behind; Shift+drag smears a trail of copies.
-                    if hit == Hit::Inside && (ctrl || shift) {
-                        let s = self.s.clone();
-                        self.doc.stamp_float(&s, true);
-                    }
-                    self.drag = Some(Drag::Box { hit, start_ptr: p, start_rect, start_geom: None });
+                    // Ctrl+drag leaves a copy behind; Shift+drag smears a trail of copies. The
+                    // copy is made on the first movement, so a click alone changes nothing.
+                    let copy = hit == Hit::Inside && (ctrl || shift);
+                    self.drag = Some(Drag::Box { hit, start_ptr: p, start_rect, start_geom: None, copy });
                     return true;
                 }
             }
@@ -515,14 +532,14 @@ impl PaintApp {
                     let d = (*a + seg * t - p).length() * z;
                     if d < 6.0 + self.s.shape_size * z / 2.0 {
                         let start_rect = sh.geom.bounds();
-                        self.drag = Some(Drag::Box { hit: Hit::Inside, start_ptr: p, start_rect, start_geom: Some(sh.geom.clone()) });
+                        self.drag = Some(Drag::Box { hit: Hit::Inside, start_ptr: p, start_rect, start_geom: Some(sh.geom.clone()), copy: false });
                         return true;
                     }
                 }
                 Geom::Boxed(r) => {
                     let sr = Rect::from_min_max(to_scr(r.min), to_scr(r.max)).expand(frame_pad);
                     if let Some(hit) = hit_box(sr, p_scr, true) {
-                        self.drag = Some(Drag::Box { hit, start_ptr: p, start_rect: *r, start_geom: None });
+                        self.drag = Some(Drag::Box { hit, start_ptr: p, start_rect: *r, start_geom: None, copy: false });
                         return true;
                     }
                 }
@@ -531,12 +548,12 @@ impl PaintApp {
             Overlay::Text(tb) => {
                 let sr = Rect::from_min_max(to_scr(tb.rect.min), to_scr(tb.rect.max)).expand(TEXT_FRAME);
                 if let Some(Hit::Handle(h)) = hit_box(sr, p_scr, true) {
-                    self.drag = Some(Drag::Box { hit: Hit::Handle(h), start_ptr: p, start_rect: tb.rect, start_geom: None });
+                    self.drag = Some(Drag::Box { hit: Hit::Handle(h), start_ptr: p, start_rect: tb.rect, start_geom: None, copy: false });
                     return true;
                 }
                 // Border band moves the box.
                 if sr.expand(4.0).contains(p_scr) && !sr.shrink(4.0).contains(p_scr) {
-                    self.drag = Some(Drag::Box { hit: Hit::Inside, start_ptr: p, start_rect: tb.rect, start_geom: None });
+                    self.drag = Some(Drag::Box { hit: Hit::Inside, start_ptr: p, start_rect: tb.rect, start_geom: None, copy: false });
                     return true;
                 }
                 if sr.contains(p_scr) {
@@ -635,7 +652,7 @@ impl PaintApp {
                     *pts.last_mut().unwrap() = if shift { snap45(prev, p) } else { p };
                 }
             }
-            Drag::Box { hit, start_ptr, start_rect, start_geom } => {
+            Drag::Box { hit, start_ptr, start_rect, start_geom, copy } => {
                 let d = p - start_ptr;
                 let mut nr = apply_hit(start_rect, hit, d);
                 if hit == Hit::Inside {
@@ -647,7 +664,13 @@ impl PaintApp {
                 }
                 let is_float = matches!(self.doc.overlay, Overlay::Float(_));
                 if is_float && d != Vec2::ZERO {
-                    if shift && hit == Hit::Inside {
+                    if copy {
+                        let s = self.s.clone();
+                        self.doc.stamp_float(&s, true);
+                        if let Some(Drag::Box { copy, .. }) = &mut self.drag {
+                            *copy = false;
+                        }
+                    } else if shift && hit == Hit::Inside {
                         let s = self.s.clone();
                         self.doc.stamp_float(&s, false);
                     }
@@ -730,10 +753,11 @@ impl PaintApp {
                 self.drag = Some(Drag::Lasso { pts });
             }
             Drag::TextNew { start, .. } => self.drag = Some(Drag::TextNew { start, cur: p }),
-            Drag::CanvasResize { handle, .. } => {
-                let w = if handle == 1 { self.doc.width() as f32 } else { p.x.round().max(1.0) };
-                let h = if handle == 0 { self.doc.height() as f32 } else { p.y.round().max(1.0) };
-                self.drag = Some(Drag::CanvasResize { handle, size: vec2(w, h) });
+            Drag::CanvasResize { handle, grab, .. } => {
+                let max = pixels::MAX_SIDE as f32;
+                let w = if handle == 1 { self.doc.width() as f32 } else { (p.x - grab.x).round().clamp(1.0, max) };
+                let h = if handle == 0 { self.doc.height() as f32 } else { (p.y - grab.y).round().clamp(1.0, max) };
+                self.drag = Some(Drag::CanvasResize { handle, size: vec2(w, h), grab });
             }
             Drag::Pan { last } => {
                 let d = p_scr - last;
@@ -796,7 +820,13 @@ impl PaintApp {
             }
             Drag::CanvasResize { size, .. } => {
                 let s = self.s.clone();
-                self.doc.resize_canvas(&s, size.x as u32, size.y as u32);
+                let (w, h) = (size.x as u32, size.y as u32);
+                if (w, h) != (self.doc.width(), self.doc.height()) {
+                    match pixels::check_size(w, h) {
+                        Ok(()) => self.doc.resize_canvas(&s, w, h),
+                        Err(e) => self.dialog = Some(crate::app::Dialog::Message(e)),
+                    }
+                }
             }
             Drag::Rotate { .. } => self.rotate_base = None,
             Drag::PolygonPoint | Drag::Box { .. } | Drag::LineEnd { .. } | Drag::Pan { .. } => {}
@@ -894,7 +924,7 @@ impl PaintApp {
         // Transparent pixels show a checkerboard, as in Paint.
         self.paint_checker(p, img);
         if let Some(t) = &self.tex {
-            p.image(t.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            t.paint(p, img);
         }
 
         if self.show_grid {
@@ -905,7 +935,7 @@ impl PaintApp {
         if let Some(f) = self.doc.floating() {
             let r = Rect::from_min_max(to_scr(f.rect.min), to_scr(f.rect.max));
             if let Some(t) = &self.float_tex {
-                p.image(t.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                t.paint(p, r);
             }
             if let Some(outline) = &f.outline {
                 let pts: Vec<Pos2> = outline

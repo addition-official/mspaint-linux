@@ -99,19 +99,20 @@ impl PaintApp {
                 let mut op: Option<&str> = None;
                 resp.context_menu(|ui| {
                     let n = self.doc.layers.len();
-                    for (label, key, enabled) in [
-                        ("Duplicate layer", "dup", true),
-                        ("Merge down", "merge", i > 0),
-                        ("Move up", "up", i + 1 < n),
-                        ("Move down", "down", i > 0),
-                        (if self.doc.layers[i].visible { "Hide layer" } else { "Show layer" }, "vis", true),
+                    let visible = self.doc.layers[i].visible;
+                    for (icon, label, key, enabled) in [
+                        (Icon::Duplicate, "Duplicate layer", "dup", true),
+                        (Icon::MergeDown, "Merge down", "merge", i > 0 && visible && self.doc.layers[i - 1].visible),
+                        (Icon::MoveUp, "Move up", "up", i + 1 < n),
+                        (Icon::MoveDown, "Move down", "down", i > 0),
+                        (if visible { Icon::EyeOff } else { Icon::Eye }, if visible { "Hide layer" } else { "Show layer" }, "vis", true),
                     ] {
-                        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                        if self.menu_item(ui, icon, label, "", false, enabled) {
                             op = Some(key);
                         }
                     }
                     ui.separator();
-                    if ui.add_enabled(n > 1, egui::Button::new("Delete layer")).clicked() {
+                    if self.menu_item(ui, Icon::Delete, "Delete layer", "", false, n > 1) {
                         op = Some("delete");
                     }
                 });

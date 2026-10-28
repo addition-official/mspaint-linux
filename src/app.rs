@@ -7,6 +7,7 @@ use crate::icons::{self, Icon};
 use crate::pixels;
 use crate::text::FontManager;
 use crate::theme::{self, Palette, ThemePref};
+use crate::tiles::TiledTexture;
 use crate::tools::Tool;
 use egui::{
     Align, Button, Color32, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Rect, RichText, Sense, TextureHandle,
@@ -78,7 +79,7 @@ pub enum Dialog {
     Unsaved(Action),
     Resize(ResizeState),
     /// Size in pixels; `unit`: 0 = pixels, 1 = inches, 2 = centimeters.
-    Properties { w: u32, h: u32, unit: u8, bw: bool },
+    Properties { w: u32, h: u32, unit: u8, bw: bool, last_saved: String },
     About,
     Message(String),
     CustomRotate { angle: f32 },
@@ -126,12 +127,13 @@ pub enum Drag {
     ShapeNew { start: Pos2 },
     CurveBend,
     PolygonPoint,
-    Box { hit: Hit, start_ptr: Pos2, start_rect: Rect, start_geom: Option<crate::shapes::Geom> },
+    /// `copy`: Ctrl/Shift+drag of a selection, which leaves a copy once it moves.
+    Box { hit: Hit, start_ptr: Pos2, start_rect: Rect, start_geom: Option<crate::shapes::Geom>, copy: bool },
     LineEnd { which: u8 },
     Marquee { start: Pos2, cur: Pos2 },
     Lasso { pts: Vec<Pos2> },
     TextNew { start: Pos2, cur: Pos2 },
-    CanvasResize { handle: u8, size: Vec2 },
+    CanvasResize { handle: u8, size: Vec2, grab: Vec2 },
     Pan { last: Pos2 },
     /// Free-rotating the selection around `center`; `start` is the pointer angle at
     /// the start of the drag, `angle` the current rotation (degrees).
@@ -152,8 +154,8 @@ pub struct PaintApp {
     pub pal: Palette,
     pub theme_pref: ThemePref,
     applied_dark: Option<bool>,
-    pub tex: Option<TextureHandle>,
-    pub float_tex: Option<TextureHandle>,
+    pub tex: Option<TiledTexture>,
+    pub float_tex: Option<TiledTexture>,
     pub float_tex_key: String,
     pub zoom: f32,
     pub pending_scroll: Option<Vec2>,
@@ -184,6 +186,8 @@ pub struct PaintApp {
     pub on_window_edge: bool,
     /// Window corner radius we currently draw (0 when maximized or using system decorations).
     pub corner: u8,
+    /// Window title last sent to the window manager.
+    last_title: String,
     system_checked: f64,
     pub show_layers: bool,
     pub checker_tex: Option<TextureHandle>,
@@ -259,6 +263,7 @@ impl PaintApp {
             decorations_applied: None,
             on_window_edge: false,
             corner: WINDOW_RADIUS,
+            last_title: String::new(),
             show_layers: p.layers,
             checker_tex: None,
             layer_thumbs: Vec::new(),
@@ -282,7 +287,7 @@ impl PaintApp {
     }
 
     fn title(&self) -> String {
-        format!("{}{} - Paint", if self.doc.modified { "*" } else { "" }, self.doc.name())
+        format!("{}{} - Paint", if self.doc.has_unsaved_work() { "*" } else { "" }, self.doc.name())
     }
 
     pub fn set_tool(&mut self, t: Tool) {
@@ -347,6 +352,8 @@ impl PaintApp {
         match pixels::load(&path) {
             Ok(img) => {
                 self.doc = Document::from_pixmap(img, Some(path.clone()));
+                // Layer revisions restart with each document: rebuild the thumbnails.
+                self.thumbs_rev = u64::MAX;
                 self.add_recent(path);
                 self.zoom = 1.0;
                 self.drag = None;
@@ -408,6 +415,14 @@ impl PaintApp {
     fn save_to(&mut self, path: PathBuf) -> bool {
         self.doc.commit_overlay(&self.s);
         match pixels::save(&self.doc.flattened(), &path) {
+            Ok(()) if pixels::saves_smaller(&path, self.doc.width(), self.doc.height()) => {
+                // The full-size picture is not on disk: keep it counted as unsaved.
+                self.dialog = Some(Dialog::Message(format!(
+                    "Icons can be at most 256 x 256 pixels, so {} was saved as a smaller copy. Your picture is still full size.",
+                    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+                )));
+                true
+            }
             Ok(()) => {
                 self.doc.mark_saved(path.clone());
                 self.add_recent(path);
@@ -422,8 +437,10 @@ impl PaintApp {
 
     fn save(&mut self) -> bool {
         match self.doc.path.clone() {
-            Some(p) => self.save_to(p),
-            None => self.save_as(Some("png")),
+            // Formats we can open but not write (e.g. TGA, QOI) go through Save as,
+            // instead of silently writing PNG data under the old name.
+            Some(p) if pixels::can_save(&p) => self.save_to(p),
+            _ => self.save_as(Some("png")),
         }
     }
 
@@ -473,7 +490,17 @@ impl PaintApp {
     fn paste(&mut self) {
         let Some(cb) = &mut self.clipboard else { return };
         let pix = match cb.get_image() {
-            Ok(img) => pixels::from_rgba_unmultiplied(img.width as u32, img.height as u32, img.bytes.into_owned()),
+            Ok(img) => {
+                let (w, h) = (img.width as u32, img.height as u32);
+                if let Err(e) = pixels::check_size(w, h) {
+                    self.dialog = Some(Dialog::Message(format!("Paint cannot paste this picture.\n\n{e}")));
+                    return;
+                }
+                match pixels::from_rgba_unmultiplied(w, h, img.bytes.into_owned()) {
+                    Some(p) => p,
+                    None => return,
+                }
+            }
             Err(_) => {
                 // Maybe a file path / URI to an image was copied (e.g. from Dolphin).
                 let Ok(text) = cb.get_text() else { return };
@@ -510,7 +537,7 @@ impl PaintApp {
     }
 
     pub fn run_action(&mut self, ctx: &egui::Context, a: Action) {
-        if self.doc.modified && Self::needs_save_prompt(&a) {
+        if self.doc.has_unsaved_work() && Self::needs_save_prompt(&a) {
             self.dialog = Some(Dialog::Unsaved(a));
             return;
         }
@@ -518,6 +545,7 @@ impl PaintApp {
         match a {
             Action::New => {
                 self.doc = Document::new(DEFAULT_W, DEFAULT_H);
+                self.thumbs_rev = u64::MAX;
                 self.zoom = 1.0;
                 self.drag = None;
             }
@@ -603,10 +631,30 @@ impl PaintApp {
             Action::Rotate180 => self.doc.transform(&s, pixels::rotate_180),
             Action::FlipVertical => self.doc.transform(&s, pixels::flip_v),
             Action::FlipHorizontal => self.doc.transform(&s, pixels::flip_h),
-            Action::InvertColors => self.doc.apply_active(&s, pixels::invert_colors),
+            Action::InvertColors => {
+                // On the bottom layer the white Background tile is part of the picture, as
+                // the white canvas is in Paint: invert it too (a black canvas).
+                let bake = self.doc.floating().is_none() && self.doc.active == 0 && self.doc.background_visible;
+                let bg = self.doc.background;
+                self.doc.apply_active(&s, move |p| {
+                    if bake {
+                        pixels::under_color_region(p, bg, pixels::IRect::from_size(p.width(), p.height()));
+                    }
+                    pixels::invert_colors(p);
+                });
+            }
             Action::Properties => {
                 self.doc.commit_overlay(&s);
-                self.dialog = Some(Dialog::Properties { w: self.doc.width(), h: self.doc.height(), unit: 0, bw: false });
+                // Computed once: it runs `date`, which is too slow for every frame.
+                let last_saved = self
+                    .doc
+                    .path
+                    .as_ref()
+                    .and_then(|p| std::fs::metadata(p).ok())
+                    .and_then(|m| m.modified().ok())
+                    .map(format_time)
+                    .unwrap_or_else(|| "Not available".into());
+                self.dialog = Some(Dialog::Properties { w: self.doc.width(), h: self.doc.height(), unit: 0, bw: false, last_saved });
             }
             Action::ZoomIn => self.zoom_step(1, None),
             Action::ZoomOut => self.zoom_step(-1, None),
@@ -646,7 +694,14 @@ impl PaintApp {
             Action::CopyVisible => self.copy_visible(),
             Action::SetTool(t) => self.set_tool(t),
             Action::CustomRotate => self.dialog = Some(Dialog::CustomRotate { angle: 0.0 }),
-            Action::RemoveBackground => self.doc.apply_active(&s, pixels::remove_background),
+            Action::RemoveBackground => {
+                let whole = self.doc.floating().is_none();
+                if self.doc.apply_active(&s, pixels::remove_background) && whole {
+                    // Show the removed area as transparent (checkerboard), in the same undo step.
+                    let c = self.doc.background;
+                    self.doc.set_background(c, false, false);
+                }
+            }
             Action::ToggleThumbnail => self.show_thumbnail = !self.show_thumbnail,
             Action::Print => {
                 self.doc.commit_overlay(&s);
@@ -666,14 +721,11 @@ impl PaintApp {
         }
     }
 
-    /// Send the flattened picture to a CUPS printer with `lp`.
+    /// Send the flattened picture to a CUPS printer with `lp`, as PNG on its standard
+    /// input (no temporary file other users could tamper with or read).
     fn print(&mut self, st: &PrintState) -> Result<(), String> {
-        let dir = std::env::temp_dir().join("mspaint-linux-print");
-        let _ = std::fs::create_dir_all(&dir);
-        let name = self.doc.name();
-        let stem = std::path::Path::new(&name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Untitled".into());
-        let path = dir.join(format!("{stem}.png"));
-        pixels::save(&self.doc.flattened(), &path)?;
+        use std::io::Write;
+        let png = pixels::encode(&self.doc.flattened(), "png").map_err(|e| e.to_string())?;
         let mut cmd = std::process::Command::new("lp");
         cmd.arg("-d").arg(&st.printers[st.printer]).arg("-n").arg(st.copies.to_string());
         cmd.arg("-t").arg(self.doc.name());
@@ -681,7 +733,12 @@ impl PaintApp {
             cmd.arg("-o").arg("fit-to-page");
         }
         cmd.arg("-o").arg(if st.landscape { "landscape" } else { "portrait" });
-        let out = cmd.arg(&path).output().map_err(|e| e.to_string())?;
+        cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(&png).map_err(|e| e.to_string())?;
+        }
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
         if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).into_owned()) }
     }
 
@@ -779,11 +836,9 @@ impl PaintApp {
             (cs, Key::S, A::SaveAs(None)),
             (cs, Key::Z, A::Redo),
             (cs, Key::I, A::InvertColors),
-            (cs, Key::X, A::Crop),
             (cs, Key::N, A::AddLayer),
             (cs, Key::H, A::ToggleBackground),
             (cs, Key::B, A::BackgroundColor),
-            (cs, Key::C, A::CopyVisible),
             (cmd, Key::P, A::Print),
             (cmd, Key::N, A::New),
             (cmd, Key::O, A::Open),
@@ -813,11 +868,14 @@ impl PaintApp {
                 self.push(a.clone());
             }
         }
-        let events = ctx.input(|i| i.events.clone());
+        let (events, shift) = ctx.input(|i| (i.events.clone(), i.modifiers.shift));
         for e in events {
             match e {
-                egui::Event::Copy => self.push(Action::Copy),
-                egui::Event::Cut => self.push(Action::Cut),
+                // egui-winit turns Ctrl+(Shift+)C/X into these events and sends no key
+                // event, so Ctrl+Shift+C (copy visible layers) and Ctrl+Shift+X (crop)
+                // are recognized here.
+                egui::Event::Copy => self.push(if shift { Action::CopyVisible } else { Action::Copy }),
+                egui::Event::Cut => self.push(if shift { Action::Crop } else { Action::Cut }),
                 // egui swallows the key *press* of Ctrl+V (and only emits a Paste event when
                 // the clipboard holds text), so an image paste is recognized by a V release
                 // without a matching press. Checking the modifiers on release is unreliable:
@@ -834,7 +892,11 @@ impl PaintApp {
                     self.push(Action::SetTool(tool_for_key(key).unwrap()));
                 }
                 egui::Event::Key { key: Key::Escape, pressed: true, .. } => {
-                    if ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
+                    if matches!(self.drag, Some(Drag::ShapeNew { .. } | Drag::TextNew { .. })) {
+                        // Escape while still dragging out a shape or text box cancels it.
+                        self.doc.cancel_overlay();
+                        self.drag = None;
+                    } else if ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
                         self.push(Action::Fullscreen);
                     } else {
                         self.doc.commit_overlay(&self.s);
@@ -1090,101 +1152,100 @@ impl PaintApp {
         resp
     }
 
-    fn file_menu(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(240.0);
-        let item = |ui: &mut egui::Ui, label: &str, sc: &str| ui.add(Button::new(label).shortcut_text(sc)).clicked();
-        if item(ui, "New", "Ctrl+N") {
-            self.push(Action::New);
-        }
-        if item(ui, "Open", "Ctrl+O") {
-            self.push(Action::Open);
-        }
-        let recent = self.recent.clone();
-        ui.add_enabled_ui(!recent.is_empty(), |ui| {
-            ui.menu_button("Recent", |ui| {
-                for p in recent {
-                    let label = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    if ui.button(label).on_hover_text(p.display().to_string()).clicked() {
-                        self.push(Action::OpenPath(p));
-                    }
+    /// A submenu row plus its items (icon, label, action).
+    fn submenu(&mut self, ui: &mut egui::Ui, icon: Icon, label: &str, items: &[(Icon, String, Action)]) {
+        let row = self.submenu_row(ui, icon, label);
+        egui::containers::menu::SubMenu::new().show(ui, &row, |ui| {
+            for (icon, label, a) in items {
+                if self.menu_item(ui, *icon, label, "", false, true) {
+                    self.push(a.clone());
                 }
-            });
+            }
         });
-        if item(ui, "Import to canvas", "") {
+    }
+
+    fn file_menu(&mut self, ui: &mut egui::Ui) {
+        ui.set_min_width(250.0);
+        for (icon, label, sc, a) in [(Icon::New, "New", "Ctrl+N", Action::New), (Icon::Open, "Open", "Ctrl+O", Action::Open)] {
+            if self.menu_item(ui, icon, label, sc, false, true) {
+                self.push(a);
+            }
+        }
+        let recent: Vec<(Icon, String, Action)> = self
+            .recent
+            .iter()
+            .map(|p| (Icon::Picture, p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), Action::OpenPath(p.clone())))
+            .collect();
+        if recent.is_empty() {
+            self.menu_item(ui, Icon::Recent, "Recent", "", false, false);
+        } else {
+            self.submenu(ui, Icon::Recent, "Recent", &recent);
+        }
+        if self.menu_item(ui, Icon::Import, "Import to canvas", "", false, true) {
             self.push(Action::Import);
         }
         ui.separator();
-        if item(ui, "Save", "Ctrl+S") {
+        if self.menu_item(ui, Icon::Save, "Save", "Ctrl+S", false, true) {
             self.push(Action::Save);
         }
-        ui.menu_button("Save as", |ui| {
-            for (label, ext) in [
-                ("PNG picture", "png"),
-                ("JPEG picture", "jpg"),
-                ("BMP picture", "bmp"),
-                ("GIF picture", "gif"),
-                ("TIFF picture", "tiff"),
-                ("WEBP picture", "webp"),
-                ("ICO picture", "ico"),
-            ] {
-                if ui.button(label).clicked() {
-                    self.push(Action::SaveAs(Some(ext)));
-                }
-            }
-        });
-        if item(ui, "Print", "Ctrl+P") {
+        let formats: Vec<(Icon, String, Action)> = [
+            ("PNG picture", "png"),
+            ("JPEG picture", "jpg"),
+            ("BMP picture", "bmp"),
+            ("GIF picture", "gif"),
+            ("TIFF picture", "tiff"),
+            ("WEBP picture", "webp"),
+            ("ICO picture", "ico"),
+        ]
+        .into_iter()
+        .map(|(label, ext)| (Icon::Picture, label.to_string(), Action::SaveAs(Some(ext))))
+        .collect();
+        self.submenu(ui, Icon::Save, "Save as", &formats);
+        if self.menu_item(ui, Icon::Print, "Print", "Ctrl+P", false, true) {
             self.push(Action::Print);
         }
         ui.separator();
-        ui.menu_button("Set as desktop background", |ui| {
-            for (label, mode) in [("Fill", "fill"), ("Tile", "tile"), ("Center", "center")] {
-                if ui.button(label).clicked() {
-                    self.push(Action::Wallpaper(mode));
-                }
-            }
-        });
-        if item(ui, "Image properties", "Ctrl+E") {
+        let modes: Vec<(Icon, String, Action)> =
+            [("Fill", "fill"), ("Tile", "tile"), ("Center", "center")].into_iter().map(|(l, m)| (Icon::Desktop, l.to_string(), Action::Wallpaper(m))).collect();
+        self.submenu(ui, Icon::Desktop, "Set as desktop background", &modes);
+        if self.menu_item(ui, Icon::Info, "Image properties", "Ctrl+E", false, true) {
             self.push(Action::Properties);
         }
         ui.separator();
-        if item(ui, "About Paint", "") {
-            self.push(Action::About);
-        }
-        if item(ui, "Exit", "Ctrl+Q") {
+        if self.menu_item(ui, Icon::Exit, "Exit", "", false, true) {
             self.push(Action::Exit);
         }
     }
 
     fn view_menu(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(220.0);
-        ui.menu_button("Zoom", |ui| {
-            if ui.add(Button::new("Zoom in").shortcut_text("Ctrl+PgUp")).clicked() {
-                self.push(Action::ZoomIn);
-            }
-            if ui.add(Button::new("Zoom out").shortcut_text("Ctrl+PgDn")).clicked() {
-                self.push(Action::ZoomOut);
-            }
-            if ui.add(Button::new("Zoom to 100%").shortcut_text("Ctrl+1")).clicked() {
-                self.push(Action::Zoom100);
-            }
-            if ui.add(Button::new("Fit to window").shortcut_text("Ctrl+0")).clicked() {
-                self.push(Action::ZoomFit);
-            }
-        });
-        ui.menu_button("Show", |ui| {
-            ui.set_min_width(200.0);
-            for (label, sc, on, a) in [
-                ("Rulers", "Ctrl+R", self.show_rulers, Action::ToggleRulers),
-                ("Gridlines", "Ctrl+G", self.show_grid, Action::ToggleGrid),
-                ("Status bar", "", self.show_status, Action::ToggleStatus),
-                ("Thumbnail", "", self.show_thumbnail, Action::ToggleThumbnail),
+        ui.set_min_width(230.0);
+        let zoom = self.submenu_row(ui, Icon::Magnifier, "Zoom");
+        egui::containers::menu::SubMenu::new().show(ui, &zoom, |ui| {
+            for (icon, label, sc, a) in [
+                (Icon::ZoomIn, "Zoom in", "Ctrl+PgUp", Action::ZoomIn),
+                (Icon::ZoomOut, "Zoom out", "Ctrl+PgDn", Action::ZoomOut),
+                (Icon::Magnifier, "Zoom to 100%", "Ctrl+1", Action::Zoom100),
+                (Icon::FullScreen, "Fit to window", "Ctrl+0", Action::ZoomFit),
             ] {
-                if check_item(ui, &self.pal, label, sc, on) {
+                if self.menu_item(ui, icon, label, sc, false, true) {
                     self.push(a);
                 }
             }
         });
-        if ui.add(Button::new("Full screen").shortcut_text("F11")).clicked() {
+        let show = self.submenu_row(ui, Icon::Eye, "Show");
+        egui::containers::menu::SubMenu::new().show(ui, &show, |ui| {
+            for (icon, label, sc, on, a) in [
+                (Icon::Ruler, "Rulers", "Ctrl+R", self.show_rulers, Action::ToggleRulers),
+                (Icon::Grid, "Gridlines", "Ctrl+G", self.show_grid, Action::ToggleGrid),
+                (Icon::StatusBar, "Status bar", "", self.show_status, Action::ToggleStatus),
+                (Icon::Picture, "Thumbnail", "", self.show_thumbnail, Action::ToggleThumbnail),
+            ] {
+                if self.menu_item(ui, icon, label, sc, on, true) {
+                    self.push(a);
+                }
+            }
+        });
+        if self.menu_item(ui, Icon::FullScreen, "Full screen", "F11", false, true) {
             self.push(Action::Fullscreen);
         }
     }
@@ -1299,14 +1360,13 @@ impl PaintApp {
                     Some(0) => {
                         keep = false;
                         if self.save() {
-                            self.doc.modified = false;
                             let a = if *action == Action::Exit { Action::ForceExit } else { action.clone() };
                             self.push(a);
                         }
                     }
                     Some(1) => {
                         keep = false;
-                        self.doc.modified = false;
+                        self.doc.forget_changes();
                         let a = if *action == Action::Exit { Action::ForceExit } else { action.clone() };
                         self.push(a);
                     }
@@ -1374,7 +1434,13 @@ impl PaintApp {
                         let bg = Color32::TRANSPARENT;
                         let s = self.s.clone();
                         let unchanged = (nw, nh) == (st.base_w.round() as u32, st.base_h.round() as u32) && sx == 0.0 && sy == 0.0;
-                        if !unchanged { self.doc.transform(&s, move |p| {
+                        // Size after the skew, as pixels::skew computes it.
+                        let (kx, ky) = (sx.to_radians().tan().abs(), sy.to_radians().tan().abs());
+                        let out_w = (nw as f32 + nh as f32 * kx).round() as u32;
+                        let out_h = (nh as f32 + nw as f32 * ky).round() as u32;
+                        if let Err(e) = pixels::check_size(out_w, out_h) {
+                            self.dialog = Some(Dialog::Message(e));
+                        } else if !unchanged { self.doc.transform(&s, move |p| {
                             let mut out = if (nw, nh) != (p.width(), p.height()) { pixels::resize(p, nw, nh) } else { p.clone() };
                             if sx != 0.0 || sy != 0.0 {
                                 out = pixels::skew(&out, sx, sy, bg);
@@ -1384,15 +1450,9 @@ impl PaintApp {
                     }
                 }
             }
-            Dialog::Properties { w, h, unit, bw } => {
+            Dialog::Properties { w, h, unit, bw, last_saved } => {
                 let doc = &self.doc;
-                let last_saved = doc
-                    .path
-                    .as_ref()
-                    .and_then(|p| std::fs::metadata(p).ok())
-                    .and_then(|m| m.modified().ok())
-                    .map(format_time)
-                    .unwrap_or_else(|| "Not available".into());
+                let last_saved = last_saved.clone();
                 let clicked = modal("props", ctx, 400.0, "Image properties", &["OK", "Cancel"], &mut |ui| {
                     ui.label(RichText::new("File attributes").strong());
                     egui::Grid::new("props_info").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
@@ -1455,6 +1515,10 @@ impl PaintApp {
                     keep = false;
                     if ok {
                         let s = self.s.clone();
+                        if let Err(e) = pixels::check_size(*w, *h) {
+                            self.dialog = Some(Dialog::Message(e));
+                            return;
+                        }
                         self.doc.resize_canvas(&s, *w, *h);
                         if *bw {
                             self.doc.transform(&s, |p| {
@@ -1499,7 +1563,15 @@ impl PaintApp {
                     if ok && *angle != 0.0 {
                         let a = *angle;
                         let s = self.s.clone();
-                        self.doc.transform(&s, move |p| pixels::rotate_any(p, a));
+                        let (w, h) = match self.doc.floating() {
+                            Some(f) => (f.rect.width(), f.rect.height()),
+                            None => (self.doc.width() as f32, self.doc.height() as f32),
+                        };
+                        let (c, sn) = (a.to_radians().cos().abs(), a.to_radians().sin().abs());
+                        match pixels::check_size((w * c + h * sn).ceil() as u32, (w * sn + h * c).ceil() as u32) {
+                            Ok(()) => self.doc.transform(&s, move |p| pixels::rotate_any(p, a)),
+                            Err(e) => self.dialog = Some(Dialog::Message(e)),
+                        }
                     }
                 }
             }
@@ -1579,7 +1651,7 @@ impl PaintApp {
                 let (r, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
                 self.paint_checker(ui.painter(), r);
                 if let Some(t) = &self.tex {
-                    ui.painter().image(t.id(), r, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                    t.paint(ui.painter(), r);
                 }
                 // The part of the picture currently visible.
                 let vis_min = ((self.viewport.min - self.image_rect.min) / self.zoom).max(Vec2::ZERO);
@@ -1641,7 +1713,7 @@ impl PaintApp {
             ..Default::default()
         };
         if self.doc.size_changed || self.tex.is_none() {
-            self.tex = Some(ctx.load_texture("canvas", pixels::to_color_image(&self.doc.display), opts));
+            self.tex = Some(TiledTexture::new(ctx, "canvas", &self.doc.display, opts));
             self.doc.size_changed = false;
             self.doc.dirty_tex = None;
         } else if let Some(r) = self.doc.dirty_tex.take() {
@@ -1649,7 +1721,7 @@ impl PaintApp {
             if !r.is_empty()
                 && let Some(t) = &mut self.tex
             {
-                t.set_partial([r.x0 as usize, r.y0 as usize], pixels::region_color_image(&self.doc.display, r), opts);
+                t.update(&self.doc.display, r, opts);
             }
         }
         let key = format!("{}{:?}", self.s.transparent_selection, self.s.color2);
@@ -1659,7 +1731,7 @@ impl PaintApp {
         };
         if needs {
             if let Some(p) = self.doc.effective_float(&self.s) {
-                self.float_tex = Some(ctx.load_texture("selection", pixels::to_color_image(&p), opts));
+                self.float_tex = Some(TiledTexture::new(ctx, "selection", &p, opts));
             }
             self.float_tex_key = key;
             if let Some(f) = self.doc.floating_mut() {
@@ -1705,7 +1777,7 @@ impl eframe::App for PaintApp {
         self.apply_theme(&ctx);
 
         // Closing with unsaved changes asks first.
-        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.doc.modified {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.doc.has_unsaved_work() {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.dialog = Some(Dialog::Unsaved(Action::Exit));
         }
@@ -1825,8 +1897,13 @@ impl eframe::App for PaintApp {
             ctx.request_repaint();
         }
 
+        // Only on change: every viewport command triggers another repaint, which would
+        // keep the app busy (and the CPU awake) even when nothing happens.
         let title = self.title();
-        ctx.send_viewport_cmd(ViewportCommand::Title(title));
+        if title != self.last_title {
+            self.last_title = title.clone();
+            ctx.send_viewport_cmd(ViewportCommand::Title(title));
+        }
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
@@ -1940,25 +2017,6 @@ pub fn content_dialog(
 fn primary_button(label: &str, pal: Palette) -> Button<'static> {
     let fg = if pal.dark { Color32::BLACK } else { Color32::WHITE };
     Button::new(RichText::new(label.to_string()).color(fg)).fill(pal.accent).min_size(vec2(100.0, 30.0))
-}
-
-/// Menu entry with a check mark in the left gutter (Win11 style toggles).
-fn check_item(ui: &mut egui::Ui, pal: &Palette, label: &str, shortcut: &str, checked: bool) -> bool {
-    let width = ui.available_width().clamp(190.0, 260.0);
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
-    pal.paint_button(ui.painter(), rect, resp.hovered(), resp.is_pointer_button_down_on(), false);
-    let p = ui.painter();
-    if checked {
-        p.text(egui::pos2(rect.min.x + 10.0, rect.center().y), egui::Align2::LEFT_CENTER, "✔", egui::FontId::proportional(13.0), pal.text);
-    }
-    p.text(egui::pos2(rect.min.x + 30.0, rect.center().y), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(13.5), pal.text);
-    if !shortcut.is_empty() {
-        p.text(egui::pos2(rect.max.x - 8.0, rect.center().y), egui::Align2::RIGHT_CENTER, shortcut, egui::FontId::proportional(12.5), pal.text_dim);
-    }
-    if resp.clicked() {
-        ui.close();
-    }
-    resp.clicked()
 }
 
 /// CUPS printers and the index of the default one. None if CUPS isn't installed.

@@ -91,6 +91,14 @@ pub struct Floating {
     pub outline: Option<Vec<Pos2>>,
 }
 
+impl Floating {
+    /// The pixels at the selection's current size (its handles may have stretched it).
+    pub fn sized(&self) -> Pixmap {
+        let (w, h) = (self.rect.width().round().max(1.0) as u32, self.rect.height().round().max(1.0) as u32);
+        if (w, h) == (self.pix.width(), self.pix.height()) { self.pix.clone() } else { pixels::resize(&self.pix, w, h) }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PendingShape {
     pub kind: ShapeKind,
@@ -130,6 +138,7 @@ pub struct Layer {
 /// Undo snapshot of the whole layer stack.
 #[derive(Clone)]
 struct Snapshot {
+    state: u64,
     layers: Vec<Layer>,
     active: usize,
     background: Color32,
@@ -172,7 +181,11 @@ pub struct Document {
     pub size_changed: bool,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
-    pub modified: bool,
+    /// Id of the current state: every recorded edit gets a new one and undo/redo restore
+    /// them, so undoing back to the saved state counts as unmodified.
+    state: u64,
+    next_state: u64,
+    saved_state: Option<u64>,
     pub path: Option<PathBuf>,
     pub file_size: Option<u64>,
     pub overlay: Overlay,
@@ -210,7 +223,9 @@ impl Document {
             size_changed: true,
             undo: Vec::new(),
             redo: Vec::new(),
-            modified: false,
+            state: 0,
+            next_state: 0,
+            saved_state: Some(0),
             path,
             file_size,
             overlay: Overlay::None,
@@ -270,7 +285,7 @@ impl Document {
     fn snapshot(&self) -> Snapshot {
         let mut layers = self.layers.clone();
         layers[self.active].pix = self.image.clone();
-        Snapshot { layers, active: self.active, background: self.background, background_visible: self.background_visible }
+        Snapshot { state: self.state, layers, active: self.active, background: self.background, background_visible: self.background_visible }
     }
 
     fn restore(&mut self, mut snap: Snapshot) {
@@ -279,6 +294,7 @@ impl Document {
         self.active = snap.active;
         self.background = snap.background;
         self.background_visible = snap.background_visible;
+        self.state = snap.state;
         self.replace_image(img);
     }
 
@@ -301,7 +317,8 @@ impl Document {
     pub fn begin_edit(&mut self) {
         self.undo.push(self.snapshot());
         self.redo.clear();
-        self.modified = true;
+        self.next_state += 1;
+        self.state = self.next_state;
         self.layers_rev += 1;
         let mut total: usize = self.undo.iter().map(Snapshot::bytes).sum();
         while (total > HISTORY_BYTES || self.undo.len() > HISTORY_MAX) && self.undo.len() > 1 {
@@ -322,7 +339,6 @@ impl Document {
         if let Some(prev) = self.undo.pop() {
             self.redo.push(self.snapshot());
             self.restore(prev);
-            self.modified = true;
         }
     }
 
@@ -331,7 +347,6 @@ impl Document {
         if let Some(next) = self.redo.pop() {
             self.undo.push(self.snapshot());
             self.restore(next);
-            self.modified = true;
         }
     }
 
@@ -370,7 +385,6 @@ impl Document {
         }
         self.background = c;
         self.background_visible = visible;
-        self.modified = true;
         self.rebuild();
     }
 
@@ -435,8 +449,14 @@ impl Document {
     }
 
     /// Merge the active layer into the one below it.
+    /// Merge the active layer into the one below. Both must be visible (as in other
+    /// editors), so hidden pixels are never revealed or thrown away.
+    pub fn can_merge_down(&self) -> bool {
+        self.active > 0 && self.layers[self.active].visible && self.layers[self.active - 1].visible
+    }
+
     pub fn merge_down(&mut self, s: &Settings) {
-        if self.active == 0 {
+        if !self.can_merge_down() {
             return;
         }
         self.commit_overlay(s);
@@ -800,7 +820,6 @@ impl Document {
             tex_dirty: true,
             outline: None,
         });
-        self.modified = true;
     }
 
     /// Clear the area a selection was lifted from (first modification of the selection).
@@ -833,7 +852,7 @@ impl Document {
     /// Selection pixels as they will be stamped (respecting transparent selection).
     pub fn effective_float(&self, s: &Settings) -> Option<Pixmap> {
         let f = self.floating()?;
-        let mut p = f.pix.clone();
+        let mut p = f.sized();
         if s.transparent_selection {
             pixels::key_out(&mut p, s.color2);
         }
@@ -861,7 +880,6 @@ impl Document {
         }
         pixels::draw_scaled(&mut self.image, &p, r.min.x, r.min.y, r.width(), r.height());
         self.refresh(IRect::from_points((r.min.x, r.min.y), (r.max.x, r.max.y), 2.0));
-        self.modified = true;
     }
 
     pub fn delete_selection(&mut self, s: &Settings) {
@@ -900,7 +918,6 @@ impl Document {
                     let r = f.rect;
                     pixels::draw_scaled(&mut self.image, &p, r.min.x, r.min.y, r.width(), r.height());
                     self.refresh(IRect::from_points((r.min.x, r.min.y), (r.max.x, r.max.y), 2.0));
-                    self.modified = true;
                 }
             }
         }
@@ -933,7 +950,7 @@ impl Document {
         if self.floating().is_some() {
             self.lift(s);
             let fl = self.floating_mut().unwrap();
-            let np = f(&fl.pix);
+            let np = f(&fl.sized());
             let c = fl.rect.center();
             fl.rect = Rect::from_center_size(c, vec2(np.width() as f32, np.height() as f32));
             fl.rect = Rect::from_min_size(fl.rect.min.round(), fl.rect.size());
@@ -948,25 +965,28 @@ impl Document {
     }
 
     /// Apply a pixel operation to the selection, or to the active layer only.
-    pub fn apply_active(&mut self, s: &Settings, f: impl Fn(&mut Pixmap)) {
+    /// Apply `f` to the selection, or to the whole active layer. Returns whether anything changed.
+    pub fn apply_active(&mut self, s: &Settings, f: impl Fn(&mut Pixmap)) -> bool {
         if matches!(self.overlay, Overlay::Shape(_) | Overlay::Text(_) | Overlay::Stroke) {
             self.commit_overlay(s);
         }
         if self.floating().is_some() {
             self.lift(s);
             let fl = self.floating_mut().unwrap();
+            fl.pix = fl.sized();
             f(&mut fl.pix);
             fl.changed = true;
             fl.tex_dirty = true;
-            return;
+            return true;
         }
         let mut img = self.image.clone();
         f(&mut img);
         if img.data() == self.image.data() {
-            return; // nothing changed: no undo step
+            return false; // nothing changed: no undo step
         }
         self.begin_edit();
         self.replace_image(img);
+        true
     }
 
     pub fn crop_to_selection(&mut self, s: &Settings) {
@@ -981,8 +1001,13 @@ impl Document {
         // Other layers are cropped to the same rectangle.
         let r = f.rect;
         let crop = IRect::new(r.min.x.round() as i32, r.min.y.round() as i32, r.min.x.round() as i32 + w as i32, r.min.y.round() as i32 + h as i32);
+        // A moved or pasted selection already recorded the state before it; recording
+        // again would make the first undo land on the half-done move.
+        let recorded = f.origin_cleared;
         self.overlay = Overlay::None;
-        self.begin_edit();
+        if !recorded {
+            self.begin_edit();
+        }
         let active = self.active;
         for (i, l) in self.layers.iter_mut().enumerate() {
             if i != active {
@@ -1014,7 +1039,30 @@ impl Document {
     pub fn mark_saved(&mut self, path: PathBuf) {
         self.file_size = std::fs::metadata(&path).ok().map(|m| m.len());
         self.path = Some(path);
-        self.modified = false;
+        self.saved_state = Some(self.state);
+    }
+
+    /// Edits since the last save (undoing back to it counts as unmodified).
+    pub fn modified(&self) -> bool {
+        self.saved_state != Some(self.state)
+    }
+
+    /// What closing would lose: saved edits plus a shape, text or moved selection that
+    /// hasn't been committed yet.
+    pub fn has_unsaved_work(&self) -> bool {
+        self.modified()
+            || match &self.overlay {
+                Overlay::Shape(_) => true,
+                Overlay::Text(tb) => !tb.text.is_empty(),
+                Overlay::Float(f) => f.changed,
+                Overlay::None | Overlay::Stroke => false,
+            }
+    }
+
+    /// "Don't save": drop pending work so the document no longer counts as unsaved.
+    pub fn forget_changes(&mut self) {
+        self.overlay = Overlay::None;
+        self.saved_state = Some(self.state);
     }
 }
 
@@ -1043,7 +1091,7 @@ mod tests {
         let mut d = Document::new(20, 10);
         d.flood_fill(3, 3, Color32::RED, 0);
         assert_eq!(px(&d, 19, 9), Color32::RED);
-        assert!(d.modified && d.can_undo());
+        assert!(d.modified() && d.can_undo());
         d.undo(&s);
         assert_eq!(px(&d, 19, 9), Color32::TRANSPARENT);
         assert_eq!(vis(&d, 19, 9), Color32::WHITE, "background tile shows through");
@@ -1222,6 +1270,68 @@ mod tests {
         d.commit_overlay(&s);
         // Rows 0..5 of the target were not covered by the first move.
         assert_eq!(px(&d, 30, 2), Color32::YELLOW);
+    }
+
+    #[test]
+    fn undo_back_to_the_saved_state_is_unmodified() {
+        let s = Settings::default();
+        let mut d = Document::new(4, 4);
+        assert!(!d.has_unsaved_work());
+        d.set_background(Color32::RED, true, true);
+        assert!(d.modified());
+        d.undo(&s);
+        assert!(!d.modified(), "back at the saved state");
+        d.redo(&s);
+        assert!(d.modified());
+        // A preview that is put back (Background color > Cancel) changes nothing.
+        let mut d = Document::new(4, 4);
+        d.set_background(Color32::RED, true, false);
+        d.set_background(Color32::WHITE, true, false);
+        assert!(!d.modified());
+    }
+
+    #[test]
+    fn pending_shape_counts_as_unsaved() {
+        let s = Settings::default();
+        let mut d = Document::new(20, 20);
+        d.overlay = Overlay::Shape(PendingShape {
+            kind: ShapeKind::Rectangle,
+            geom: Geom::Boxed(Rect::from_min_max(pos2(2.0, 2.0), pos2(10.0, 10.0))),
+            stage: 0,
+            swapped: false,
+            seed: 1,
+        });
+        assert!(!d.modified() && d.has_unsaved_work());
+        d.commit_overlay(&s);
+        assert!(d.modified());
+    }
+
+    #[test]
+    fn resized_selection_keeps_its_size_when_flipped_or_copied() {
+        let s = Settings::default();
+        let mut d = Document::new(40, 40);
+        d.select_rect(&s, IRect::new(0, 0, 10, 10));
+        d.floating_mut().unwrap().rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(20.0, 20.0));
+        assert_eq!(d.effective_float(&s).unwrap().width(), 20);
+        d.transform(&s, pixels::flip_h);
+        assert_eq!(d.floating().unwrap().rect.size(), vec2(20.0, 20.0));
+    }
+
+    #[test]
+    fn crop_after_moving_undoes_in_one_step() {
+        let s = Settings::default();
+        let mut d = Document::new(40, 40);
+        let mut img = d.image.clone();
+        pixels::set_pixel(&mut img, 2, 2, Color32::RED.to_array());
+        d.image = img;
+        d.select_rect(&s, IRect::new(0, 0, 10, 10));
+        d.lift(&s);
+        d.floating_mut().unwrap().rect = Rect::from_min_size(pos2(20.0, 20.0), vec2(10.0, 10.0));
+        d.crop_to_selection(&s);
+        assert_eq!((d.width(), d.height()), (10, 10));
+        d.undo(&s);
+        assert_eq!((d.width(), d.height()), (40, 40));
+        assert_eq!(px(&d, 2, 2), Color32::RED, "original picture back after one undo");
     }
 
     #[test]

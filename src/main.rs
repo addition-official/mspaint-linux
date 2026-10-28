@@ -13,6 +13,7 @@ mod ribbon;
 mod shapes;
 mod text;
 mod theme;
+mod tiles;
 mod tool_sliders;
 mod tools;
 

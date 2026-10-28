@@ -614,22 +614,53 @@ pub fn key_out(p: &mut Pixmap, key: Color32) {
 // ---------------------------------------------------------------------------
 // File I/O
 
-pub fn load(path: &std::path::Path) -> Result<Pixmap, String> {
-    let img = image::ImageReader::open(path)
-        .map_err(|e| e.to_string())?
-        .with_guessed_format()
-        .map_err(|e| e.to_string())?
-        .decode()
-        .map_err(|e| e.to_string())?;
-    Ok(from_dynamic(img))
+/// Largest side and pixel count we accept from files and the clipboard, so a tiny
+/// crafted file can't make us allocate gigabytes (about 100 megapixels).
+pub const MAX_SIDE: u32 = 32768;
+pub const MAX_PIXELS: u64 = 100_000_000;
+
+/// Error for pictures that are empty or too large to edit.
+pub fn check_size(w: u32, h: u32) -> Result<(), String> {
+    if w == 0 || h == 0 {
+        Err("The picture is empty.".into())
+    } else if w > MAX_SIDE || h > MAX_SIDE || w as u64 * h as u64 > MAX_PIXELS {
+        Err(format!("The picture is too large ({w} x {h} pixels). Paint can open pictures up to {MAX_SIDE} pixels wide or high and 100 megapixels."))
+    } else {
+        Ok(())
+    }
 }
 
-pub fn from_dynamic(img: image::DynamicImage) -> Pixmap {
+pub fn load(path: &std::path::Path) -> Result<Pixmap, String> {
+    let mut reader = image::ImageReader::open(path)
+        .map_err(|e| e.to_string())?
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_SIDE);
+    limits.max_image_height = Some(MAX_SIDE);
+    limits.max_alloc = Some(MAX_PIXELS * 4 + (16 << 20));
+    reader.limits(limits);
+    let too_large = |e: image::ImageError| match e {
+        image::ImageError::Limits(_) => "The picture is too large to open.".to_string(),
+        e => e.to_string(),
+    };
+    let mut decoder = reader.into_decoder().map_err(too_large)?;
+    // Phone photos are often stored sideways with an EXIF orientation tag.
+    use image::ImageDecoder;
+    let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut img = image::DynamicImage::from_decoder(decoder).map_err(too_large)?;
+    img.apply_orientation(orientation);
+    check_size(img.width(), img.height())?;
+    from_dynamic(img).ok_or_else(|| "The picture is empty.".to_string())
+}
+
+pub fn from_dynamic(img: image::DynamicImage) -> Option<Pixmap> {
     let rgba = img.to_rgba8();
     from_rgba_unmultiplied(rgba.width(), rgba.height(), rgba.into_raw())
 }
 
-pub fn from_rgba_unmultiplied(w: u32, h: u32, mut data: Vec<u8>) -> Pixmap {
+/// None for an empty image or a buffer that doesn't match the size.
+pub fn from_rgba_unmultiplied(w: u32, h: u32, mut data: Vec<u8>) -> Option<Pixmap> {
     for px in data.as_chunks_mut::<4>().0.iter_mut() {
         let a = px[3] as u32;
         if a < 255 {
@@ -638,7 +669,7 @@ pub fn from_rgba_unmultiplied(w: u32, h: u32, mut data: Vec<u8>) -> Pixmap {
             }
         }
     }
-    Pixmap::from_vec(data, IntSize::from_wh(w.max(1), h.max(1)).unwrap()).expect("pixmap")
+    Pixmap::from_vec(data, IntSize::from_wh(w, h)?)
 }
 
 pub fn to_rgba_unmultiplied(p: &Pixmap) -> image::RgbaImage {
@@ -666,15 +697,36 @@ pub const SAVE_FORMATS: &[(&str, &[&str])] = &[
 
 pub const OPEN_EXTENSIONS: &[&str] = &[
     "png", "jpg", "jpeg", "jpe", "jfif", "bmp", "dib", "gif", "tif", "tiff", "webp", "ico", "tga",
-    "pnm", "ppm", "pgm", "pbm", "qoi", "hdr", "exr", "dds", "ff",
+    "pnm", "ppm", "pgm", "pbm", "qoi",
 ];
 
+/// Icons are at most 256 x 256: larger pictures are saved scaled down.
+pub fn saves_smaller(path: &std::path::Path, w: u32, h: u32) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("ico")) && (w > 256 || h > 256)
+}
+
+/// Whether `path` has an extension we can write.
+pub fn can_save(path: &std::path::Path) -> bool {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    SAVE_FORMATS.iter().any(|(_, exts)| exts.contains(&ext.as_str()))
+}
+
+/// Save in the format given by the extension (PNG if unknown). The file is encoded in
+/// memory and then replaces the old one in one step, so a failed save never leaves a
+/// truncated or empty file behind.
 pub fn save(p: &Pixmap, path: &std::path::Path) -> Result<(), String> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("png")
         .to_ascii_lowercase();
+    let data = encode(p, &ext).map_err(|e| e.to_string())?;
+    write_replacing(path, &data).map_err(|e| e.to_string())
+}
+
+/// Encode as `ext` (PNG if unknown).
+pub fn encode(p: &Pixmap, ext: &str) -> image::ImageResult<Vec<u8>> {
+    use image::ImageFormat as F;
     let rgba = to_rgba_unmultiplied(p);
     let flatten = || {
         // Composite over white for formats without alpha.
@@ -687,14 +739,13 @@ pub fn save(p: &Pixmap, path: &std::path::Path) -> Result<(), String> {
         }
         rgb
     };
-    let res = match ext.as_str() {
+    let mut out = std::io::Cursor::new(Vec::new());
+    match ext {
         "jpg" | "jpeg" | "jpe" | "jfif" => {
-            let f = std::fs::File::create(path).map_err(|e| e.to_string())?;
-            let mut w = std::io::BufWriter::new(f);
-            let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, 95);
-            flatten().write_with_encoder(enc)
+            let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 95);
+            flatten().write_with_encoder(enc)?
         }
-        "bmp" | "dib" => flatten().save_with_format(path, image::ImageFormat::Bmp),
+        "bmp" | "dib" => flatten().write_to(&mut out, F::Bmp)?,
         "ico" => {
             let (w, h) = (rgba.width(), rgba.height());
             let img = if w > 256 || h > 256 {
@@ -702,14 +753,73 @@ pub fn save(p: &Pixmap, path: &std::path::Path) -> Result<(), String> {
             } else {
                 image::DynamicImage::ImageRgba8(rgba)
             };
-            img.save_with_format(path, image::ImageFormat::Ico)
+            img.write_to(&mut out, F::Ico)?
         }
-        "gif" => rgba.save_with_format(path, image::ImageFormat::Gif),
-        "tif" | "tiff" => rgba.save_with_format(path, image::ImageFormat::Tiff),
-        "webp" => rgba.save_with_format(path, image::ImageFormat::WebP),
-        _ => rgba.save_with_format(path, image::ImageFormat::Png),
+        "gif" => {
+            // GIF has only on/off transparency: keep fully transparent pixels, and put
+            // partly transparent ones on white like the formats without alpha.
+            let mut g = rgba;
+            for px in g.pixels_mut() {
+                let a = px[3] as u32;
+                if a > 0 && a < 255 {
+                    for k in 0..3 {
+                        px[k] = ((px[k] as u32 * a + 255 * (255 - a)) / 255) as u8;
+                    }
+                    px[3] = 255;
+                }
+            }
+            g.write_to(&mut out, F::Gif)?
+        }
+        "tif" | "tiff" => rgba.write_to(&mut out, F::Tiff)?,
+        "webp" => rgba.write_to(&mut out, F::WebP)?,
+        _ => rgba.write_to(&mut out, F::Png)?,
+    }
+    Ok(out.into_inner())
+}
+
+/// Write `data` to a new file next to `path`, sync it, and rename it over `path`.
+/// A symlink is followed so the file it points to is replaced, not the link.
+fn write_replacing(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let dir = match target.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
     };
-    res.map_err(|e| e.to_string())
+    let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut created = None;
+    for i in 0..100 {
+        let tmp = dir.join(format!(".{name}.{}-{i}.tmp", std::process::id()));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+            Ok(f) => {
+                created = Some((tmp, f));
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => break,
+            Err(e) => return Err(e),
+        }
+    }
+    let Some((tmp, mut f)) = created else {
+        // The folder isn't writable but the file may be: write it in place. The data is
+        // already encoded, so only an I/O error can leave it incomplete, and that is reported.
+        let mut f = std::fs::OpenOptions::new().write(true).truncate(true).create(true).open(&target)?;
+        f.write_all(data)?;
+        return f.sync_all();
+    };
+    let res = (|| {
+        f.write_all(data)?;
+        if let Ok(meta) = std::fs::metadata(&target) {
+            f.set_permissions(meta.permissions())?;
+        }
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, &target)
+    })();
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
 }
 
 /// Hash-based deterministic noise in [0, 1).
@@ -742,6 +852,51 @@ impl Rng {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_and_huge_pictures_are_rejected() {
+        assert!(from_rgba_unmultiplied(0, 0, Vec::new()).is_none());
+        assert!(from_rgba_unmultiplied(2, 2, vec![0; 3]).is_none());
+        assert!(check_size(0, 10).is_err());
+        assert!(check_size(MAX_SIDE + 1, 1).is_err());
+        assert!(check_size(20000, 20000).is_err());
+        assert!(check_size(1152, 648).is_ok());
+        // An 11-byte PPM header declaring 0 x 0 pixels.
+        let dir = std::env::temp_dir().join(format!("mspaint-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("empty.png");
+        std::fs::write(&f, b"P6\n0 0\n255\n").unwrap();
+        assert!(load(&f).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_save_keeps_the_old_file() {
+        let dir = std::env::temp_dir().join(format!("mspaint-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("pic.webp");
+        std::fs::write(&f, b"old contents").unwrap();
+        // WebP can't be wider than 16383 pixels: encoding fails before anything is written.
+        assert!(save(&new_pixmap(17000, 1, Color32::RED), &f).is_err());
+        assert_eq!(std::fs::read(&f).unwrap(), b"old contents");
+        // A good save replaces it and leaves no temporary files behind.
+        save(&new_pixmap(4, 4, Color32::RED), &f).unwrap();
+        assert!(load(&f).is_ok());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gif_puts_partial_alpha_on_white() {
+        let mut p = new_pixmap(2, 1, Color32::TRANSPARENT);
+        set_pixel(&mut p, 1, 0, Color32::from_rgba_unmultiplied(255, 0, 0, 64).to_array());
+        let data = encode(&p, "gif").unwrap();
+        let img = image::load_from_memory(&data).unwrap().to_rgba8();
+        assert_eq!(img.get_pixel(0, 0)[3], 0, "transparent stays transparent");
+        let px = img.get_pixel(1, 0);
+        assert_eq!(px[3], 255);
+        assert!(px[1] > 150, "faint red becomes pink, not solid red: {px:?}");
+    }
 
     #[test]
     fn remove_background_keeps_the_subject() {

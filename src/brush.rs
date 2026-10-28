@@ -174,7 +174,8 @@ pub fn brush_segment(
     color: Color32,
     ctx: &mut StrokeCtx,
 ) -> IRect {
-    let pad = size + 4.0;
+    // The airbrush sprays up to 1.5 sizes away (see `spray`).
+    let pad = if kind == BrushKind::Airbrush { size.max(2.0) * 1.5 + 2.0 } else { size + 4.0 };
     let dirty = IRect::from_points((a.x, a.y), (b.x, b.y), pad);
     // Like real paint, the oil and watercolor brushes run dry over a long stroke;
     // start a new stroke to "reload" the brush.
