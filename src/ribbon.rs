@@ -96,13 +96,13 @@ impl PaintApp {
         self.btn_at_enabled(ui, rect, key, icon, selected, tip, true)
     }
 
-    #[allow(clippy::too_many_arguments)]
     /// Clicks on toolbar buttons while a menu is open only close the menu, as in Windows
     /// (the button underneath must not act too). Items inside menus stay clickable.
     pub fn click_sense(&self, ui: &Ui) -> Sense {
         if self.popup_was_open && !egui::containers::menu::is_in_menu(ui) { Sense::hover() } else { Sense::click() }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn btn_at_enabled(
         &self,
         ui: &mut Ui,
