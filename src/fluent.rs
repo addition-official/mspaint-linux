@@ -181,3 +181,81 @@ pub fn focus_ring(ctx: &egui::Context, pal: &Palette) {
     let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("focus_ring")));
     p.rect_stroke(resp.rect.expand(2.0), 6.0, Stroke::new(2.0, pal.text), egui::StrokeKind::Outside);
 }
+
+/// Number box like a WinUI NumberBox: type a value (the whole text is selected when it
+/// gets focus), Enter or leaving the box applies it, clamped to `range`. `suffix` (such
+/// as "%") is shown after the number and ignored when typed.
+pub fn number_field(
+    ui: &mut Ui,
+    id_salt: &str,
+    value: &mut f32,
+    range: RangeInclusive<f32>,
+    decimals: usize,
+    suffix: &str,
+    width: f32,
+) -> Response {
+    number_box(ui, id_salt, value, range, decimals, suffix, width, true)
+}
+
+/// Like `number_field`, but the value only changes when Enter is pressed or the box
+/// loses focus (for the zoom box, where partial input like "2" of "200" would jump).
+pub fn number_entry(
+    ui: &mut Ui,
+    id_salt: &str,
+    value: &mut f32,
+    range: RangeInclusive<f32>,
+    decimals: usize,
+    suffix: &str,
+    width: f32,
+) -> Response {
+    number_box(ui, id_salt, value, range, decimals, suffix, width, false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn number_box(
+    ui: &mut Ui,
+    id_salt: &str,
+    value: &mut f32,
+    range: RangeInclusive<f32>,
+    decimals: usize,
+    suffix: &str,
+    width: f32,
+    live: bool,
+) -> Response {
+    let id = ui.make_persistent_id(id_salt);
+    let edit_id = id.with("edit");
+    let format = |v: f32| format!("{v:.decimals$}{suffix}");
+    let editing = ui.memory(|m| m.has_focus(edit_id));
+    let mut text = if editing { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| format(*value)) } else { format(*value) };
+    let mut resp = ui.add_sized(
+        [width, 26.0],
+        egui::TextEdit::singleline(&mut text).id(edit_id).horizontal_align(egui::Align::Center).margin(vec2(6.0, 4.0)),
+    );
+    if resp.gained_focus()
+        && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id)
+    {
+        let n = text.chars().count();
+        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(0),
+            egui::text::CCursor::new(n),
+        )));
+        state.store(ui.ctx(), edit_id);
+    }
+    let mut changed = false;
+    if if live { resp.changed() } else { resp.lost_focus() } {
+        let typed = text.trim().trim_end_matches(suffix).trim().replace(',', ".");
+        if let Ok(v) = typed.parse::<f32>()
+            && v.is_finite()
+        {
+            let v = v.clamp(*range.start(), *range.end());
+            if v != *value {
+                *value = v;
+                changed = true;
+            }
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(id, text));
+    // `changed` means the value changed (not just the text).
+    resp.flags.set(egui::response::Flags::CHANGED, changed);
+    resp
+}

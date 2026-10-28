@@ -880,18 +880,22 @@ impl PaintApp {
                 })
                 .response
                 .on_hover_text("Font");
-            egui::ComboBox::from_id_salt("font_size")
-                .icon(fluent::combo_chevron)
-                .selected_text(format!("{}", self.s.text.size_pt))
-                .width(64.0)
-                .height(420.0)
-                .show_ui(ui, |ui| {
+            // Font size: type any size, or pick one from the list (an editable combo box).
+            ui.spacing_mut().item_spacing.x = 0.0;
+            fluent::number_entry(ui, "font_size", &mut self.s.text.size_pt, 1.0..=999.0, 0, "", 48.0).on_hover_text("Font size");
+            let (r, chev) = ui.allocate_exact_size(vec2(22.0, 26.0), Sense::click());
+            self.pal.paint_button(ui.painter(), r, chev.hovered(), chev.is_pointer_button_down_on(), false);
+            self.paint_chevron(ui, r.center());
+            egui::Popup::menu(&chev).width(90.0).show(|ui| {
+                egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                     for sz in [8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 36.0, 48.0, 72.0] {
-                        ui.selectable_value(&mut self.s.text.size_pt, sz, format!("{sz}"));
+                        if ui.add(egui::Button::selectable(self.s.text.size_pt == sz, format!("{sz}"))).clicked() {
+                            self.s.text.size_pt = sz;
+                        }
                     }
-                })
-                .response
-                .on_hover_text("Font size");
+                });
+            });
+            ui.spacing_mut().item_spacing.x = 6.0;
             ui.separator();
             let letter = |text: RichText| {
                 move |ui: &Ui, rect: Rect, fg: Color32| {

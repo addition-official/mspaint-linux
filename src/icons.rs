@@ -61,6 +61,8 @@ pub enum Icon {
     RemoveBg,
     Palette,
     Picture,
+    /// Nothing (keeps menu labels aligned).
+    Blank,
     New,
     Open,
     Recent,
@@ -319,6 +321,7 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
             pl(p, r, &[(12.0, 4.0), (12.0, 19.0)], s);
             pl(p, r, &[(6.5, 13.5), (12.0, 19.0), (17.5, 13.5)], s);
         }
+        Icon::Blank => {}
         Icon::Palette => {
             // Painter's palette with a thumb hole and paint dots.
             let pts: Vec<Pos2> = (0..=32)

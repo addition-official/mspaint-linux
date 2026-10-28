@@ -77,9 +77,7 @@ impl ColorEdit {
 
         let field = |ui: &mut Ui, value: &mut f32, max: f32, label: &str| {
             ui.horizontal(|ui| {
-                let changed = ui
-                    .add_sized([100.0, 26.0], egui::DragValue::new(value).range(0.0..=max).speed(1.0).fixed_decimals(0))
-                    .changed();
+                let changed = crate::fluent::number_field(ui, label, value, 0.0..=max, 0, "", 100.0).changed();
                 ui.label(RichText::new(label).color(pal.text));
                 changed
             })

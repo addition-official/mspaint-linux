@@ -1359,18 +1359,25 @@ impl PaintApp {
                 if self.quick_button(ui, Icon::ZoomOut, "Zoom out", self.zoom > ZOOM_MIN) {
                     self.zoom_step(-1, None);
                 }
-                let label = format!("{}%", (self.zoom * 100.0).round());
-                ui.menu_button(label, |ui| {
+                // Zoom box: type a value, or pick one from the drop-down (right to left here).
+                let chev = self.icon_button(ui, Icon::Chevron, true).on_hover_text("Zoom options");
+                egui::Popup::menu(&chev).width(170.0).show(|ui| {
                     for z in ZOOM_STEPS.iter().rev().copied() {
-                        if ui.button(format!("{}%", z * 100.0)).clicked() {
+                        let on = (self.zoom - z).abs() < 1e-4;
+                        if self.menu_item(ui, Icon::Blank, &format!("{}%", z * 100.0), "", on, true) {
                             self.set_zoom(z, None);
                         }
                     }
                     ui.separator();
-                    if ui.button("Fit to window").clicked() {
+                    if self.menu_item(ui, Icon::FullScreen, "Fit to window", "Ctrl+0", false, true) {
                         self.push(Action::ZoomFit);
                     }
                 });
+                let mut percent = self.zoom * 100.0;
+                let decimals = if percent.fract().abs() > 1e-3 { 1 } else { 0 };
+                if fluent::number_entry(ui, "zoom_box", &mut percent, ZOOM_MIN * 100.0..=ZOOM_MAX * 100.0, decimals, "%", 64.0).changed() {
+                    self.set_zoom(percent / 100.0, None);
+                }
             });
         });
     }
@@ -1432,7 +1439,7 @@ impl PaintApp {
                     egui::Grid::new("resize_grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                         let max = if st.by_percent { 500.0 } else { 20000.0 };
                         ui.label("Horizontal");
-                        let first = ui.add_sized([90.0, 26.0], egui::DragValue::new(&mut st.w).range(1.0..=max).speed(1.0));
+                        let first = fluent::number_field(ui, "resize_w", &mut st.w, 1.0..=max, 0, "", 90.0);
                         if !st.focused {
                             first.request_focus();
                             st.focused = true;
@@ -1442,7 +1449,7 @@ impl PaintApp {
                         }
                         ui.end_row();
                         ui.label("Vertical");
-                        if ui.add_sized([90.0, 26.0], egui::DragValue::new(&mut st.h).range(1.0..=max).speed(1.0)).changed() && st.keep_aspect {
+                        if fluent::number_field(ui, "resize_h", &mut st.h, 1.0..=max, 0, "", 90.0).changed() && st.keep_aspect {
                             st.w = if st.by_percent { st.h } else { (st.h / aspect).round() };
                         }
                         ui.end_row();
@@ -1452,10 +1459,10 @@ impl PaintApp {
                     ui.label(RichText::new("Skew (degrees)").strong());
                     egui::Grid::new("skew_grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                         ui.label("Horizontal");
-                        ui.add_sized([90.0, 26.0], egui::DragValue::new(&mut st.skew_x).range(-89.0..=89.0).speed(0.5));
+                        fluent::number_field(ui, "skew_x", &mut st.skew_x, -89.0..=89.0, 0, "", 90.0);
                         ui.end_row();
                         ui.label("Vertical");
-                        ui.add_sized([90.0, 26.0], egui::DragValue::new(&mut st.skew_y).range(-89.0..=89.0).speed(0.5));
+                        fluent::number_field(ui, "skew_y", &mut st.skew_y, -89.0..=89.0, 0, "", 90.0);
                         ui.end_row();
                     });
                 });
@@ -1525,20 +1532,18 @@ impl PaintApp {
                         2 => 2.54 / 96.0,
                         _ => 1.0,
                     };
-                    let (suffix, speed, decimals) = match *unit {
-                        1 => (" in", 0.01, 2),
-                        2 => (" cm", 0.02, 2),
-                        _ => (" px", 1.0, 0),
+                    let (suffix, decimals) = match *unit {
+                        1 => (" in", 2),
+                        2 => (" cm", 2),
+                        _ => ("", 0),
                     };
                     egui::Grid::new("props_size").num_columns(2).spacing([16.0, 6.0]).show(ui, |ui| {
                         for (label, v) in [("Width", &mut *w), ("Height", &mut *h)] {
                             ui.label(label);
-                            let mut val = *v as f64 * per_px;
-                            if ui
-                                .add(egui::DragValue::new(&mut val).speed(speed).fixed_decimals(decimals).suffix(suffix).range(per_px..=20000.0 * per_px))
-                                .changed()
-                            {
-                                *v = (val / per_px).round().clamp(1.0, 20000.0) as u32;
+                            let mut val = *v as f32 * per_px;
+                            let max = pixels::MAX_SIDE as f32 * per_px;
+                            if fluent::number_field(ui, label, &mut val, per_px..=max, decimals, suffix, 110.0).changed() {
+                                *v = (val / per_px).round().clamp(1.0, pixels::MAX_SIDE as f32) as u32;
                             }
                             ui.end_row();
                         }
@@ -1571,9 +1576,12 @@ impl PaintApp {
             }
             Dialog::CustomRotate { angle } => {
                 let clicked = modal("custom_rotate", ctx, 340.0, "Custom rotate", &["OK", "Cancel"], &mut |ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_centered(|ui| {
                         ui.label("Angle");
-                        ui.add(egui::DragValue::new(angle).range(-360.0..=360.0).speed(0.5).suffix("°"));
+                        let field = fluent::number_field(ui, "rotate_angle", angle, -360.0..=360.0, 1, "°", 90.0);
+                        if ui.memory(|m| m.focused().is_none()) {
+                            field.request_focus();
+                        }
                     });
                     ui.label(RichText::new("Positive angles rotate clockwise.").small().color(pal.text_dim));
                 });
@@ -1606,7 +1614,10 @@ impl PaintApp {
                         });
                         ui.end_row();
                         ui.label("Copies");
-                        ui.add(egui::DragValue::new(&mut st.copies).range(1..=99));
+                        let mut copies = st.copies as f32;
+                        if fluent::number_field(ui, "copies", &mut copies, 1.0..=99.0, 0, "", 70.0).changed() {
+                            st.copies = copies as u32;
+                        }
                         ui.end_row();
                         ui.label("Orientation");
                         ui.horizontal(|ui| {
@@ -1661,13 +1672,27 @@ impl PaintApp {
         let scale = (240.0 / w).min(180.0 / h);
         let size = vec2(w * scale, h * scale);
         let mut jump = None;
+        let pal = self.pal;
+        // A small Fluent pane: our own header (title on the left, close button) instead of
+        // egui's centered window title bar. Drag the header to move it.
         egui::Window::new("Thumbnail")
-            .collapsible(false)
+            .title_bar(false)
             .resizable(false)
             .fixed_size(size)
-            .open(&mut open)
+            .frame(egui::Frame::popup(&ctx.global_style()).corner_radius(8).inner_margin(egui::Margin::same(8)))
             .default_pos(egui::pos2(self.viewport.max.x - size.x - 40.0, self.viewport.min.y + 20.0))
             .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Thumbnail").size(13.0).color(pal.text));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let (r, close) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+                        pal.paint_button(ui.painter(), r, close.hovered(), close.is_pointer_button_down_on(), false);
+                        icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(16.0, 16.0)), Icon::Close, pal.text, pal.accent);
+                        if close.on_hover_text("Close").clicked() {
+                            open = false;
+                        }
+                    });
+                });
                 let (r, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
                 self.paint_checker(ui.painter(), r);
                 if let Some(t) = &self.tex {

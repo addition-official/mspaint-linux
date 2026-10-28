@@ -86,7 +86,8 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Untitled - Paint")
             .with_app_id("mspaint-linux")
-            .with_inner_size([1280.0, 860.0])
+            // Tall enough to show the whole default 1152 x 648 canvas at 100%.
+            .with_inner_size([1280.0, 880.0])
             .with_min_inner_size([680.0, 460.0])
             // Paint draws a Windows 11 style title bar; the setting can switch back to Plasma's.
             .with_decorations(false)
