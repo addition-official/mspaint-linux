@@ -1,6 +1,6 @@
 [package]
 name = "mspaint-linux"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 description = "A Windows 11 Paint style image editor for Linux and KDE Plasma (Kubuntu)"
 license = "MIT"
