@@ -54,9 +54,11 @@ impl PaintApp {
                                     _ => (&mut self.s.tolerance, 0.0..=100.0, "%", "Tolerance"),
                                 };
                                 ui.label(RichText::new(format!("{}{suffix}", value.round())).size(12.0).color(pal.text));
-                                let resp = ui
-                                    .add(egui::Slider::new(value, range).vertical().show_value(false).step_by(1.0))
-                                    .on_hover_text(tip);
+                                let resp = crate::fluent::slider(ui, &pal, value, range, height, true);
+                                if resp.changed() {
+                                    *value = value.round();
+                                }
+                                let resp = resp.on_hover_text(tip);
                                 if *which == "size" && (resp.dragged() || resp.hovered()) {
                                     preview = true;
                                 }

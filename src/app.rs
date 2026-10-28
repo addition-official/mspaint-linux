@@ -3,6 +3,7 @@
 use crate::brush::StrokeCtx;
 use crate::color_dialog::ColorEdit;
 use crate::document::{Document, Overlay, Settings};
+use crate::fluent;
 use crate::icons::{self, Icon};
 use crate::pixels;
 use crate::text::FontManager;
@@ -59,7 +60,6 @@ pub enum Action {
     Fullscreen,
     Wallpaper(&'static str),
     EditColors,
-    About,
     /// Close without asking (after the unsaved-changes prompt).
     ForceExit,
     SizeUp,
@@ -80,7 +80,6 @@ pub enum Dialog {
     Resize(ResizeState),
     /// Size in pixels; `unit`: 0 = pixels, 1 = inches, 2 = centimeters.
     Properties { w: u32, h: u32, unit: u8, bw: bool, last_saved: String },
-    About,
     Message(String),
     CustomRotate { angle: f32 },
     Print(PrintState),
@@ -196,6 +195,8 @@ pub struct PaintApp {
     pub drag_button: egui::PointerButton,
     system_checked: f64,
     pub show_layers: bool,
+    /// The Settings page is shown instead of the toolbar and canvas.
+    pub show_settings: bool,
     pub checker_tex: Option<TextureHandle>,
     pub layer_thumbs: Vec<TextureHandle>,
     pub thumbs_rev: u64,
@@ -274,6 +275,7 @@ impl PaintApp {
             popup_was_open: false,
             focus_first_item: false,
             show_layers: p.layers,
+            show_settings: false,
             checker_tex: None,
             layer_thumbs: Vec::new(),
             thumbs_rev: u64::MAX,
@@ -691,7 +693,6 @@ impl PaintApp {
                 let c = if self.active_slot == 2 { self.s.color2 } else { self.s.color1 };
                 self.color_edit = Some(ColorEdit::new(c));
             }
-            Action::About => self.dialog = Some(Dialog::About),
             Action::SizeUp | Action::SizeDown => {
                 let d = if a == Action::SizeUp { 1.0 } else { -1.0 };
                 let size = self.s.size_mut();
@@ -1103,22 +1104,9 @@ impl PaintApp {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.add_space(8.0);
                     let gear = self.icon_button(ui, Icon::Gear, true);
-                    egui::Popup::menu(&gear).show(|ui| {
-                        ui.set_min_width(220.0);
-                        ui.label(RichText::new("App theme").strong());
-                        for (t, n) in [(ThemePref::Light, "Light"), (ThemePref::Dark, "Dark"), (ThemePref::System, "Use system setting")] {
-                            if ui.radio(self.theme_pref == t, n).clicked() {
-                                self.theme_pref = t;
-                            }
-                        }
-                        ui.separator();
-                        ui.checkbox(&mut self.system_titlebar, "Use system title bar")
-                            .on_hover_text("Use KDE Plasma's window title bar instead of the Windows 11 style one");
-                        ui.separator();
-                        if ui.button("About Paint").clicked() {
-                            self.push(Action::About);
-                        }
-                    });
+                    if gear.clicked() {
+                        self.show_settings = true;
+                    }
                     gear.on_hover_text("Settings");
                 });
             });
@@ -1362,9 +1350,7 @@ impl PaintApp {
                     self.zoom_step(1, None);
                 }
                 let mut z = self.zoom.ln();
-                let slider = egui::Slider::new(&mut z, ZOOM_MIN.ln()..=ZOOM_MAX.ln()).show_value(false);
-                ui.spacing_mut().slider_width = 120.0;
-                if ui.add(slider).changed() {
+                if fluent::slider(ui, &pal, &mut z, ZOOM_MIN.ln()..=ZOOM_MAX.ln(), 130.0, false).changed() {
                     let target = z.exp();
                     // Snap near 100%.
                     let target = if (target - 1.0).abs() < 0.05 { 1.0 } else { target };
@@ -1431,12 +1417,12 @@ impl PaintApp {
                 let clicked = modal("resize", ctx, 360.0, "Resize and skew", &["OK", "Cancel"], &mut |ui| {
                     ui.label(RichText::new("Resize").strong());
                     ui.horizontal(|ui| {
-                        if ui.radio(st.by_percent, "Percentage").clicked() && !st.by_percent {
+                        if fluent::radio(ui, &pal, st.by_percent, "Percentage").clicked() && !st.by_percent {
                             st.by_percent = true;
                             st.w = st.w / st.base_w * 100.0;
                             st.h = st.h / st.base_h * 100.0;
                         }
-                        if ui.radio(!st.by_percent, "Pixels").clicked() && st.by_percent {
+                        if fluent::radio(ui, &pal, !st.by_percent, "Pixels").clicked() && st.by_percent {
                             st.by_percent = false;
                             st.w = (st.w * st.base_w / 100.0).round();
                             st.h = (st.h * st.base_h / 100.0).round();
@@ -1461,7 +1447,7 @@ impl PaintApp {
                         }
                         ui.end_row();
                     });
-                    ui.checkbox(&mut st.keep_aspect, "Maintain aspect ratio");
+                    fluent::checkbox(ui, &pal, &mut st.keep_aspect, "Maintain aspect ratio");
                     ui.add_space(8.0);
                     ui.label(RichText::new("Skew (degrees)").strong());
                     egui::Grid::new("skew_grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -1522,15 +1508,15 @@ impl PaintApp {
                     ui.add_space(8.0);
                     ui.label(RichText::new("Units").strong());
                     ui.horizontal(|ui| {
-                        ui.radio_value(unit, 1, "Inches");
-                        ui.radio_value(unit, 2, "Centimeters");
-                        ui.radio_value(unit, 0, "Pixels");
+                        fluent::radio_value(ui, &pal, unit, 1, "Inches");
+                        fluent::radio_value(ui, &pal, unit, 2, "Centimeters");
+                        fluent::radio_value(ui, &pal, unit, 0, "Pixels");
                     });
                     ui.add_space(4.0);
                     ui.label(RichText::new("Color").strong());
                     ui.horizontal(|ui| {
-                        ui.radio_value(bw, true, "Black and white");
-                        ui.radio_value(bw, false, "Color");
+                        fluent::radio_value(ui, &pal, bw, true, "Black and white");
+                        fluent::radio_value(ui, &pal, bw, false, "Color");
                     });
                     ui.add_space(8.0);
                     // Show the size in the chosen unit; store pixels.
@@ -1583,25 +1569,6 @@ impl PaintApp {
                     }
                 }
             }
-            Dialog::About => {
-                let clicked = modal("about", ctx, 400.0, "About Paint", &["OK"], &mut |ui| {
-                    ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(vec2(48.0, 48.0), Sense::hover());
-                        app_icon(ui.painter(), r);
-                        ui.vertical(|ui| {
-                            ui.heading("Paint");
-                            ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(pal.text_dim));
-                        });
-                    });
-                    ui.add_space(8.0);
-                    ui.label("A Windows 11 Paint-style image editor for Linux and KDE Plasma, written in Rust.");
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Not affiliated with or endorsed by Microsoft.").small().color(pal.text_dim));
-                });
-                if clicked.is_some() || enter {
-                    keep = false;
-                }
-            }
             Dialog::CustomRotate { angle } => {
                 let clicked = modal("custom_rotate", ctx, 340.0, "Custom rotate", &["OK", "Cancel"], &mut |ui| {
                     ui.horizontal(|ui| {
@@ -1632,7 +1599,7 @@ impl PaintApp {
                 let clicked = modal("print", ctx, 400.0, "Print", &["Print", "Cancel"], &mut |ui| {
                     egui::Grid::new("print_grid").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
                         ui.label("Printer");
-                        egui::ComboBox::from_id_salt("printer").selected_text(st.printers[st.printer].clone()).width(220.0).show_ui(ui, |ui| {
+                        egui::ComboBox::from_id_salt("printer").icon(fluent::combo_chevron).selected_text(st.printers[st.printer].clone()).width(220.0).show_ui(ui, |ui| {
                             for (i, p) in st.printers.iter().enumerate() {
                                 ui.selectable_value(&mut st.printer, i, p);
                             }
@@ -1643,14 +1610,14 @@ impl PaintApp {
                         ui.end_row();
                         ui.label("Orientation");
                         ui.horizontal(|ui| {
-                            ui.radio_value(&mut st.landscape, false, "Portrait");
-                            ui.radio_value(&mut st.landscape, true, "Landscape");
+                            fluent::radio_value(ui, &pal, &mut st.landscape, false, "Portrait");
+                            fluent::radio_value(ui, &pal, &mut st.landscape, true, "Landscape");
                         });
                         ui.end_row();
                         ui.label("Scaling");
                         ui.horizontal(|ui| {
-                            ui.radio_value(&mut st.fit, true, "Fit to page");
-                            ui.radio_value(&mut st.fit, false, "Actual size");
+                            fluent::radio_value(ui, &pal, &mut st.fit, true, "Fit to page");
+                            fluent::radio_value(ui, &pal, &mut st.fit, false, "Actual size");
                         });
                         ui.end_row();
                     });
@@ -1824,45 +1791,11 @@ impl PaintApp {
     }
 }
 
-impl eframe::App for PaintApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
-        self.apply_theme(&ctx);
-        self.popup_was_open = egui::Popup::is_any_open(&ctx);
-
-        // Closing with unsaved changes asks first.
-        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.doc.has_unsaved_work() {
-            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-            self.dialog = Some(Dialog::Unsaved(Action::Exit));
-        }
-
-        // Files dropped onto the window open (or import when Ctrl is held).
-        let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).filter(|p| !p.as_os_str().is_empty()).collect());
-        if let Some(p) = dropped.into_iter().next() {
-            self.push(Action::OpenPath(p));
-        }
-
-        self.handle_keys(&ctx);
-
+impl PaintApp {
+    /// Menu row, ribbon, canvas, layers panel and status bar.
+    fn main_view(&mut self, ui: &mut egui::Ui) {
         let pal = self.pal;
-        // Our own decorations (Windows 11 look) unless the user prefers Plasma's title bar.
-        if self.decorations_applied != Some(self.system_titlebar) {
-            self.decorations_applied = Some(self.system_titlebar);
-            ctx.send_viewport_cmd(ViewportCommand::Decorations(self.system_titlebar));
-        }
-        // Windows 11 windows have rounded corners. We draw them ourselves on a transparent
-        // window whenever we own the decorations and the window isn't maximized/fullscreen.
-        let (maximized, fullscreen) =
-            ctx.input(|i| (i.viewport().maximized.unwrap_or(false), i.viewport().fullscreen.unwrap_or(false)));
-        self.corner = if self.system_titlebar || maximized || fullscreen { 0 } else { WINDOW_RADIUS };
-        self.on_window_edge = self.window_edges(&ctx);
-        if !self.system_titlebar {
-            let r = self.corner;
-            egui::Panel::top("titlebar")
-                .exact_size(32.0)
-                .frame(egui::Frame::new().fill(pal.chrome).corner_radius(egui::CornerRadius { nw: r, ne: r, sw: 0, se: 0 }))
-                .show(ui, |ui| self.title_bar(ui));
-        }
+        let ctx = ui.ctx().clone();
         egui::Panel::top("menubar")
             .frame(egui::Frame::new().fill(pal.chrome))
             .show(ui, |ui| self.menu_row(ui));
@@ -1927,7 +1860,60 @@ impl eframe::App for PaintApp {
                         .show(ui, |ui| self.text_bar(ui));
                 });
         }
+    }
+}
 
+impl eframe::App for PaintApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.apply_theme(&ctx);
+        self.popup_was_open = egui::Popup::is_any_open(&ctx);
+
+        // Closing with unsaved changes asks first.
+        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.doc.has_unsaved_work() {
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+            self.dialog = Some(Dialog::Unsaved(Action::Exit));
+        }
+
+        // Files dropped onto the window open (or import when Ctrl is held).
+        let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).filter(|p| !p.as_os_str().is_empty()).collect());
+        if let Some(p) = dropped.into_iter().next() {
+            self.push(Action::OpenPath(p));
+        }
+
+        self.handle_keys(&ctx);
+
+        let pal = self.pal;
+        // Our own decorations (Windows 11 look) unless the user prefers Plasma's title bar.
+        if self.decorations_applied != Some(self.system_titlebar) {
+            self.decorations_applied = Some(self.system_titlebar);
+            ctx.send_viewport_cmd(ViewportCommand::Decorations(self.system_titlebar));
+        }
+        // Windows 11 windows have rounded corners. We draw them ourselves on a transparent
+        // window whenever we own the decorations and the window isn't maximized/fullscreen.
+        let (maximized, fullscreen) =
+            ctx.input(|i| (i.viewport().maximized.unwrap_or(false), i.viewport().fullscreen.unwrap_or(false)));
+        self.corner = if self.system_titlebar || maximized || fullscreen { 0 } else { WINDOW_RADIUS };
+        self.on_window_edge = self.window_edges(&ctx);
+        if !self.system_titlebar {
+            let r = self.corner;
+            egui::Panel::top("titlebar")
+                .exact_size(32.0)
+                .frame(egui::Frame::new().fill(pal.chrome).corner_radius(egui::CornerRadius { nw: r, ne: r, sw: 0, se: 0 }))
+                .show(ui, |ui| self.title_bar(ui));
+        }
+        if self.show_settings {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(pal.chrome).corner_radius(egui::CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: self.corner,
+                    se: self.corner,
+                }))
+                .show(ui, |ui| self.settings_page(ui));
+        } else {
+            self.main_view(ui);
+        }
         self.doc.render_overlay(&self.s, &mut self.fm);
         self.upload_textures(&ctx);
 
@@ -1935,6 +1921,7 @@ impl eframe::App for PaintApp {
         self.edit_colors_window(&ctx);
         self.background_picker(&ctx);
         self.thumbnail_window(&ctx);
+        fluent::focus_ring(&ctx, &self.pal);
 
         for a in std::mem::take(&mut self.actions) {
             self.run_action(&ctx, a);

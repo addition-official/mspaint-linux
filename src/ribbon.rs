@@ -1,6 +1,7 @@
 //! The Windows 11 style toolbar ("ribbon"): Image, Tools, Brushes, Shapes, Size, Colors.
 
 use crate::app::{Action, PaintApp};
+use crate::fluent;
 use crate::icons::{self, Icon};
 use crate::tools::{BrushKind, SelectMode, ShapeKind, ShapeStyle, Tool, size_presets};
 use egui::{Color32, PopupCloseBehavior, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, Vec2, vec2};
@@ -712,8 +713,14 @@ impl PaintApp {
                     }
                     ui.separator();
                     let max = if tool == Tool::Eraser { 100.0 } else { 50.0 };
+                    let pal = app.pal;
                     let size = app.size_mut_for(tool);
-                    ui.add(egui::Slider::new(size, 1.0..=max).step_by(1.0).fixed_decimals(0).suffix("px"));
+                    ui.horizontal(|ui| {
+                        if fluent::slider(ui, &pal, size, 1.0..=max, 130.0, false).changed() {
+                            *size = size.round();
+                        }
+                        ui.label(format!("{} px", *size));
+                    });
                 });
         });
     }
@@ -862,6 +869,7 @@ impl PaintApp {
             ui.spacing_mut().interact_size.y = 32.0;
             let fams = self.fm.families.clone();
             egui::ComboBox::from_id_salt("font_family")
+                .icon(fluent::combo_chevron)
                 .selected_text(self.s.text.family.clone())
                 .width(190.0)
                 .height(420.0)
@@ -873,6 +881,7 @@ impl PaintApp {
                 .response
                 .on_hover_text("Font");
             egui::ComboBox::from_id_salt("font_size")
+                .icon(fluent::combo_chevron)
                 .selected_text(format!("{}", self.s.text.size_pt))
                 .width(64.0)
                 .height(420.0)
@@ -921,7 +930,7 @@ impl PaintApp {
                 }
             }
             ui.separator();
-            ui.checkbox(&mut new.opaque, "Background fill");
+            fluent::checkbox(ui, &self.pal, &mut new.opaque, "Background fill");
             self.s.text = new;
         });
     }

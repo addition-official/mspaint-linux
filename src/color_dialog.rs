@@ -55,6 +55,7 @@ impl ColorEdit {
 
         ui.horizontal(|ui| {
             egui::ComboBox::from_id_salt("color_model")
+                .icon(crate::fluent::combo_chevron)
                 .width(90.0)
                 .selected_text(if *hsv_fields { "HSV" } else { "RGB" })
                 .show_ui(ui, |ui| {
