@@ -62,7 +62,7 @@ impl FontManager {
         Self { db, families, cache: HashMap::new() }
     }
 
-    /// A sensible default family for this desktop (Kubuntu ships Noto Sans).
+    /// A sensible default family for this desktop (most distributions ship Noto Sans).
     pub fn default_family(&self) -> String {
         for f in ["Noto Sans", "Segoe UI", "Calibri", "Ubuntu", "DejaVu Sans", "Liberation Sans"] {
             if self.families.iter().any(|x| x == f) {

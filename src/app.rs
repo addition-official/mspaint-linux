@@ -2,6 +2,7 @@
 
 use crate::brush::StrokeCtx;
 use crate::color_dialog::ColorEdit;
+use crate::desktop;
 use crate::document::{Document, Overlay, Settings};
 use crate::fluent;
 use crate::icons::{self, Icon};
@@ -729,10 +730,10 @@ impl PaintApp {
                         let landscape = self.doc.width() > self.doc.height();
                         self.dialog = Some(Dialog::Print(PrintState { printers, printer: default, copies: 1, fit: true, landscape }));
                     }
-                    Some(_) => self.dialog = Some(Dialog::Message("No printers are set up. Add one in System Settings > Printers.".into())),
+                    Some(_) => self.dialog = Some(Dialog::Message("No printers are set up. Add one in your system's printer settings.".into())),
                     None => {
                         self.dialog = Some(Dialog::Message(
-                            "Printing needs CUPS (the lp and lpstat commands), which Kubuntu installs by default.".into(),
+                            "Printing needs CUPS (the lp and lpstat commands). Install the cups package with your distribution's package manager.".into(),
                         ))
                     }
                 }
@@ -761,7 +762,7 @@ impl PaintApp {
         if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).into_owned()) }
     }
 
-    /// KDE Plasma: set the image as desktop background.
+    /// Set the image as desktop background (KDE Plasma, GNOME and others; see `desktop`).
     fn set_wallpaper(&mut self, mode: &str) {
         self.doc.commit_overlay(&self.s);
         let dir = std::env::var_os("XDG_DATA_HOME")
@@ -779,7 +780,7 @@ impl PaintApp {
             self.dialog = Some(Dialog::Message(format!("Could not write the wallpaper image.\n\n{e}")));
             return;
         }
-        // Remove older wallpapers we created (Plasma keeps its own reference to the new one).
+        // Remove older wallpapers we created (the desktop keeps its own reference to the new one).
         if let Ok(rd) = std::fs::read_dir(&dir) {
             for e in rd.flatten() {
                 let p = e.path();
@@ -788,33 +789,13 @@ impl PaintApp {
                 }
             }
         }
-        let fill = match mode {
-            "tile" => "tile",
-            "center" => "pad",
-            _ => "preserveAspectCrop",
+        let fit = match mode {
+            "tile" => desktop::Fit::Tile,
+            "center" => desktop::Fit::Center,
+            _ => desktop::Fit::Fill,
         };
-        let res = std::process::Command::new("plasma-apply-wallpaperimage")
-            .arg("--fill-mode")
-            .arg(fill)
-            .arg(&path)
-            .output();
-        match res {
-            Ok(o) if o.status.success() => {}
-            Ok(o) => {
-                // Older Plasma without --fill-mode.
-                let retry = std::process::Command::new("plasma-apply-wallpaperimage").arg(&path).status();
-                if !retry.is_ok_and(|s| s.success()) {
-                    self.dialog = Some(Dialog::Message(format!(
-                        "Could not set the desktop background.\n\n{}",
-                        String::from_utf8_lossy(&o.stderr)
-                    )));
-                }
-            }
-            Err(_) => {
-                self.dialog = Some(Dialog::Message(
-                    "Setting the desktop background needs KDE Plasma (plasma-apply-wallpaperimage was not found).".into(),
-                ))
-            }
+        if let Err(e) = desktop::set_wallpaper(&path, fit) {
+            self.dialog = Some(Dialog::Message(format!("Could not set the desktop background.\n\n{e}")));
         }
     }
 
@@ -1793,12 +1774,12 @@ impl PaintApp {
             ThemePref::Light => false,
             ThemePref::Dark => true,
             ThemePref::System => {
-                // Re-check the Plasma color scheme every few seconds so we follow changes live.
+                // Re-check the desktop's light/dark preference every few seconds so we follow changes live.
                 let now = ctx.input(|i| i.time);
                 if self.system_dark.is_none() || now - self.system_checked > 3.0 {
                     self.system_checked = now;
                     self.system_dark = Some(
-                        theme::kde_prefers_dark()
+                        desktop::prefers_dark()
                             .or_else(|| ctx.system_theme().map(|t| t == egui::Theme::Dark))
                             .unwrap_or(false),
                     );
@@ -1909,7 +1890,7 @@ impl eframe::App for PaintApp {
         self.handle_keys(&ctx);
 
         let pal = self.pal;
-        // Our own decorations (Windows 11 look) unless the user prefers Plasma's title bar.
+        // Our own decorations (Windows 11 look) unless the user prefers the desktop's title bar.
         if self.decorations_applied != Some(self.system_titlebar) {
             self.decorations_applied = Some(self.system_titlebar);
             ctx.send_viewport_cmd(ViewportCommand::Decorations(self.system_titlebar));

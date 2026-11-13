@@ -1,42 +1,66 @@
 name: Release
 
-# Builds the .deb and publishes it as a GitHub release named after the version in
-# Cargo.toml. Run it from the Actions tab (Run workflow), or push a tag like v0.3.0.
+# Builds every package (.deb, .rpm, AppImage, .tar.gz) and publishes them as a GitHub
+# release named after the version in Cargo.toml. Run it from the Actions tab (Run
+# workflow), or push a tag like v0.3.1.
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    runs-on: ubuntu-24.04
+  build:
+    runs-on: ubuntu-latest
+    # Built on an older base (glibc 2.35) so the packages also run on older
+    # distributions, e.g. Ubuntu 22.04 and Debian 12.
+    container: ubuntu:22.04
     steps:
+      - name: Build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config dpkg-dev file fonts-noto-core
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.99.0
       - uses: Swatinem/rust-cache@v2
-      - name: Fonts for the text tests
-        run: sudo apt-get update && sudo apt-get install -y fonts-noto-core
       - run: cargo test
-      - name: Build .deb
+      - name: Packaging tools
         run: |
           cargo install cargo-deb --version 3.8.0 --locked
-          cargo deb
+          cargo install cargo-generate-rpm --version 0.21.1 --locked
+      - run: ./packaging/build-all.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           tag="v$version"
-          deb=$(ls target/debian/*.deb)
-          notes="Install on Kubuntu 24.04 or newer: download $(basename "$deb"), then run
-          \`sudo apt install ./$(basename "$deb")\` in the folder you downloaded it to."
+          notes="- **Debian, Ubuntu, Linux Mint, Pop!_OS:** download the .deb, then \`sudo apt install ./mspaint-linux_${version}-1_amd64.deb\`
+          - **Fedora, openSUSE:** download the .rpm, then \`sudo dnf install ./mspaint-linux-${version}-1.x86_64.rpm\` (openSUSE: \`sudo zypper install\`)
+          - **Any distribution:** download the .AppImage, make it executable (\`chmod +x\`) and run it.
+          - **Or:** unpack the .tar.gz and run \`./install.sh\`."
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "$deb" --clobber
+            gh release upload "$tag" dist/* --clobber
           else
-            gh release create "$tag" "$deb" --title "Paint $version" --notes "$notes" --target "$GITHUB_SHA"
+            gh release create "$tag" dist/* --title "Paint $version" --notes "$notes" --target "$GITHUB_SHA"
           fi

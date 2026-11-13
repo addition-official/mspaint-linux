@@ -1,7 +1,8 @@
 # Paint for Linux
 
-A clone of **Windows 11 Paint** for Linux, built for **Kubuntu / KDE Plasma**. It's written in Rust with
-[egui](https://github.com/emilk/egui) and compiles to a single binary.
+A clone of **Windows 11 Paint** for Linux. It runs on any modern distribution (Ubuntu, Debian, Fedora,
+openSUSE, Arch, Mint and others) and desktop (KDE Plasma, GNOME, Cinnamon, Xfce and more). It's written
+in Rust with [egui](https://github.com/emilk/egui) and compiles to a single binary.
 
 It recreates the Windows 11 Paint layout: the Windows 11 style title bar, the File / View row with quick
 Save, Undo and Redo buttons, the toolbar (Clipboard, Image, Tools, Brushes, Shapes, Size, Colors), the
@@ -32,40 +33,48 @@ included.
 | **Image properties** | Size in pixels, inches or centimeters; Color or Black and white; last saved, size on disk |
 | **History** | Undo / redo (up to 100 steps; strokes, shapes and fills store only the area they changed, so big pictures keep a long history). Ctrl+Z in a text box undoes typing |
 
-### KDE / Kubuntu integration
+### Desktop integration
 
-- **Native KDE file dialogs** through the XDG desktop portal (`xdg-desktop-portal-kde`).
-- **Set as desktop background** (Fill, Tile, Center) through Plasma's `plasma-apply-wallpaperimage`.
-- Uses the desktop font (**Noto Sans** on Kubuntu) and follows the Plasma light/dark color scheme.
+- **Native file dialogs** through the XDG desktop portal (KDE, GNOME and GTK portals).
+- **Set as desktop background** (Fill, Tile, Center) on KDE Plasma, GNOME (and Ubuntu, Budgie,
+  Pantheon), Cinnamon, MATE, Xfce and LXQt.
+- Uses the desktop font (Noto Sans, Cantarell, Ubuntu...) and follows the desktop's light/dark
+  preference (Plasma's color scheme, or GNOME's dark style).
 - Draws a Windows 11 style title bar by default (drag to move, double-click to maximize, resize from
-  the window edges). If you prefer Plasma's own title bar, turn on **Settings (gear) → Use system title bar**.
-- Native Wayland and X11 support, with a `.desktop` entry so Paint shows up in the launcher and under "Open with" for images.
+  the window edges). If you prefer your desktop's own title bar, turn on **Settings (gear) → Use system
+  title bar**.
+- Native Wayland and X11 support, with a `.desktop` entry so Paint shows up in the launcher and under
+  "Open with" for images.
 - Opens files in your XDG Pictures folder by default.
 - Asks to save unsaved work when you close the window.
 - Prints through CUPS (Ctrl+P): pick a printer, copies, orientation and fit-to-page.
 
-## Install on Kubuntu
+## Install
 
-### Easiest: install the .deb (no Rust needed)
+Download the file for your system from the
+[latest release](https://github.com/addition-official/mspaint-linux/releases/latest) (64-bit; any
+distribution from about 2022 on). No Rust needed.
 
-Needs Kubuntu 24.04 or newer (64-bit). Download `mspaint-linux_0.3.0-1_amd64.deb` from the
-[latest release](https://github.com/addition-official/mspaint-linux/releases/latest), then in the folder
-you downloaded it to:
+| System | File | Install |
+| --- | --- | --- |
+| Ubuntu, Debian, Linux Mint, Pop!_OS, Kubuntu | `.deb` | `sudo apt install ./mspaint-linux_*_amd64.deb` |
+| Fedora | `.rpm` | `sudo dnf install ./mspaint-linux-*.x86_64.rpm` |
+| openSUSE | `.rpm` | `sudo zypper install ./mspaint-linux-*.x86_64.rpm` |
+| Any distribution (Arch, Manjaro, Void, ...) | `.AppImage` | `chmod +x mspaint-linux-*.AppImage`, then run it (or double-click it) |
+| Any distribution, installed to your home folder | `.tar.gz` | unpack it, then run `./install.sh` inside |
 
-```bash
-sudo apt install ./mspaint-linux_0.3.0-1_amd64.deb
-```
-
-Paint then shows up in the application launcher. To remove it: `sudo apt remove mspaint-linux`.
+Run the commands in the folder you downloaded the file to. The .deb and .rpm add Paint to the
+application launcher; remove them with `sudo apt remove mspaint-linux` or `sudo dnf remove mspaint-linux`.
 
 ## Build from source
 
 ### 1. Install Rust (one time)
 
-Kubuntu's packaged `rustc` is too old, so use rustup:
+Distribution packages of `rustc` are often too old, so use rustup. First install a C compiler and curl
+(`sudo apt install build-essential curl` on Debian/Ubuntu, `sudo dnf install gcc curl` on Fedora,
+`sudo pacman -S base-devel curl` on Arch), then:
 
 ```bash
-sudo apt install build-essential curl
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 ```
@@ -82,12 +91,11 @@ cd mspaint-linux
 Then open **Paint** from the application launcher, or run `mspaint-linux [image]`.
 To remove it later: `./install.sh --uninstall`.
 
-### Or build a .deb
+### Or build the packages
 
 ```bash
-cargo install cargo-deb
-cargo deb
-sudo apt install ./target/debian/mspaint-linux_*.deb
+cargo install cargo-deb cargo-generate-rpm
+./packaging/build-all.sh   # .deb, .rpm, AppImage and .tar.gz in dist/
 ```
 
 ### Just run it
@@ -96,8 +104,8 @@ sudo apt install ./target/debian/mspaint-linux_*.deb
 cargo run --release -- path/to/picture.png
 ```
 
-The binary only links against libc. It loads OpenGL, Wayland/X11 and xkbcommon at runtime, and a
-standard Kubuntu install already has them.
+The binary only links against libc. It loads OpenGL, Wayland/X11 and xkbcommon at runtime, and every
+desktop installation already has them.
 
 ## Keyboard shortcuts
 
@@ -156,6 +164,7 @@ Source layout:
 | `src/fluent.rs` | Windows 11 style radio buttons, check boxes, toggles, sliders and number boxes |
 | `src/settings.rs` | The Settings page |
 | `src/tiles.rs` | Uploads large pictures to the GPU as tiles |
+| `src/desktop.rs` | Wallpaper and light/dark detection for each Linux desktop |
 
 ## Not included
 

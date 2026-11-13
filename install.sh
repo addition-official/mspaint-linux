@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build and install Paint for Linux.
+# Build and install Paint for Linux. In the release .tar.gz, which holds a ready-made
+# binary, it installs that binary instead of building.
 #
 #   ./install.sh              install for the current user (~/.local)
 #   ./install.sh --system     install for all users (/usr/local, uses sudo)
@@ -40,18 +41,23 @@ if [ "$UNINSTALL" = 1 ]; then
     exit 0
 fi
 
-if ! command -v cargo >/dev/null; then
-    echo "Rust is not installed. Install it with:" >&2
-    echo "  sudo apt install build-essential curl" >&2
-    echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" >&2
-    exit 1
+if [ -f mspaint-linux ] && [ ! -f Cargo.toml ]; then
+    # Unpacked release tarball: the binary is already built.
+    SRC=mspaint-linux
+else
+    if ! command -v cargo >/dev/null; then
+        echo "Rust is not installed. Install a C compiler and curl with your package manager" >&2
+        echo "(build-essential on Debian/Ubuntu, gcc on Fedora/openSUSE, base-devel on Arch), then:" >&2
+        echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" >&2
+        exit 1
+    fi
+    echo "Building (release)..."
+    cargo build --release
+    SRC=target/release/mspaint-linux
 fi
 
-echo "Building (release)..."
-cargo build --release
-
 echo "Installing to $PREFIX..."
-$SUDO install -Dm755 target/release/mspaint-linux "$BIN"
+$SUDO install -Dm755 "$SRC" "$BIN"
 $SUDO install -Dm644 assets/mspaint-linux.desktop "$DESKTOP"
 $SUDO install -Dm644 assets/mspaint-linux.svg "$ICON"
 refresh_menus

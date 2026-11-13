@@ -1,10 +1,11 @@
-//! Paint for Linux: a Windows 11 Paint style image editor for KDE Plasma (Kubuntu).
+//! Paint for Linux: a Windows 11 Paint style image editor for Linux desktops.
 
 mod app;
 mod brush;
 mod canvas;
 mod color_dialog;
 mod cursor;
+mod desktop;
 mod document;
 mod fluent;
 mod icons;
@@ -89,7 +90,7 @@ fn main() -> eframe::Result {
             // Tall enough to show the whole default 1152 x 648 canvas at 100%.
             .with_inner_size([1280.0, 880.0])
             .with_min_inner_size([680.0, 460.0])
-            // Paint draws a Windows 11 style title bar; the setting can switch back to Plasma's.
+            // Paint draws a Windows 11 style title bar; the setting can switch back to the desktop's.
             .with_decorations(false)
             // Needed for the rounded Windows 11 window corners.
             .with_transparent(true)

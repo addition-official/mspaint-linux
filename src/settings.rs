@@ -53,7 +53,7 @@ impl PaintApp {
                     ui.add_space(4.0);
                     card(ui, &pal, |ui| {
                         ui.horizontal(|ui| {
-                            card_header(ui, &pal, Icon::Desktop, "Use system title bar", "Use KDE Plasma's window title bar instead of the Windows 11 style one");
+                            card_header(ui, &pal, Icon::Desktop, "Use system title bar", "Use your desktop's window title bar instead of the Windows 11 style one");
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 fluent::toggle(ui, &pal, &mut self.system_titlebar);
                                 ui.label(if self.system_titlebar { "On" } else { "Off" });
@@ -75,7 +75,7 @@ impl PaintApp {
                             });
                         });
                         ui.add_space(8.0);
-                        ui.label("A Windows 11 Paint-style image editor for Linux and KDE Plasma, written in Rust.");
+                        ui.label("A Windows 11 Paint-style image editor for Linux, written in Rust.");
                         ui.label(RichText::new("Not affiliated with or endorsed by Microsoft.").size(12.0).color(pal.text_dim));
                     });
                     ui.add_space(24.0);

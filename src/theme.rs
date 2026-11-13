@@ -152,10 +152,10 @@ pub fn apply(ctx: &egui::Context, pal: &Palette) {
     });
 }
 
-/// Use the desktop's UI font (Noto Sans on Kubuntu) so the app blends in with Plasma.
+/// Use the desktop's UI font (Noto Sans on most distributions, Cantarell on older GNOME).
 pub fn install_fonts(ctx: &egui::Context, fm: &crate::text::FontManager) {
     let mut defs = FontDefinitions::default();
-    for (fam, key) in [("Noto Sans", "ui"), ("Segoe UI", "ui"), ("Ubuntu", "ui"), ("DejaVu Sans", "ui")] {
+    for (fam, key) in [("Noto Sans", "ui"), ("Segoe UI", "ui"), ("Ubuntu", "ui"), ("Cantarell", "ui"), ("Inter", "ui"), ("DejaVu Sans", "ui"), ("Liberation Sans", "ui")] {
         if !fm.families.iter().any(|f| f == fam) {
             continue;
         }

@@ -1,12 +1,12 @@
 [package]
 name = "mspaint-linux"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
-description = "A Windows 11 Paint style image editor for Linux and KDE Plasma (Kubuntu)"
+description = "A Windows 11 Paint style image editor for Linux"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/addition-official/mspaint-linux"
-keywords = ["paint", "image-editor", "drawing", "kde", "linux"]
+keywords = ["paint", "image-editor", "drawing", "mspaint", "linux"]
 categories = ["graphics", "multimedia::images"]
 
 [dependencies]
@@ -36,14 +36,26 @@ maintainer = "mspaint-linux contributors"
 section = "graphics"
 priority = "optional"
 extended-description = """\
-A clone of Windows 11 Paint for Linux, tuned for KDE Plasma / Kubuntu. \
+A clone of Windows 11 Paint for Linux. \
 Pencil, brushes, shapes, text, fill, color picker, selections, crop, \
 resize/skew, rotate/flip, zoom, rulers, gridlines and light/dark themes."""
-depends = "libc6 (>= 2.39), libgl1, libegl1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-6, libxcursor1, libxrandr2, libxi6"
-recommends = "xdg-desktop-portal-kde"
+# $auto works out the minimum libc from the binary (built on an older base, so it runs
+# on older releases too); the rest are loaded at run time and can't be detected.
+depends = "$auto, libgl1, libegl1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-6, libxcursor1, libxrandr2, libxi6"
+recommends = "xdg-desktop-portal-kde | xdg-desktop-portal-gnome | xdg-desktop-portal-gtk"
 assets = [
     ["target/release/mspaint-linux", "usr/bin/", "755"],
     ["assets/mspaint-linux.desktop", "usr/share/applications/", "644"],
     ["assets/mspaint-linux.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["README.md", "usr/share/doc/mspaint-linux/README.md", "644"],
+]
+
+# Fedora / openSUSE package (cargo generate-rpm).
+[package.metadata.generate-rpm]
+summary = "Windows 11 Paint style image editor"
+assets = [
+    { source = "target/release/mspaint-linux", dest = "/usr/bin/mspaint-linux", mode = "755" },
+    { source = "assets/mspaint-linux.desktop", dest = "/usr/share/applications/mspaint-linux.desktop", mode = "644" },
+    { source = "assets/mspaint-linux.svg", dest = "/usr/share/icons/hicolor/scalable/apps/mspaint-linux.svg", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/mspaint-linux/README.md", mode = "644", doc = true },
 ]
