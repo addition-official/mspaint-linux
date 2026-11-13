@@ -8,6 +8,8 @@ Save, Undo and Redo buttons, the toolbar (Clipboard, Image, Tools, Brushes, Shap
 centered canvas with resize handles, and the status bar with a zoom slider. Light and dark themes are
 included.
 
+![Paint for Linux on Kubuntu, with a drawing of a house on a hill](docs/screenshot.png)
+
 ## Features
 
 | Area | What's there |
