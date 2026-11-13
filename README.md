@@ -44,7 +44,9 @@ included.
 
 ### Easiest: install the .deb (no Rust needed)
 
-Needs Kubuntu 24.04 or newer (64-bit). Download `mspaint-linux_0.3.0-1_amd64.deb`, then:
+Needs Kubuntu 24.04 or newer (64-bit). Download `mspaint-linux_0.3.0-1_amd64.deb` from the
+[latest release](https://github.com/addition-official/mspaint-linux/releases/latest), then in the folder
+you downloaded it to:
 
 ```bash
 sudo apt install ./mspaint-linux_0.3.0-1_amd64.deb
@@ -165,3 +167,9 @@ Source layout:
 This is an independent project that recreates the look and workflow of Windows 11 Paint. It is not
 affiliated with or endorsed by Microsoft, and it uses no Microsoft code or assets. All icons are
 drawn in code.
+
+# A note on how this was built
+
+I used AI assistance to write most of the code for this project and this README. The idea, the
+direction, the design calls and the testing are mine: I compared it against the real Windows 11 Paint,
+decided how every part should look and behave, and sent it back whenever something didn't match.
