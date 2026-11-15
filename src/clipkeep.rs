@@ -9,7 +9,7 @@
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FLAG: &str = "--keep-clipboard";
 /// The helper gives up after this long even if nothing else is copied.
@@ -100,8 +100,16 @@ pub fn run_if_helper() -> bool {
     }
     let Some(held) = Held::decode(data) else { return true };
     let Ok(mut cb) = arboard::Clipboard::new() else { return true };
+    // Give up after a while even if nothing else is copied. (Not `wait_until`: on
+    // Wayland arboard treats it as "don't wait", and the helper would quit at once,
+    // taking the copy with it.)
+    std::thread::spawn(|| {
+        std::thread::sleep(MAX_KEEP);
+        std::process::exit(0);
+    });
     use arboard::SetExtLinux;
-    let set = cb.set().wait_until(Instant::now() + MAX_KEEP);
+    // Blocks until something else is copied.
+    let set = cb.set().wait();
     let _ = match held {
         Held::Text(t) => set.text(t),
         Held::Image { width, height, bytes } => set.image(arboard::ImageData { width, height, bytes: bytes.into() }),
