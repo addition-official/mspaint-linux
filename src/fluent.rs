@@ -12,19 +12,29 @@ fn on_accent(pal: &Palette) -> Color32 {
 }
 
 /// A 20px control followed by its label, as one clickable widget.
-fn with_label(ui: &mut Ui, pal: &Palette, text: &str) -> (Rect, Response, Rect) {
+fn with_label(ui: &mut Ui, pal: &Palette, text: &str, sense: Sense) -> (Rect, Response, Rect) {
     let galley = ui.painter().layout_no_wrap(text.to_string(), FontId::proportional(14.0), pal.text);
     let gap = if text.is_empty() { 0.0 } else { 8.0 };
     // Trailing room so options in a row don't run into each other.
     let size = vec2(20.0 + gap + galley.size().x + gap * 1.5, 26.0);
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(size, sense);
     let control = Rect::from_center_size(pos2(rect.min.x + 10.0, rect.center().y), vec2(20.0, 20.0));
     ui.painter().galley(pos2(control.max.x + gap, rect.center().y - galley.size().y / 2.0), galley, pal.text);
     (rect, resp, control)
 }
 
+/// A radio button. The buttons placed in the same `Ui` (one row or column) form a
+/// group, as in Windows: Tab stops only at the selected one, and the arrow keys
+/// select the previous or next one.
 pub fn radio(ui: &mut Ui, pal: &Palette, selected: bool, text: &str) -> Response {
-    let (_, resp, b) = with_label(ui, pal, text);
+    // Unselected buttons are skipped by Tab, but keep focus while the arrow keys
+    // move it to them (until they become selected).
+    let id = ui.next_auto_id();
+    let pending = ui.data(|d| d.get_temp::<egui::Id>(egui::Id::new("radio_activate"))) == Some(id);
+    let focusable = selected || pending || ui.memory(|m| m.has_focus(id));
+    let sense = if focusable { Sense::click() } else { Sense::CLICK };
+    let (_, mut resp, b) = with_label(ui, pal, text, sense);
+    radio_group_keys(ui, &mut resp);
     let (c, p) = (b.center(), ui.painter());
     let pressed = resp.is_pointer_button_down_on();
     if selected {
@@ -43,6 +53,61 @@ pub fn radio(ui: &mut Ui, pal: &Palette, selected: bool, text: &str) -> Response
     resp
 }
 
+/// The buttons of each radio group, in order: the ones placed so far this frame and
+/// the full list from the last frame (the arrow keys can move to a later button).
+#[derive(Clone, Default)]
+struct RadioGroup {
+    frame: u64,
+    now: Vec<egui::Id>,
+    last: Vec<egui::Id>,
+}
+
+fn radio_group_keys(ui: &mut Ui, resp: &mut Response) {
+    let key = egui::Id::new(("radio_group", ui.unique_id()));
+    let frame = ui.ctx().cumulative_pass_nr();
+    let group = ui.data_mut(|d| {
+        let g = d.get_temp_mut_or_default::<RadioGroup>(key);
+        if g.frame != frame {
+            g.last = std::mem::take(&mut g.now);
+            g.frame = frame;
+        }
+        g.now.push(resp.id);
+        g.last.clone()
+    });
+    // A button the arrow keys moved to last frame acts as clicked.
+    let activate = egui::Id::new("radio_activate");
+    if ui.data(|d| d.get_temp::<egui::Id>(activate)) == Some(resp.id) {
+        ui.data_mut(|d| d.remove::<egui::Id>(activate));
+        resp.flags |= egui::response::Flags::FAKE_PRIMARY_CLICKED;
+    }
+    if !resp.has_focus() {
+        return;
+    }
+    let filter = egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() };
+    ui.memory_mut(|m| m.set_focus_lock_filter(resp.id, filter));
+    // Consumed, so the button moved to (it may come later this frame) doesn't see it.
+    let step = ui.input_mut(|i| {
+        use egui::{Key::*, Modifiers};
+        if i.consume_key(Modifiers::NONE, ArrowDown) || i.consume_key(Modifiers::NONE, ArrowRight) {
+            1
+        } else if i.consume_key(Modifiers::NONE, ArrowUp) || i.consume_key(Modifiers::NONE, ArrowLeft) {
+            -1
+        } else {
+            0
+        }
+    });
+    if step == 0 {
+        return;
+    }
+    if let Some(i) = group.iter().position(|id| *id == resp.id) {
+        let n = group.len() as i32;
+        let target = group[(i as i32 + step).rem_euclid(n) as usize];
+        ui.memory_mut(|m| m.request_focus(target));
+        ui.data_mut(|d| d.insert_temp(activate, target));
+        ui.ctx().request_repaint();
+    }
+}
+
 pub fn radio_value<T: PartialEq>(ui: &mut Ui, pal: &Palette, current: &mut T, value: T, text: &str) -> Response {
     let mut resp = radio(ui, pal, *current == value, text);
     if resp.clicked() && *current != value {
@@ -53,7 +118,7 @@ pub fn radio_value<T: PartialEq>(ui: &mut Ui, pal: &Palette, current: &mut T, va
 }
 
 pub fn checkbox(ui: &mut Ui, pal: &Palette, checked: &mut bool, text: &str) -> Response {
-    let (_, mut resp, b) = with_label(ui, pal, text);
+    let (_, mut resp, b) = with_label(ui, pal, text, Sense::click());
     if resp.clicked() {
         *checked = !*checked;
         resp.mark_changed();
