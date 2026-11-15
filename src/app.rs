@@ -181,6 +181,8 @@ pub struct PaintApp {
     clipboard: Option<arboard::Clipboard>,
     /// What Paint last copied, kept on the clipboard after exit (see clipkeep).
     clip_held: Option<crate::clipkeep::Held>,
+    /// A failure from the desktop's print dialog, which runs on its own thread.
+    print_error: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     allow_close: bool,
     pub zoom_fit_pending: bool,
     pub active_slot: u8,
@@ -280,6 +282,7 @@ impl PaintApp {
             recent: p.recent,
             clipboard: arboard::Clipboard::new().ok(),
             clip_held: None,
+            print_error: Default::default(),
             allow_close: false,
             zoom_fit_pending: false,
             active_slot: 1,
@@ -803,16 +806,23 @@ impl PaintApp {
                         self.dialog = Some(Dialog::Print(PrintState { printers, printer: default, copies: 1, fit: true, landscape }));
                     }
                     Some(_) => self.dialog = Some(Dialog::Message("No printers are set up. Add one in your system's printer settings.".into())),
-                    None => {
+                    None if crate::portal::in_flatpak() || crate::portal::has_print() => {
+                        // The dialog waits for the user: run it beside the UI, and report
+                        // a failure through `print_error`.
                         let pic = self.doc.flattened();
-                        let pdf = crate::portal::picture_pdf(pic.width(), pic.height(), &pixels::rgb_on_white(&pic));
-                        if let Err(e) = crate::portal::print(&pdf, &self.doc.name()) {
-                            self.dialog = Some(Dialog::Message(if crate::portal::in_flatpak() {
-                                e
-                            } else {
-                                "Printing needs CUPS (the lp and lpstat commands). Install the cups-client package (cups on Arch and openSUSE) with your package manager.".into()
-                            }));
-                        }
+                        let (w, h, rgb, title) = (pic.width(), pic.height(), pixels::rgb_on_white(&pic), self.doc.name());
+                        let (out, ctx) = (self.print_error.clone(), ctx.clone());
+                        std::thread::spawn(move || {
+                            if let Err(e) = crate::portal::print_dialog(&title, w, h, &rgb) {
+                                *out.lock().unwrap_or_else(|p| p.into_inner()) = Some(e);
+                                ctx.request_repaint();
+                            }
+                        });
+                    }
+                    None => {
+                        self.dialog = Some(Dialog::Message(
+                            "Printing needs CUPS (the lp and lpstat commands). Install the cups-client package (cups on Arch and openSUSE) with your package manager.".into(),
+                        ))
                     }
                 }
             }
@@ -2068,6 +2078,9 @@ impl eframe::App for PaintApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.apply_theme(&ctx);
+        if let Some(e) = self.print_error.lock().ok().and_then(|mut e| e.take()) {
+            self.dialog = Some(Dialog::Message(e));
+        }
         self.popup_was_open = egui::Popup::is_any_open(&ctx);
         self.ppp = ctx.pixels_per_point();
         // Once at startup: a window taller or wider than the screen (the default size on a
