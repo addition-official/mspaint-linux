@@ -67,6 +67,20 @@ fn window_icon(size: u32) -> egui::IconData {
     egui::IconData { rgba, width: size, height: size }
 }
 
+/// The app's id: the name of its .desktop file and icon, and its Wayland app id.
+const APP_ID: &str = "io.github.addition_official.Paintbox";
+
+/// Paintbox was called mspaint-linux before 0.4.0: keep the settings and recent files
+/// saved under the old name.
+fn move_old_settings() {
+    // eframe keeps them in a folder named after the app id.
+    let Some(new) = eframe::storage_dir(APP_ID) else { return };
+    let Some(old) = eframe::storage_dir("mspaint-linux") else { return };
+    if !new.join("app.ron").exists() && old.join("app.ron").is_file() && std::fs::create_dir_all(&new).is_ok() {
+        let _ = std::fs::copy(old.join("app.ron"), new.join("app.ron"));
+    }
+}
+
 fn main() -> eframe::Result {
     if clipkeep::run_if_helper() {
         return Ok(());
@@ -75,11 +89,11 @@ fn main() -> eframe::Result {
     for arg in std::env::args_os().skip(1) {
         match arg.to_str() {
             Some("-h" | "--help") => {
-                println!("Usage: mspaint-linux [IMAGE]\n\nA Windows 11 Paint style image editor for Linux.");
+                println!("Usage: paintbox [IMAGE]\n\nPaintbox: a simple, familiar paint program for Linux.");
                 return Ok(());
             }
             Some("-V" | "--version") => {
-                println!("mspaint-linux {}", env!("CARGO_PKG_VERSION"));
+                println!("paintbox {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             Some(s) if s.starts_with("file://") => open = desktop::path_from_uri(s),
@@ -89,8 +103,8 @@ fn main() -> eframe::Result {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Untitled - Paint")
-            .with_app_id("mspaint-linux")
+            .with_title("Untitled - Paintbox")
+            .with_app_id(APP_ID)
             // Tall enough to show the whole default 1152 x 648 canvas at 100%.
             .with_inner_size([1280.0, 880.0])
             .with_min_inner_size([680.0, 460.0])
@@ -101,8 +115,9 @@ fn main() -> eframe::Result {
             .with_icon(window_icon(64)),
         ..Default::default()
     };
+    move_old_settings();
     eframe::run_native(
-        "mspaint-linux",
+        "paintbox",
         options,
         Box::new(move |cc| Ok(Box::new(app::PaintApp::new(cc, open)))),
     )

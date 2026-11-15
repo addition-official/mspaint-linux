@@ -57,8 +57,8 @@ jobs:
         run: |
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           tag="v$version"
-          notes="- **Debian, Ubuntu, Linux Mint, Pop!_OS:** download the .deb, then \`sudo apt install ./mspaint-linux_${version}-1_amd64.deb\`
-          - **Fedora, openSUSE:** download the .rpm, then \`sudo dnf install ./mspaint-linux-${version}-1.x86_64.rpm\` (openSUSE: \`sudo zypper install\`)
+          notes="- **Debian, Ubuntu, Linux Mint, Pop!_OS:** download the .deb, then \`sudo apt install ./paintbox_${version}-1_amd64.deb\`
+          - **Fedora, openSUSE:** download the .rpm, then \`sudo dnf install ./paintbox-${version}-1.x86_64.rpm\` (openSUSE: \`sudo zypper install\`)
           - **Any distribution:** download the .AppImage, make it executable (\`chmod +x\`) and run it.
           - **Or:** unpack the .tar.gz and run \`./install.sh\`.
           - **Check a download:** \`sha256sum -c SHA256SUMS --ignore-missing\` in the download folder."
@@ -66,4 +66,4 @@ jobs:
             echo "Release $tag already exists. Bump the version in Cargo.toml to make a new one." >&2
             exit 1
           fi
-          gh release create "$tag" dist/* --title "Paint $version" --notes "$notes" --target "$GITHUB_SHA"
+          gh release create "$tag" dist/* --title "Paintbox $version" --notes "$notes" --target "$GITHUB_SHA"

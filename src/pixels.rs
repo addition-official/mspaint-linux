@@ -695,7 +695,7 @@ pub fn check_size(w: u32, h: u32) -> Result<(), String> {
     if w == 0 || h == 0 {
         Err("The picture is empty.".into())
     } else if w > MAX_SIDE || h > MAX_SIDE || w as u64 * h as u64 > MAX_PIXELS {
-        Err(format!("The picture is too large ({w} x {h} pixels). Paint can open pictures up to {MAX_SIDE} pixels wide or high and 100 megapixels."))
+        Err(format!("The picture is too large ({w} x {h} pixels). Paintbox can open pictures up to {MAX_SIDE} pixels wide or high and 100 megapixels."))
     } else {
         Ok(())
     }
@@ -1040,7 +1040,7 @@ mod tests {
         assert!(check_size(20000, 20000).is_err());
         assert!(check_size(1152, 648).is_ok());
         // An 11-byte PPM header declaring 0 x 0 pixels.
-        let dir = std::env::temp_dir().join(format!("mspaint-empty-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("paintbox-empty-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("empty.png");
         std::fs::write(&f, b"P6\n0 0\n255\n").unwrap();
@@ -1050,7 +1050,7 @@ mod tests {
 
     #[test]
     fn failed_save_keeps_the_old_file() {
-        let dir = std::env::temp_dir().join(format!("mspaint-save-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("paintbox-save-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("pic.webp");
         std::fs::write(&f, b"old contents").unwrap();
@@ -1067,7 +1067,7 @@ mod tests {
     #[test]
     fn save_keeps_permissions_and_symlinks() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("mspaint-perm-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("paintbox-perm-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let real = dir.join("real.png");
         std::fs::write(&real, b"old").unwrap();

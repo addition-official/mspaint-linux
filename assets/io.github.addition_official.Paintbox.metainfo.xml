@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.addition_official.Paintbox</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Paintbox</name>
+  <summary>Draw and edit pictures the simple way</summary>
+  <description>
+    <p>
+      Paintbox is a simple, familiar paint program, inspired by Paint in Windows 11. Sketch,
+      doodle, mark up screenshots or touch up photos with tools you already know.
+    </p>
+    <ul>
+      <li>Pencil, brushes, eraser, fill, color picker and magnifier</li>
+      <li>Shapes, text with any installed font, and selections you can move, resize and rotate</li>
+      <li>Crop, resize and skew, rotate and flip</li>
+      <li>Layers and background removal</li>
+      <li>Rulers, gridlines, zoom, and light and dark themes</li>
+      <li>Opens and saves PNG, JPEG, BMP, GIF, TIFF, WebP and ICO</li>
+    </ul>
+    <p>Paintbox is not affiliated with or endorsed by Microsoft.</p>
+  </description>
+  <developer id="io.github.addition_official">
+    <name>addition-official</name>
+  </developer>
+  <launchable type="desktop-id">io.github.addition_official.Paintbox.desktop</launchable>
+  <provides>
+    <binary>paintbox</binary>
+  </provides>
+  <replaces>
+    <id>mspaint-linux</id>
+  </replaces>
+  <url type="homepage">https://github.com/addition-official/paintbox</url>
+  <url type="bugtracker">https://github.com/addition-official/paintbox/issues</url>
+  <url type="vcs-browser">https://github.com/addition-official/paintbox</url>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">680</display_length>
+  </requires>
+  <branding>
+    <color type="primary" scheme_preference="light">#cfe3fa</color>
+    <color type="primary" scheme_preference="dark">#1e3a5f</color>
+  </branding>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Light theme</caption>
+      <image>https://raw.githubusercontent.com/addition-official/paintbox/main/docs/screenshot.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Dark theme</caption>
+      <image>https://raw.githubusercontent.com/addition-official/paintbox/main/docs/screenshot-dark.png</image>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Graphics</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.4.0" date="2026-11-15">
+      <description>
+        <p>Paint for Linux is now called Paintbox.</p>
+      </description>
+    </release>
+    <release version="0.3.4" date="2026-11-15"/>
+    <release version="0.3.3" date="2026-11-15"/>
+    <release version="0.3.2" date="2026-11-15"/>
+    <release version="0.3.1" date="2026-11-13"/>
+    <release version="0.3.0" date="2026-10-28"/>
+  </releases>
+</component>

@@ -1518,22 +1518,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mspaint-linux"
-version = "0.3.4"
-dependencies = [
- "ab_glyph",
- "arboard",
- "eframe",
- "egui",
- "fontdb",
- "image",
- "rfd",
- "serde",
- "tiny-skia",
- "x11rb",
-]
-
-[[package]]
 name = "naga"
 version = "30.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2037,6 +2021,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "paintbox"
+version = "0.4.0"
+dependencies = [
+ "ab_glyph",
+ "arboard",
+ "eframe",
+ "egui",
+ "fontdb",
+ "image",
+ "rfd",
+ "serde",
+ "tiny-skia",
+ "x11rb",
 ]
 
 [[package]]

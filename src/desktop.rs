@@ -247,7 +247,7 @@ pub fn set_wallpaper(path: &Path, fit: Fit) -> Result<(), String> {
             run("pcmanfm-qt", &[&format!("--set-wallpaper={file}"), &format!("--wallpaper-mode={mode}")])
         }
         Desktop::Other => Err(
-            "Paint can set the desktop background on KDE Plasma, GNOME, Cinnamon, MATE, Xfce and LXQt. \
+            "Paintbox can set the desktop background on KDE Plasma, GNOME, Cinnamon, MATE, Xfce and LXQt. \
              On this desktop, set it in your desktop's own settings."
                 .into(),
         ),

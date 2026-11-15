@@ -1693,7 +1693,7 @@ mod tests {
 
     #[test]
     fn save_and_load_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("mspaint-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("paintbox-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut d = Document::new(16, 8);
         d.flood_fill(0, 0, Color32::from_rgb(10, 200, 30), 0);

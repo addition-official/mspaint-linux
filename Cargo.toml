@@ -1,12 +1,12 @@
 [package]
-name = "mspaint-linux"
-version = "0.3.4"
+name = "paintbox"
+version = "0.4.0"
 edition = "2024"
-description = "A Windows 11 Paint style image editor for Linux"
+description = "A simple, familiar paint program for Linux, inspired by Windows 11 Paint"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/addition-official/mspaint-linux"
-keywords = ["paint", "image-editor", "drawing", "mspaint", "linux"]
+repository = "https://github.com/addition-official/paintbox"
+keywords = ["paint", "image-editor", "drawing", "paintbox", "linux"]
 categories = ["graphics", "multimedia::images"]
 
 [dependencies]
@@ -38,7 +38,7 @@ maintainer = "addition-official <addition-official@users.noreply.github.com>"
 section = "graphics"
 priority = "optional"
 extended-description = """\
-A clone of Windows 11 Paint for Linux. \
+A simple, familiar paint program inspired by Windows 11 Paint. \
 Pencil, brushes, shapes, text, fill, color picker, selections, crop, \
 resize/skew, rotate/flip, zoom, rulers, gridlines and light/dark themes."""
 # $auto works out the minimum libc from the binary (built on an older base, so it runs
@@ -47,33 +47,44 @@ depends = "$auto, libgl1, libegl1, libxkbcommon0, libxkbcommon-x11-0, libwayland
 # The lightest portal first: apt installs the first alternative when none is present,
 # and KDE and GNOME systems already have their own.
 recommends = "xdg-desktop-portal-gtk | xdg-desktop-portal-kde | xdg-desktop-portal-gnome"
+# Paintbox was called mspaint-linux before 0.4.0: installing it replaces that package.
+conflicts = "mspaint-linux"
+replaces = "mspaint-linux"
+provides = "mspaint-linux"
 assets = [
-    ["target/release/mspaint-linux", "usr/bin/", "755"],
-    ["assets/mspaint-linux.desktop", "usr/share/applications/", "644"],
-    ["assets/mspaint-linux.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
-    ["assets/mspaint-linux.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
-    ["assets/mspaint-linux.metainfo.xml", "usr/share/metainfo/", "644"],
-    ["README.md", "usr/share/doc/mspaint-linux/README.md", "644"],
+    ["target/release/paintbox", "usr/bin/", "755"],
+    ["assets/io.github.addition_official.Paintbox.desktop", "usr/share/applications/", "644"],
+    ["assets/io.github.addition_official.Paintbox.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["assets/io.github.addition_official.Paintbox.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+    ["assets/io.github.addition_official.Paintbox.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["README.md", "usr/share/doc/paintbox/README.md", "644"],
 ]
 
 # Fedora / openSUSE package (cargo generate-rpm).
 [package.metadata.generate-rpm]
-summary = "Windows 11 Paint style image editor"
+summary = "Simple, familiar paint program"
 description = """\
-A clone of Windows 11 Paint for Linux: pencil, brushes, shapes, text, fill, color \
+A simple, familiar paint program inspired by Windows 11 Paint: pencil, brushes, shapes, text, fill, color \
 picker, selections, crop, resize and skew, layers, background removal, rulers, \
 gridlines and light and dark themes."""
 assets = [
-    { source = "target/release/mspaint-linux", dest = "/usr/bin/mspaint-linux", mode = "755" },
-    { source = "assets/mspaint-linux.desktop", dest = "/usr/share/applications/mspaint-linux.desktop", mode = "644" },
-    { source = "assets/mspaint-linux.svg", dest = "/usr/share/icons/hicolor/scalable/apps/mspaint-linux.svg", mode = "644" },
-    { source = "assets/mspaint-linux.png", dest = "/usr/share/icons/hicolor/256x256/apps/mspaint-linux.png", mode = "644" },
-    { source = "assets/mspaint-linux.metainfo.xml", dest = "/usr/share/metainfo/mspaint-linux.metainfo.xml", mode = "644" },
-    { source = "README.md", dest = "/usr/share/doc/mspaint-linux/README.md", mode = "644", doc = true },
+    { source = "target/release/paintbox", dest = "/usr/bin/paintbox", mode = "755" },
+    { source = "assets/io.github.addition_official.Paintbox.desktop", dest = "/usr/share/applications/io.github.addition_official.Paintbox.desktop", mode = "644" },
+    { source = "assets/io.github.addition_official.Paintbox.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.addition_official.Paintbox.svg", mode = "644" },
+    { source = "assets/io.github.addition_official.Paintbox.png", dest = "/usr/share/icons/hicolor/256x256/apps/io.github.addition_official.Paintbox.png", mode = "644" },
+    { source = "assets/io.github.addition_official.Paintbox.metainfo.xml", dest = "/usr/share/metainfo/io.github.addition_official.Paintbox.metainfo.xml", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/paintbox/README.md", mode = "644", doc = true },
 ]
 
 # Libraries the binary loads at run time (so automatic detection can't see them), by
 # soname so the same package works on Fedora and openSUSE.
+# Paintbox was called mspaint-linux before 0.4.0: installing it replaces that package.
+[package.metadata.generate-rpm.obsoletes]
+mspaint-linux = "< 0.4.0"
+
+[package.metadata.generate-rpm.provides]
+mspaint-linux = "*"
+
 [package.metadata.generate-rpm.requires]
 "libEGL.so.1()(64bit)" = "*"
 "libGL.so.1()(64bit)" = "*"

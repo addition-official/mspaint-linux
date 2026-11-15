@@ -70,12 +70,12 @@ impl PaintApp {
                             app_icon(ui.painter(), r);
                             ui.add_space(8.0);
                             ui.vertical(|ui| {
-                                ui.label(RichText::new("Paint").size(14.0));
+                                ui.label(RichText::new("Paintbox").size(14.0));
                                 ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).size(12.0).color(pal.text_dim));
                             });
                         });
                         ui.add_space(8.0);
-                        ui.label("A Windows 11 Paint-style image editor for Linux, written in Rust.");
+                        ui.label("A simple, familiar paint program for Linux, inspired by Windows 11 Paint. Written in Rust.");
                         ui.label(RichText::new("Not affiliated with or endorsed by Microsoft.").size(12.0).color(pal.text_dim));
                     });
                     ui.add_space(24.0);

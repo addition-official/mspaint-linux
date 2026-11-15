@@ -1,17 +1,17 @@
-# Paint for Linux
+# Paintbox
 
-A clone of **Windows 11 Paint** for Linux. It runs on any modern distribution (Ubuntu, Debian, Fedora,
+A simple, familiar paint program for Linux, inspired by **Windows 11 Paint**. It runs on any modern distribution (Ubuntu, Debian, Fedora,
 openSUSE, Arch, Mint and others) and desktop (KDE Plasma, GNOME, Cinnamon, Xfce and more). It's written
 in Rust with [egui](https://github.com/emilk/egui) and compiles to a single binary.
 
-It recreates the Windows 11 Paint layout: the Windows 11 style title bar, the File / View row with quick
+It follows the Windows 11 Paint layout: the Windows 11 style title bar, the File / View row with quick
 Save, Undo and Redo buttons, the toolbar (Clipboard, Image, Tools, Brushes, Shapes, Size, Colors), the
 centered canvas with resize handles, and the status bar with a zoom slider. Light and dark themes are
 included.
 
 | Light | Dark |
 | --- | --- |
-| ![Paint for Linux in light mode, with a drawing of a house on a hill](docs/screenshot.png) | ![Paint for Linux in dark mode, with the same drawing](docs/screenshot-dark.png) |
+| ![Paintbox in light mode, with a drawing of a house on a hill](docs/screenshot.png) | ![Paintbox in dark mode, with the same drawing](docs/screenshot-dark.png) |
 
 ## Features
 
@@ -43,7 +43,7 @@ included.
 - Draws a Windows 11 style title bar by default (drag to move, double-click to maximize, resize from
   the window edges). If you prefer your desktop's own title bar, turn on **Settings (gear) → Use system
   title bar**.
-- Native Wayland and X11 support, with a `.desktop` entry so Paint shows up in the launcher and under
+- Native Wayland and X11 support, with a `.desktop` entry so Paintbox shows up in the launcher and under
   "Open with" for images.
 - Opens files in your XDG Pictures folder by default.
 - Asks to save unsaved work when you close the window.
@@ -52,19 +52,23 @@ included.
 ## Install
 
 Download the file for your system from the
-[latest release](https://github.com/addition-official/mspaint-linux/releases/latest) (64-bit; any
+[latest release](https://github.com/addition-official/paintbox/releases/latest) (64-bit; any
 distribution from about 2022 on, with glibc 2.35 or newer). No Rust needed.
 
 | System | File | Install |
 | --- | --- | --- |
-| Ubuntu, Debian, Linux Mint, Pop!_OS, Kubuntu | `.deb` | `sudo apt install ./mspaint-linux_*_amd64.deb` |
-| Fedora | `.rpm` | `sudo dnf install ./mspaint-linux-*.x86_64.rpm` |
-| openSUSE Tumbleweed, Leap 15.6 | `.rpm` | `sudo zypper install ./mspaint-linux-*.x86_64.rpm` |
-| Any distribution (Arch, Manjaro, Void, ...) | `.AppImage` | `chmod +x mspaint-linux-*.AppImage`, then run it (or double-click it) |
+| Ubuntu, Debian, Linux Mint, Pop!_OS, Kubuntu | `.deb` | `sudo apt install ./paintbox_*_amd64.deb` |
+| Fedora | `.rpm` | `sudo dnf install ./paintbox-*.x86_64.rpm` |
+| openSUSE Tumbleweed, Leap 15.6 | `.rpm` | `sudo zypper install ./paintbox-*.x86_64.rpm` |
+| Any distribution (Arch, Manjaro, Void, ...) | `.AppImage` | `chmod +x paintbox-*.AppImage`, then run it (or double-click it) |
 | Any distribution, installed to your home folder | `.tar.gz` | unpack it, then run `./install.sh` inside |
 
-Run the commands in the folder you downloaded the file to. The .deb and .rpm add Paint to the
-application launcher; remove them with `sudo apt remove mspaint-linux` or `sudo dnf remove mspaint-linux`.
+Run the commands in the folder you downloaded the file to. The .deb and .rpm add Paintbox to the
+application launcher; remove them with `sudo apt remove paintbox` or `sudo dnf remove paintbox`.
+
+**Coming from "Paint for Linux" (mspaint-linux)?** Paintbox is the same app under a new name. Installing
+it replaces the old package and keeps your settings and recent files. Pin it to your taskbar again,
+since the launcher entry has a new name.
 
 ## Build from source
 
@@ -82,13 +86,13 @@ source "$HOME/.cargo/env"
 ### 2. Build and install
 
 ```bash
-git clone https://github.com/addition-official/mspaint-linux.git
-cd mspaint-linux
+git clone https://github.com/addition-official/paintbox.git
+cd paintbox
 ./install.sh            # installs to ~/.local for the current user
 # ./install.sh --system # or for all users, into /usr/local
 ```
 
-Then open **Paint** from the application launcher, or run `mspaint-linux [image]`.
+Then open **Paintbox** from the application launcher, or run `paintbox [image]`.
 To remove it later: `./install.sh --uninstall`.
 
 ### Or build the packages
@@ -177,7 +181,7 @@ Source layout:
 
 ## Disclaimer
 
-This is an independent project that recreates the look and workflow of Windows 11 Paint. It is not
+Paintbox is an independent project inspired by the look and workflow of Windows 11 Paint. It is not
 affiliated with or endorsed by Microsoft, and it uses no Microsoft code or assets. All icons are
 drawn in code.
 

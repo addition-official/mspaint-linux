@@ -321,7 +321,7 @@ impl PaintApp {
     }
 
     fn title(&self) -> String {
-        format!("{}{} - Paint", if self.doc.has_unsaved_work() { "*" } else { "" }, self.doc.name())
+        format!("{}{} - Paintbox", if self.doc.has_unsaved_work() { "*" } else { "" }, self.doc.name())
     }
 
     pub fn set_tool(&mut self, t: Tool) {
@@ -420,7 +420,7 @@ impl PaintApp {
                 self.drag = None;
                 self.zoom_fit_pending = true;
             }
-            Err(e) => self.dialog = Some(Dialog::Message(format!("Paint cannot read this file.\n\n{}\n\n{e}", path.display()))),
+            Err(e) => self.dialog = Some(Dialog::Message(format!("Paintbox cannot read this file.\n\n{}\n\n{e}", path.display()))),
         }
     }
 
@@ -566,7 +566,7 @@ impl PaintApp {
             Ok(img) => {
                 let (w, h) = (img.width as u32, img.height as u32);
                 if let Err(e) = pixels::check_size(w, h) {
-                    self.dialog = Some(Dialog::Message(format!("Paint cannot paste this picture.\n\n{e}")));
+                    self.dialog = Some(Dialog::Message(format!("Paintbox cannot paste this picture.\n\n{e}")));
                     return;
                 }
                 match pixels::from_rgba_unmultiplied(w, h, img.bytes.into_owned()) {
@@ -649,7 +649,7 @@ impl PaintApp {
                 if let Some(p) = dlg.pick_file() {
                     match pixels::load(&p) {
                         Ok(pix) => self.paste_pixmap(pix),
-                        Err(e) => self.dialog = Some(Dialog::Message(format!("Paint cannot read this file.\n\n{e}"))),
+                        Err(e) => self.dialog = Some(Dialog::Message(format!("Paintbox cannot read this file.\n\n{e}"))),
                     }
                 }
             }
@@ -834,7 +834,7 @@ impl PaintApp {
     fn set_wallpaper(&mut self, mode: &str) {
         if !desktop::can_set_wallpaper() {
             self.dialog = Some(Dialog::Message(
-                "Paint can set the desktop background on KDE Plasma, GNOME, Cinnamon, MATE, Xfce and LXQt. \
+                "Paintbox can set the desktop background on KDE Plasma, GNOME, Cinnamon, MATE, Xfce and LXQt. \
                  On this desktop, set it in your desktop's own settings."
                     .into(),
             ));
@@ -849,7 +849,7 @@ impl PaintApp {
             self.dialog = Some(Dialog::Message("Could not find your data folder to keep the wallpaper in.".into()));
             return;
         };
-        let dir = data.join("mspaint-linux");
+        let dir = data.join("paintbox");
         let _ = std::fs::create_dir_all(&dir);
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1569,7 +1569,7 @@ impl PaintApp {
         match &mut dialog {
             Dialog::Unsaved(action) => {
                 let name = self.doc.name();
-                let choice = modal("unsaved", ctx, 420.0, "Paint", &["&Save", "Do&n't save", "Cancel"], &mut |ui| {
+                let choice = modal("unsaved", ctx, 420.0, "Paintbox", &["&Save", "Do&n't save", "Cancel"], &mut |ui| {
                     ui.label(format!("Do you want to save your work to {name}?"));
                 });
                 let choice = choice.or(enter.then_some(0));
@@ -1817,7 +1817,7 @@ impl PaintApp {
             }
             Dialog::Message(msg) => {
                 let msg = msg.clone();
-                let clicked = modal("message", ctx, 420.0, "Paint", &["OK"], &mut |ui| {
+                let clicked = modal("message", ctx, 420.0, "Paintbox", &["OK"], &mut |ui| {
                     ui.label(&msg);
                 });
                 if clicked.is_some() || enter {

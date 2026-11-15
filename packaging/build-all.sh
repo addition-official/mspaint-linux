@@ -15,27 +15,28 @@ cargo deb --no-build --output dist/
 cargo generate-rpm --payload-compress xz --output dist/
 
 # Plain binary with install.sh, which installs it without building.
-name="mspaint-linux-$version-x86_64"
+id=io.github.addition_official.Paintbox
+name="paintbox-$version-x86_64"
 stage="dist/$name"
 mkdir -p "$stage/assets"
-cp target/release/mspaint-linux install.sh README.md "$stage/"
-cp assets/mspaint-linux.desktop assets/mspaint-linux.svg assets/mspaint-linux.png assets/mspaint-linux.metainfo.xml "$stage/assets/"
+cp target/release/paintbox install.sh README.md "$stage/"
+cp "assets/$id.desktop" "assets/$id.svg" "assets/$id.png" "assets/$id.metainfo.xml" "$stage/assets/"
 tar -C dist -czf "dist/$name.tar.gz" "$name"
 rm -rf "$stage"
 
 # AppImage: the binary loads the system's graphics libraries at run time, so
 # nothing else needs bundling.
 appdir=dist/AppDir
-install -Dm755 target/release/mspaint-linux "$appdir/usr/bin/mspaint-linux"
-install -Dm644 assets/mspaint-linux.desktop "$appdir/usr/share/applications/mspaint-linux.desktop"
-install -Dm644 assets/mspaint-linux.svg "$appdir/usr/share/icons/hicolor/scalable/apps/mspaint-linux.svg"
-install -Dm644 assets/mspaint-linux.png "$appdir/usr/share/icons/hicolor/256x256/apps/mspaint-linux.png"
-install -Dm644 assets/mspaint-linux.metainfo.xml "$appdir/usr/share/metainfo/mspaint-linux.appdata.xml"
+install -Dm755 target/release/paintbox "$appdir/usr/bin/paintbox"
+install -Dm644 "assets/$id.desktop" "$appdir/usr/share/applications/$id.desktop"
+install -Dm644 "assets/$id.svg" "$appdir/usr/share/icons/hicolor/scalable/apps/$id.svg"
+install -Dm644 "assets/$id.png" "$appdir/usr/share/icons/hicolor/256x256/apps/$id.png"
+install -Dm644 "assets/$id.metainfo.xml" "$appdir/usr/share/metainfo/$id.appdata.xml"
 # A PNG icon: AppImage launchers and file managers show .DirIcon, and many can't
 # read SVG.
-cp assets/mspaint-linux.desktop assets/mspaint-linux.png "$appdir/"
-cp assets/mspaint-linux.png "$appdir/.DirIcon"
-ln -s usr/bin/mspaint-linux "$appdir/AppRun"
+cp "assets/$id.desktop" "assets/$id.png" "$appdir/"
+cp "assets/$id.png" "$appdir/.DirIcon"
+ln -s usr/bin/paintbox "$appdir/AppRun"
 tool="${APPIMAGETOOL:-}"
 if [ -z "$tool" ]; then
     tool=dist/appimagetool
