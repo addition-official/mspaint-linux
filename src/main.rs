@@ -3,6 +3,7 @@
 mod app;
 mod brush;
 mod canvas;
+mod clipkeep;
 mod color_dialog;
 mod cursor;
 mod desktop;
@@ -67,6 +68,9 @@ fn window_icon(size: u32) -> egui::IconData {
 }
 
 fn main() -> eframe::Result {
+    if clipkeep::run_if_helper() {
+        return Ok(());
+    }
     let mut open = None;
     for arg in std::env::args_os().skip(1) {
         match arg.to_str() {

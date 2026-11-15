@@ -179,6 +179,8 @@ pub struct PaintApp {
     pub actions: Vec<Action>,
     pub recent: Vec<PathBuf>,
     clipboard: Option<arboard::Clipboard>,
+    /// What Paint last copied, kept on the clipboard after exit (see clipkeep).
+    clip_held: Option<crate::clipkeep::Held>,
     allow_close: bool,
     pub zoom_fit_pending: bool,
     pub active_slot: u8,
@@ -277,6 +279,7 @@ impl PaintApp {
             actions: Vec::new(),
             recent: p.recent,
             clipboard: arboard::Clipboard::new().ok(),
+            clip_held: None,
             allow_close: false,
             zoom_fit_pending: false,
             active_slot: 1,
@@ -542,11 +545,10 @@ impl PaintApp {
     fn copy_pixmap(&mut self, p: tiny_skia::Pixmap) {
         let img = pixels::into_rgba_unmultiplied(p);
         if let Some(cb) = &mut self.clipboard {
-            let _ = cb.set_image(arboard::ImageData {
-                width: img.width() as usize,
-                height: img.height() as usize,
-                bytes: std::borrow::Cow::Owned(img.into_raw()),
-            });
+            let (width, height) = (img.width() as usize, img.height() as usize);
+            let bytes = img.into_raw();
+            let data = arboard::ImageData { width, height, bytes: std::borrow::Cow::Borrowed(&bytes) };
+            self.clip_held = cb.set_image(data).is_ok().then_some(crate::clipkeep::Held::Image { width, height, bytes });
         }
     }
 
@@ -1141,7 +1143,7 @@ impl PaintApp {
             }
         }
         if let (Some(text), Some(cb)) = (to_clipboard, &mut self.clipboard) {
-            let _ = cb.set_text(text);
+            self.clip_held = cb.set_text(text.clone()).is_ok().then_some(crate::clipkeep::Held::Text(text));
         }
         // Grow the box downward to fit the text.
         if let Overlay::Text(tb) = &mut self.doc.overlay
@@ -2176,6 +2178,12 @@ impl eframe::App for PaintApp {
             layers: self.show_layers,
         };
         eframe::set_value(storage, eframe::APP_KEY, &p);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let (Some(cb), Some(held)) = (&mut self.clipboard, &self.clip_held) {
+            crate::clipkeep::hand_off(cb, held);
+        }
     }
 }
 
