@@ -475,7 +475,7 @@ impl PaintApp {
 
     fn save_to(&mut self, path: PathBuf) -> bool {
         self.doc.commit_overlay(&self.s);
-        match pixels::save(&self.doc.flattened(), &path) {
+        match pixels::save(self.doc.flattened(), &path) {
             Ok(()) if pixels::saves_smaller(&path, self.doc.width(), self.doc.height()) => {
                 // The full-size picture is not on disk: keep it counted as unsaved.
                 self.dialog = Some(Dialog::Message(format!(
@@ -510,7 +510,7 @@ impl PaintApp {
 
     fn copy(&mut self) {
         let Some(p) = self.doc.effective_float(&self.s) else { return };
-        self.copy_pixmap(&p);
+        self.copy_pixmap(p);
     }
 
     /// Ctrl+Shift+C: copy what's visible (all visible layers) under the selection,
@@ -536,11 +536,11 @@ impl PaintApp {
             }
             None => flat,
         };
-        self.copy_pixmap(&pix);
+        self.copy_pixmap(pix);
     }
 
-    fn copy_pixmap(&mut self, p: &tiny_skia::Pixmap) {
-        let img = pixels::to_rgba_unmultiplied(p);
+    fn copy_pixmap(&mut self, p: tiny_skia::Pixmap) {
+        let img = pixels::into_rgba_unmultiplied(p);
         if let Some(cb) = &mut self.clipboard {
             let _ = cb.set_image(arboard::ImageData {
                 width: img.width() as usize,
@@ -811,7 +811,7 @@ impl PaintApp {
     /// input (no temporary file other users could tamper with or read).
     fn print(&mut self, st: &PrintState) -> Result<(), String> {
         use std::io::Write;
-        let png = pixels::encode(&self.doc.flattened(), "png").map_err(|e| e.to_string())?;
+        let png = pixels::encode(self.doc.flattened(), "png").map_err(|e| e.to_string())?;
         let mut cmd = std::process::Command::new("lp");
         cmd.arg("-d").arg(&st.printers[st.printer]).arg("-n").arg(st.copies.to_string());
         cmd.arg("-t").arg(self.doc.name());
@@ -854,7 +854,7 @@ impl PaintApp {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let path = dir.join(format!("wallpaper-{stamp}.png"));
-        if let Err(e) = pixels::save(&self.doc.flattened(), &path) {
+        if let Err(e) = pixels::save(self.doc.flattened(), &path) {
             self.dialog = Some(Dialog::Message(format!("Could not write the wallpaper image.\n\n{e}")));
             return;
         }

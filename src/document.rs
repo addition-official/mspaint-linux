@@ -381,16 +381,22 @@ impl Document {
     /// Recompute the below/above composites and the whole display.
     fn rebuild(&mut self) {
         let (w, h) = (self.width(), self.height());
-        let below: Vec<&Pixmap> = self.layers[..self.active].iter().filter(|l| l.visible).map(|l| &l.pix).collect();
-        let above: Vec<&Pixmap> = self.layers[self.active + 1..].iter().filter(|l| l.visible).map(|l| &l.pix).collect();
-        // The Background tile is applied as a solid color in `refresh`, not cached.
-        self.below = (!below.is_empty()).then(|| pixels::flatten(w, h, below.into_iter()));
-        self.above = (!above.is_empty()).then(|| pixels::flatten(w, h, above.into_iter()));
+        self.rebuild_stacks();
         if self.display.width() != w || self.display.height() != h {
             self.display = new_pixmap(w, h, Color32::TRANSPARENT);
         }
         self.refresh(self.bounds());
         self.layers_rev += 1;
+    }
+
+    /// The cached composites of the visible layers below and above the active one.
+    fn rebuild_stacks(&mut self) {
+        let (w, h) = (self.width(), self.height());
+        let below: Vec<&Pixmap> = self.layers[..self.active].iter().filter(|l| l.visible).map(|l| &l.pix).collect();
+        let above: Vec<&Pixmap> = self.layers[self.active + 1..].iter().filter(|l| l.visible).map(|l| &l.pix).collect();
+        // The Background tile is applied as a solid color in `refresh`, not cached.
+        self.below = (!below.is_empty()).then(|| pixels::flatten(w, h, below.into_iter()));
+        self.above = (!above.is_empty()).then(|| pixels::flatten(w, h, above.into_iter()));
     }
 
     /// Record the current state for undo before modifying it.
@@ -407,6 +413,23 @@ impl Document {
         }
         let pix = pixels::copy_rect(&self.image, r);
         self.push_step(Step::Region { state: self.state, layer: self.active, rect: r, pix });
+    }
+
+    /// Turn the last step, a whole-layer region recorded when a selection was lifted,
+    /// into a full snapshot, so it can also undo an edit that resizes every layer.
+    fn widen_last_step(&mut self) -> bool {
+        let whole = self.bounds();
+        match self.undo.last() {
+            Some(Step::Region { layer, rect, .. }) if *layer == self.active && *rect == whole => {}
+            Some(Step::Full(_)) => return true, // already a snapshot (a paste that grew the canvas)
+            _ => return false,
+        }
+        let Some(Step::Region { state, layer, pix, .. }) = self.undo.pop() else { unreachable!() };
+        let mut snap = self.snapshot();
+        snap.state = state;
+        snap.layers[layer].pix = pix;
+        self.undo.push(Step::Full(snap));
+        true
     }
 
     /// Record layer visibility and the Background tile before changing them.
@@ -557,7 +580,9 @@ impl Document {
         self.layers[self.active].pix = img;
         self.image = std::mem::replace(&mut self.layers[i].pix, placeholder());
         self.active = i;
-        self.rebuild();
+        // The picture looks the same; only the stacks around the active layer change.
+        self.rebuild_stacks();
+        self.layers_rev += 1;
     }
 
     fn next_layer_name(&self) -> String {
@@ -727,18 +752,8 @@ impl Document {
     fn commit_layer(&mut self) {
         if let Some(bb) = self.layer_bbox.take() {
             let bb = bb.clamp_to(self.width(), self.height());
-            let base = pixels::copy_rect(&self.image, bb);
-            let mut stroke = pixels::copy_rect(&self.layer, bb);
-            let local = IRect::from_size(bb.width() as u32, bb.height() as u32);
-            let mut out = base.clone();
-            if self.layer_erase {
-                pixels::erase_region(&mut out, &base, &stroke, local);
-            } else {
-                pixels::composite_region(&mut out, &base, &stroke, self.layer_opacity, local);
-            }
-            pixels::draw_exact(&mut self.image, &out, bb.x0, bb.y0);
+            pixels::commit_stroke(&mut self.image, &self.layer, self.layer_opacity, self.layer_erase, bb);
             pixels::clear_region(&mut self.layer, bb);
-            stroke.fill(tiny_skia::Color::TRANSPARENT);
             self.layers_rev += 1;
         }
         self.layer_opacity = 1.0;
@@ -998,7 +1013,8 @@ impl Document {
             let (nw, nh) = (pw.max(self.width()), ph.max(self.height()));
             self.transform_all(|p, _| pixels::resize_canvas(p, nw, nh, Color32::TRANSPARENT));
         } else {
-            self.begin_edit();
+            // The pasted pixels end up in the active layer only.
+            self.begin_region_edit(self.bounds());
         }
         let at = pos2(
             at.x.clamp(0.0, self.width().saturating_sub(pw) as f32).round(),
@@ -1022,16 +1038,19 @@ impl Document {
             return;
         }
         let (r, mask) = f.origin.clone().expect("origin");
-        self.begin_edit();
-        let c = self.background_for(s).to_array();
-        for y in r.y0..r.y1 {
-            for x in r.x0..r.x1 {
-                let inside = match &mask {
-                    Some(m) => m[((y - r.y0) * r.width() + (x - r.x0)) as usize],
-                    None => true,
-                };
-                if inside {
-                    pixels::set_pixel(&mut self.image, x, y, c);
+        // Only the active layer changes (here and where the selection is later stamped).
+        self.begin_region_edit(self.bounds());
+        let c = self.background_for(s);
+        match &mask {
+            None if c == Color32::TRANSPARENT => pixels::clear_region(&mut self.image, r),
+            _ => {
+                for y in r.y0..r.y1 {
+                    for x in r.x0..r.x1 {
+                        let inside = mask.as_ref().is_none_or(|m| m[((y - r.y0) * r.width() + (x - r.x0)) as usize]);
+                        if inside {
+                            pixels::set_pixel(&mut self.image, x, y, c.to_array());
+                        }
+                    }
                 }
             }
         }
@@ -1060,7 +1079,7 @@ impl Document {
             // The pixels are still in the canvas: leaving them there *is* the copy. The
             // selection only gets stamped again once it is actually moved.
             if record {
-                self.begin_edit();
+                self.begin_region_edit(self.bounds());
             }
             let f = self.floating_mut().unwrap();
             f.origin_cleared = true;
@@ -1069,7 +1088,7 @@ impl Document {
         let Some(p) = self.effective_float(s) else { return };
         let r = self.floating().unwrap().rect;
         if record {
-            self.begin_edit();
+            self.begin_region_edit(self.bounds());
         }
         pixels::draw_scaled(&mut self.image, &p, r.min.x, r.min.y, r.width(), r.height());
         self.refresh(IRect::from_points((r.min.x, r.min.y), (r.max.x, r.max.y), 2.0));
@@ -1192,7 +1211,7 @@ impl Document {
         if img.data() == self.image.data() {
             return false; // nothing changed: no undo step
         }
-        self.begin_edit();
+        self.begin_region_edit(self.bounds());
         self.replace_image(img);
         true
     }
@@ -1214,7 +1233,7 @@ impl Document {
         let recorded = f.origin_cleared;
         self.overlay = Overlay::None;
         self.clear_float_layer();
-        if !recorded {
+        if !recorded || !self.widen_last_step() {
             self.begin_edit();
         }
         let active = self.active;
@@ -1237,10 +1256,9 @@ impl Document {
 
     /// Fill the image directly (fill tool).
     pub fn flood_fill(&mut self, x: i32, y: i32, c: Color32, tolerance: u8) {
-        let mut img = self.image.clone();
-        if let Some(r) = pixels::flood_fill(&mut img, x, y, c, tolerance) {
+        if let Some((r, mask)) = pixels::flood_region(&self.image, x, y, c, tolerance) {
             self.begin_region_edit(r);
-            self.image = img;
+            pixels::fill_mask(&mut self.image, r, &mask, c);
             self.refresh(r);
         }
     }
@@ -1569,6 +1587,47 @@ mod tests {
     }
 
     #[test]
+    fn paste_then_crop_undoes_in_one_step() {
+        let s = Settings::default();
+        for size in [(5, 5), (30, 30)] {
+            let mut d = Document::new(20, 20);
+            d.paste(&s, new_pixmap(size.0, size.1, Color32::RED), pos2(0.0, 0.0));
+            d.crop_to_selection(&s);
+            assert_eq!((d.width(), d.height()), size);
+            d.undo(&s);
+            assert_eq!((d.width(), d.height()), (20, 20), "paste of {size:?}");
+            assert_eq!(px(&d, 1, 1), Color32::TRANSPARENT);
+            assert!(!d.can_undo(), "one step for the paste and the crop");
+        }
+    }
+
+    #[test]
+    fn moving_on_an_upper_layer_undoes_and_redoes() {
+        let s = Settings::default();
+        let mut d = Document::new(20, 20);
+        d.add_layer(&s);
+        let mut img = d.image.clone();
+        pixels::set_pixel(&mut img, 1, 1, Color32::RED.to_array());
+        d.image = img;
+        d.select_rect(&s, IRect::new(0, 0, 4, 4));
+        d.lift(&s);
+        d.floating_mut().unwrap().rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(4.0, 4.0));
+        d.commit_overlay(&s);
+        assert_eq!(px(&d, 11, 11), Color32::RED);
+        assert_eq!(px(&d, 1, 1), Color32::TRANSPARENT);
+        d.set_active_layer(&s, 0);
+        d.undo(&s);
+        assert_eq!(d.active, 1, "undo goes back to the layer it changed");
+        assert_eq!(px(&d, 1, 1), Color32::RED);
+        assert_eq!(px(&d, 11, 11), Color32::TRANSPARENT);
+        assert_eq!(vis(&d, 1, 1), Color32::RED);
+        d.redo(&s);
+        assert_eq!(px(&d, 11, 11), Color32::RED);
+        assert_eq!(vis(&d, 11, 11), Color32::RED);
+        assert_eq!(vis(&d, 1, 1), Color32::WHITE);
+    }
+
+    #[test]
     fn background_change_is_undoable() {
         let s = Settings::default();
         let mut d = Document::new(4, 4);
@@ -1640,7 +1699,7 @@ mod tests {
         d.flood_fill(0, 0, Color32::from_rgb(10, 200, 30), 0);
         for ext in ["png", "bmp", "jpg", "gif", "tiff", "webp", "ico"] {
             let p = dir.join(format!("t.{ext}"));
-            pixels::save(&d.image, &p).unwrap_or_else(|e| panic!("{ext}: {e}"));
+            pixels::save(d.image.clone(), &p).unwrap_or_else(|e| panic!("{ext}: {e}"));
             let back = pixels::load(&p).unwrap();
             assert_eq!((back.width(), back.height()), (16, 8), "{ext}");
             let c = get_pixel(&back, 4, 4).unwrap();

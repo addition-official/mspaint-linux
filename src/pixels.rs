@@ -147,12 +147,13 @@ pub fn region_color_image(p: &Pixmap, r: IRect) -> egui::ColorImage {
     let h = r.height() as usize;
     let pw = p.width() as usize;
     let d = p.data();
-    let mut out = Vec::with_capacity(w * h * 4);
+    // One pass straight into Color32 (both are premultiplied RGBA bytes).
+    let mut out = Vec::with_capacity(w * h);
     for y in r.y0..r.y1 {
         let s = (y as usize * pw + r.x0 as usize) * 4;
-        out.extend_from_slice(&d[s..s + w * 4]);
+        out.extend(d[s..s + w * 4].as_chunks::<4>().0.iter().map(|px| Color32::from_rgba_premultiplied(px[0], px[1], px[2], px[3])));
     }
-    egui::ColorImage::from_rgba_premultiplied([w, h], &out)
+    egui::ColorImage::new([w, h], out)
 }
 
 /// `dst[r] = base[r] (src-over) layer[r] * opacity`
@@ -219,6 +220,41 @@ pub fn erase_region(dst: &mut Pixmap, base: &Pixmap, layer: &Pixmap, r: IRect) {
             let keep = 255 - ld[i + 3] as u32;
             for k in 0..4 {
                 dd[i + k] = ((bd[i + k] as u32 * keep + 127) / 255) as u8;
+            }
+        }
+    }
+}
+
+/// `dst[r]` with the stroke `layer` (same size) composited onto it, in place. The same
+/// math as `composite_region` (or `erase_region` when `erase`) with `base` = `dst`.
+pub fn commit_stroke(dst: &mut Pixmap, layer: &Pixmap, opacity: f32, erase: bool, r: IRect) {
+    let r = r.clamp_to(dst.width(), dst.height()).clamp_to(layer.width(), layer.height());
+    if r.is_empty() || dst.width() != layer.width() {
+        return;
+    }
+    let w = dst.width() as usize;
+    let op = (opacity.clamp(0.0, 1.0) * 256.0) as u32;
+    let ld = layer.data();
+    let dd = dst.data_mut();
+    for y in r.y0..r.y1 {
+        let row = y as usize * w;
+        for x in r.x0..r.x1 {
+            let i = (row + x as usize) * 4;
+            let la = ld[i + 3] as u32;
+            if la == 0 {
+                continue;
+            }
+            if erase {
+                let keep = 255 - la;
+                for k in 0..4 {
+                    dd[i + k] = ((dd[i + k] as u32 * keep + 127) / 255) as u8;
+                }
+            } else {
+                let inv = 255 - ((la * op) >> 8);
+                for k in 0..4 {
+                    let s = (ld[i + k] as u32 * op) >> 8;
+                    dd[i + k] = (s + (dd[i + k] as u32 * inv + 127) / 255).min(255) as u8;
+                }
             }
         }
     }
@@ -317,12 +353,21 @@ pub fn clear_region(p: &mut Pixmap, r: IRect) {
 
 /// Flood fill (4-connected) from (x, y). Pixels whose channels all differ from the
 /// start pixel by at most `tolerance` (0-255) are filled. Returns the touched bounding box.
+#[cfg(test)]
 pub fn flood_fill(p: &mut Pixmap, x: i32, y: i32, color: Color32, tolerance: u8) -> Option<IRect> {
+    let (r, mask) = flood_region(p, x, y, color, tolerance)?;
+    fill_mask(p, r, &mask, color);
+    Some(r)
+}
+
+/// The pixels a fill at (x, y) would change, as a bounding box and a mask over it,
+/// without changing anything (so the caller can record the area for undo first).
+pub fn flood_region(p: &Pixmap, x: i32, y: i32, color: Color32, tolerance: u8) -> Option<(IRect, Vec<bool>)> {
     let start = idx(p, x, y)?;
     let w = p.width() as i32;
     let h = p.height() as i32;
     let fill = premul(color);
-    let d = p.data_mut();
+    let d = p.data();
     let target = [d[start], d[start + 1], d[start + 2], d[start + 3]];
     if target == fill && tolerance == 0 {
         return None;
@@ -333,24 +378,20 @@ pub fn flood_fill(p: &mut Pixmap, x: i32, y: i32, color: Color32, tolerance: u8)
     let at = |x: i32, y: i32| (y * w + x) as usize;
     let mut bbox = IRect::new(x, y, x + 1, y + 1);
     let mut stack = vec![(x, y)];
+    let ok = |seen: &[bool], x: i32, y: i32| !seen[at(x, y)] && matches(&d[at(x, y) * 4..at(x, y) * 4 + 4]);
     while let Some((sx, sy)) = stack.pop() {
-        if seen[at(sx, sy)] || !matches(&d[at(sx, sy) * 4..at(sx, sy) * 4 + 4]) {
+        if !ok(&seen, sx, sy) {
             continue;
         }
-        let ok = |d: &[u8], seen: &[bool], x: i32, y: i32| !seen[at(x, y)] && matches(&d[at(x, y) * 4..at(x, y) * 4 + 4]);
         let mut lx = sx;
-        while lx > 0 && ok(d, &seen, lx - 1, sy) {
+        while lx > 0 && ok(&seen, lx - 1, sy) {
             lx -= 1;
         }
         let mut rx = sx;
-        while rx < w - 1 && ok(d, &seen, rx + 1, sy) {
+        while rx < w - 1 && ok(&seen, rx + 1, sy) {
             rx += 1;
         }
-        for xx in lx..=rx {
-            let i = at(xx, sy);
-            seen[i] = true;
-            d[i * 4..i * 4 + 4].copy_from_slice(&fill);
-        }
+        seen[at(lx, sy)..=at(rx, sy)].fill(true);
         bbox = bbox.union(&IRect::new(lx, sy, rx + 1, sy + 1));
         for ny in [sy - 1, sy + 1] {
             if ny < 0 || ny >= h {
@@ -358,9 +399,9 @@ pub fn flood_fill(p: &mut Pixmap, x: i32, y: i32, color: Color32, tolerance: u8)
             }
             let mut xx = lx;
             while xx <= rx {
-                if ok(d, &seen, xx, ny) {
+                if ok(&seen, xx, ny) {
                     stack.push((xx, ny));
-                    while xx <= rx && ok(d, &seen, xx, ny) {
+                    while xx <= rx && ok(&seen, xx, ny) {
                         xx += 1;
                     }
                 } else {
@@ -369,7 +410,26 @@ pub fn flood_fill(p: &mut Pixmap, x: i32, y: i32, color: Color32, tolerance: u8)
             }
         }
     }
-    Some(bbox)
+    // Shrink the mask to the box.
+    let mut mask = Vec::with_capacity((bbox.width() * bbox.height()) as usize);
+    for y in bbox.y0..bbox.y1 {
+        mask.extend_from_slice(&seen[at(bbox.x0, y)..at(bbox.x1, y)]);
+    }
+    Some((bbox, mask))
+}
+
+/// Set the pixels of `r` that `mask` marks to `color`.
+pub fn fill_mask(p: &mut Pixmap, r: IRect, mask: &[bool], color: Color32) {
+    let fill = premul(color);
+    let w = p.width() as usize;
+    let d = p.data_mut();
+    let rw = r.width() as usize;
+    for (row, y) in (r.y0..r.y1).enumerate() {
+        let base = (y as usize * w + r.x0 as usize) * 4;
+        for (i, _) in mask[row * rw..(row + 1) * rw].iter().enumerate().filter(|(_, m)| **m) {
+            d[base + i * 4..base + i * 4 + 4].copy_from_slice(&fill);
+        }
+    }
 }
 
 pub fn copy_rect(p: &Pixmap, r: IRect) -> Pixmap {
@@ -378,14 +438,25 @@ pub fn copy_rect(p: &Pixmap, r: IRect) -> Pixmap {
     out
 }
 
-/// Copy `src` into `dst` at (x, y) replacing pixels (no blending).
+/// Copy `src` into `dst` at (x, y) replacing pixels (no blending). Plain row copies,
+/// several times faster than drawing through tiny-skia.
 pub fn draw_exact(dst: &mut Pixmap, src: &Pixmap, x: i32, y: i32) {
-    let paint = PixmapPaint {
-        blend_mode: BlendMode::Source,
-        quality: FilterQuality::Nearest,
-        ..Default::default()
-    };
-    dst.draw_pixmap(x, y, src.as_ref(), &paint, Transform::identity(), None);
+    let (dw, dh) = (dst.width() as i32, dst.height() as i32);
+    let (sw, sh) = (src.width() as i32, src.height() as i32);
+    // The part of src that lands inside dst.
+    let (sx0, sy0) = ((-x).max(0), (-y).max(0));
+    let (sx1, sy1) = (sw.min(dw - x), sh.min(dh - y));
+    if sx0 >= sx1 || sy0 >= sy1 {
+        return;
+    }
+    let len = ((sx1 - sx0) * 4) as usize;
+    let s = src.data();
+    let d = dst.data_mut();
+    for sy in sy0..sy1 {
+        let so = ((sy * sw + sx0) * 4) as usize;
+        let dof = (((sy + y) * dw + sx0 + x) * 4) as usize;
+        d[dof..dof + len].copy_from_slice(&s[so..so + len]);
+    }
 }
 
 /// Draw `src` scaled into the destination rectangle (x, y, w, h) with src-over blending.
@@ -690,7 +761,13 @@ pub fn from_rgba_unmultiplied(w: u32, h: u32, mut data: Vec<u8>) -> Option<Pixma
 }
 
 pub fn to_rgba_unmultiplied(p: &Pixmap) -> image::RgbaImage {
-    let mut data = p.data().to_vec();
+    into_rgba_unmultiplied(p.clone())
+}
+
+/// Like `to_rgba_unmultiplied`, reusing the pixmap's memory.
+pub fn into_rgba_unmultiplied(p: Pixmap) -> image::RgbaImage {
+    let (w, h) = (p.width(), p.height());
+    let mut data = p.take();
     for px in data.as_chunks_mut::<4>().0.iter_mut() {
         let a = px[3] as u32;
         if a > 0 && a < 255 {
@@ -699,7 +776,7 @@ pub fn to_rgba_unmultiplied(p: &Pixmap) -> image::RgbaImage {
             }
         }
     }
-    image::RgbaImage::from_raw(p.width(), p.height(), data).expect("rgba image")
+    image::RgbaImage::from_raw(w, h, data).expect("rgba image")
 }
 
 pub const SAVE_FORMATS: &[(&str, &[&str])] = &[
@@ -731,7 +808,7 @@ pub fn can_save(path: &std::path::Path) -> bool {
 /// Save in the format given by the extension (PNG if unknown). The file is encoded in
 /// memory and then replaces the old one in one step, so a failed save never leaves a
 /// truncated or empty file behind.
-pub fn save(p: &Pixmap, path: &std::path::Path) -> Result<(), String> {
+pub fn save(p: Pixmap, path: &std::path::Path) -> Result<(), String> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -742,27 +819,33 @@ pub fn save(p: &Pixmap, path: &std::path::Path) -> Result<(), String> {
 }
 
 /// Encode as `ext` (PNG if unknown).
-pub fn encode(p: &Pixmap, ext: &str) -> image::ImageResult<Vec<u8>> {
+pub fn encode(p: Pixmap, ext: &str) -> image::ImageResult<Vec<u8>> {
     use image::ImageFormat as F;
-    let rgba = to_rgba_unmultiplied(p);
-    let flatten = || {
-        // Composite over white for formats without alpha.
-        let mut rgb = image::RgbImage::new(rgba.width(), rgba.height());
-        for (o, i) in rgb.pixels_mut().zip(rgba.pixels()) {
-            let a = i[3] as u32;
-            for k in 0..3 {
-                o[k] = ((i[k] as u32 * a + 255 * (255 - a)) / 255) as u8;
-            }
+    // Composite over white for formats without alpha. With premultiplied colors that
+    // is just adding the white that shows through.
+    let flatten = |p: &Pixmap| {
+        let mut rgb = Vec::with_capacity(p.data().len() / 4 * 3);
+        for px in p.data().as_chunks::<4>().0 {
+            let clear = 255 - px[3];
+            rgb.extend([px[0].saturating_add(clear), px[1].saturating_add(clear), px[2].saturating_add(clear)]);
         }
-        rgb
+        image::RgbImage::from_raw(p.width(), p.height(), rgb).expect("rgb image")
     };
     let mut out = std::io::Cursor::new(Vec::new());
     match ext {
         "jpg" | "jpeg" | "jpe" | "jfif" => {
             let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 95);
-            flatten().write_with_encoder(enc)?
+            flatten(&p).write_with_encoder(enc)?;
+            return Ok(out.into_inner());
         }
-        "bmp" | "dib" => flatten().write_to(&mut out, F::Bmp)?,
+        "bmp" | "dib" => {
+            flatten(&p).write_to(&mut out, F::Bmp)?;
+            return Ok(out.into_inner());
+        }
+        _ => {}
+    }
+    let rgba = into_rgba_unmultiplied(p);
+    match ext {
         "ico" => {
             let (w, h) = (rgba.width(), rgba.height());
             let img = if w > 256 || h > 256 {
@@ -894,6 +977,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stroke_commit_matches_the_preview() {
+        let mut base = new_pixmap(8, 8, Color32::TRANSPARENT);
+        let mut layer = new_pixmap(8, 8, Color32::TRANSPARENT);
+        for (i, px) in base.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let a = (i * 37 % 256) as u8;
+            *px = [a / 2, a / 3, a, a];
+        }
+        for (i, px) in layer.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let a = (i * 91 % 256) as u8;
+            *px = [a, a / 4, a / 2, a];
+        }
+        let r = IRect::new(1, 2, 7, 8);
+        for (erase, opacity) in [(false, 1.0), (false, 0.4), (true, 1.0)] {
+            let mut preview = base.clone();
+            if erase {
+                erase_region(&mut preview, &base, &layer, r);
+            } else {
+                composite_region(&mut preview, &base, &layer, opacity, r);
+            }
+            let mut committed = base.clone();
+            commit_stroke(&mut committed, &layer, opacity, erase, r);
+            assert_eq!(preview.data(), committed.data(), "erase {erase}, opacity {opacity}");
+        }
+    }
+
+    #[test]
+    fn exact_copies_clip_at_every_edge() {
+        let mut src = new_pixmap(4, 3, Color32::TRANSPARENT);
+        for y in 0..3 {
+            for x in 0..4 {
+                set_pixel(&mut src, x, y, Color32::from_rgb(x as u8 * 10, y as u8 * 10, 7).to_array());
+            }
+        }
+        for (ox, oy) in [(-2, -1), (0, 0), (3, 2), (5, 0), (-4, 0), (1, -3)] {
+            let mut dst = new_pixmap(5, 4, Color32::RED);
+            draw_exact(&mut dst, &src, ox, oy);
+            for y in 0..4 {
+                for x in 0..5 {
+                    let (sx, sy) = (x - ox, y - oy);
+                    let want = if (0..4).contains(&sx) && (0..3).contains(&sy) {
+                        Color32::from_rgb(sx as u8 * 10, sy as u8 * 10, 7)
+                    } else {
+                        Color32::RED
+                    };
+                    assert_eq!(get_pixel(&dst, x, y).unwrap(), want, "offset {ox},{oy} at {x},{y}");
+                }
+            }
+        }
+        // copy_rect past the picture's edge leaves transparency there.
+        let c = copy_rect(&src, IRect::new(2, 1, 6, 5));
+        assert_eq!(get_pixel(&c, 0, 0).unwrap(), Color32::from_rgb(20, 10, 7));
+        assert_eq!(get_pixel(&c, 3, 3).unwrap(), Color32::TRANSPARENT);
+    }
+
+    #[test]
     fn empty_and_huge_pictures_are_rejected() {
         assert!(from_rgba_unmultiplied(0, 0, Vec::new()).is_none());
         assert!(from_rgba_unmultiplied(2, 2, vec![0; 3]).is_none());
@@ -917,10 +1055,10 @@ mod tests {
         let f = dir.join("pic.webp");
         std::fs::write(&f, b"old contents").unwrap();
         // WebP can't be wider than 16383 pixels: encoding fails before anything is written.
-        assert!(save(&new_pixmap(17000, 1, Color32::RED), &f).is_err());
+        assert!(save(new_pixmap(17000, 1, Color32::RED), &f).is_err());
         assert_eq!(std::fs::read(&f).unwrap(), b"old contents");
         // A good save replaces it and leaves no temporary files behind.
-        save(&new_pixmap(4, 4, Color32::RED), &f).unwrap();
+        save(new_pixmap(4, 4, Color32::RED), &f).unwrap();
         assert!(load(&f).is_ok());
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
@@ -936,7 +1074,7 @@ mod tests {
         std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
         let link = dir.join("link.png");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        save(&new_pixmap(3, 3, Color32::RED), &link).unwrap();
+        save(new_pixmap(3, 3, Color32::RED), &link).unwrap();
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "the link stays a link");
         assert!(load(&real).is_ok(), "the file it points to was replaced");
         assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o600);
@@ -949,7 +1087,7 @@ mod tests {
     fn gif_puts_partial_alpha_on_white() {
         let mut p = new_pixmap(2, 1, Color32::TRANSPARENT);
         set_pixel(&mut p, 1, 0, Color32::from_rgba_unmultiplied(255, 0, 0, 64).to_array());
-        let data = encode(&p, "gif").unwrap();
+        let data = encode(p, "gif").unwrap();
         let img = image::load_from_memory(&data).unwrap().to_rgba8();
         assert_eq!(img.get_pixel(0, 0)[3], 0, "transparent stays transparent");
         let px = img.get_pixel(1, 0);
