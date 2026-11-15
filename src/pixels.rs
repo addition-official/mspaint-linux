@@ -631,6 +631,17 @@ pub fn check_size(w: u32, h: u32) -> Result<(), String> {
 }
 
 pub fn load(path: &std::path::Path) -> Result<Pixmap, String> {
+    // Only regular files: reading a FIFO or device would block or never end.
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("This is not a picture file.".into());
+    }
+    // A decoder bug must not take the user's unsaved work down with it (image-webp
+    // panics on some malformed animated files): report it like any unreadable file.
+    std::panic::catch_unwind(|| decode_file(path)).unwrap_or_else(|_| Err("The file is damaged or not a supported picture.".into()))
+}
+
+fn decode_file(path: &std::path::Path) -> Result<Pixmap, String> {
     let mut reader = image::ImageReader::open(path)
         .map_err(|e| e.to_string())?
         .with_guessed_format()
@@ -638,15 +649,21 @@ pub fn load(path: &std::path::Path) -> Result<Pixmap, String> {
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_SIDE);
     limits.max_image_height = Some(MAX_SIDE);
-    limits.max_alloc = Some(MAX_PIXELS * 4 + (16 << 20));
-    reader.limits(limits);
+    // Room for 16-bit RGBA at the largest allowed size.
+    limits.max_alloc = Some(MAX_PIXELS * 8 + (16 << 20));
+    reader.limits(limits.clone());
     let too_large = |e: image::ImageError| match e {
         image::ImageError::Limits(_) => "The picture is too large to open.".to_string(),
         e => e.to_string(),
     };
     let mut decoder = reader.into_decoder().map_err(too_large)?;
-    // Phone photos are often stored sideways with an EXIF orientation tag.
     use image::ImageDecoder;
+    // Check the declared size before decoding: not every decoder enforces the
+    // allocation limit itself, so a tiny file could otherwise claim gigabytes.
+    let (w, h) = decoder.dimensions();
+    check_size(w, h)?;
+    limits.reserve(decoder.total_bytes()).map_err(too_large)?;
+    // Phone photos are often stored sideways with an EXIF orientation tag.
     let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
     let mut img = image::DynamicImage::from_decoder(decoder).map_err(too_large)?;
     img.apply_orientation(orientation);
@@ -777,20 +794,37 @@ pub fn encode(p: &Pixmap, ext: &str) -> image::ImageResult<Vec<u8>> {
     Ok(out.into_inner())
 }
 
-/// Write `data` to a new file next to `path`, sync it, and rename it over `path`.
-/// A symlink is followed so the file it points to is replaced, not the link.
+/// Write `data` to a new file next to the target, sync it, and rename it over the
+/// target, so a failed save never leaves a damaged file. An existing target is opened
+/// normally first: the kernel then applies its usual checks (write permission, and
+/// protected_symlinks for links planted in shared folders like /tmp) before we touch it,
+/// and a symlink is resolved by the kernel, not by us.
 fn write_replacing(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
-    let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    use std::os::unix::io::AsRawFd;
+    let existing = match std::fs::OpenOptions::new().write(true).open(path) {
+        Ok(f) => Some(f),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    // The file the kernel actually opened (through any symlink).
+    let target = existing
+        .as_ref()
+        .and_then(|f| std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd())).ok())
+        .unwrap_or_else(|| path.to_path_buf());
+    let old_meta = existing.as_ref().map(|f| f.metadata()).transpose()?;
     let dir = match target.parent() {
         Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
         _ => std::path::PathBuf::from("."),
     };
     let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    // Private until it has the target's permissions; a new file gets the usual umask.
+    let create_mode = if old_meta.is_some() { 0o600 } else { 0o666 };
     let mut created = None;
     for i in 0..100 {
         let tmp = dir.join(format!(".{name}.{}-{i}.tmp", std::process::id()));
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+        match std::fs::OpenOptions::new().write(true).create_new(true).mode(create_mode).open(&tmp) {
             Ok(f) => {
                 created = Some((tmp, f));
                 break;
@@ -801,17 +835,23 @@ fn write_replacing(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
         }
     }
     let Some((tmp, mut f)) = created else {
-        // The folder isn't writable but the file may be: write it in place. The data is
+        // The folder isn't writable but the file is: rewrite it in place. The data is
         // already encoded, so only an I/O error can leave it incomplete, and that is reported.
-        let mut f = std::fs::OpenOptions::new().write(true).truncate(true).create(true).open(&target)?;
+        let mut f = match existing {
+            Some(f) => f,
+            None => return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+        };
+        f.set_len(0)?;
         f.write_all(data)?;
         return f.sync_all();
     };
     let res = (|| {
-        f.write_all(data)?;
-        if let Ok(meta) = std::fs::metadata(&target) {
-            f.set_permissions(meta.permissions())?;
+        if let Some(m) = &old_meta {
+            f.set_permissions(std::fs::Permissions::from_mode(m.mode() & 0o7777))?;
+            // Keep the owner when we're allowed to (e.g. saving as root); ignore failure.
+            let _ = std::os::unix::fs::fchown(&f, Some(m.uid()), Some(m.gid()));
         }
+        f.write_all(data)?;
         f.sync_all()?;
         drop(f);
         std::fs::rename(&tmp, &target)
@@ -883,6 +923,25 @@ mod tests {
         save(&new_pixmap(4, 4, Color32::RED), &f).unwrap();
         assert!(load(&f).is_ok());
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_keeps_permissions_and_symlinks() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("mspaint-perm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("real.png");
+        std::fs::write(&real, b"old").unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.join("link.png");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        save(&new_pixmap(3, 3, Color32::RED), &link).unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "the link stays a link");
+        assert!(load(&real).is_ok(), "the file it points to was replaced");
+        assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o600);
+        // Not a regular file: refused instead of blocking.
+        assert!(load(&dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

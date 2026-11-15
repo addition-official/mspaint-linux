@@ -333,6 +333,9 @@ impl PaintApp {
                 let s = self.s.clone();
                 self.doc.render_overlay(&s, &mut self.fm);
                 self.doc.commit_overlay(&s);
+            } else {
+                // A double-click without a polygon to close: nothing to keep.
+                self.doc.cancel_overlay();
             }
             self.drag = None;
             return;

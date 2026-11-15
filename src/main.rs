@@ -78,7 +78,7 @@ fn main() -> eframe::Result {
                 println!("mspaint-linux {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
-            Some(s) if s.starts_with("file://") => open = Some(PathBuf::from(&s[7..])),
+            Some(s) if s.starts_with("file://") => open = desktop::path_from_uri(s),
             _ => open = Some(PathBuf::from(arg)),
         }
     }

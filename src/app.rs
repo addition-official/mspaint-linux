@@ -180,7 +180,8 @@ pub struct PaintApp {
     allow_close: bool,
     pub zoom_fit_pending: bool,
     pub active_slot: u8,
-    system_dark: Option<bool>,
+    /// The desktop's light/dark preference, kept current by `desktop::watch_dark`.
+    system_dark: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     pub system_titlebar: bool,
     decorations_applied: Option<bool>,
     pub on_window_edge: bool,
@@ -190,11 +191,12 @@ pub struct PaintApp {
     last_title: String,
     /// The next menu item drawn takes keyboard focus (menu opened from the keyboard).
     pub focus_first_item: bool,
+    /// "Don't save" was chosen: the next New/Open/Exit skips the save prompt.
+    skip_save_prompt: bool,
     /// A menu or drop-down was open at the start of this frame (see `click_sense`).
     pub popup_was_open: bool,
     /// The mouse button that started the current drag.
     pub drag_button: egui::PointerButton,
-    system_checked: f64,
     pub show_layers: bool,
     /// The Settings page is shown instead of the toolbar and canvas.
     pub show_settings: bool,
@@ -274,6 +276,7 @@ impl PaintApp {
             last_title: String::new(),
             drag_button: egui::PointerButton::Primary,
             popup_was_open: false,
+            skip_save_prompt: false,
             focus_first_item: false,
             show_layers: p.layers,
             show_settings: false,
@@ -290,7 +293,6 @@ impl PaintApp {
             canvas_cursor: None,
             v_press_seen: false,
             zoom_accum: 1.0,
-            system_checked: 0.0,
         };
         if let Some(path) = open {
             app.open_path(path);
@@ -503,7 +505,15 @@ impl PaintApp {
 
     fn paste(&mut self) {
         let Some(cb) = &mut self.clipboard else { return };
-        let pix = match cb.get_image() {
+        // A file copied in a file manager: paste the picture it holds.
+        let copied_file = cb.get().file_list().ok().and_then(|l| l.into_iter().next());
+        // Decoding clipboard data can hit decoder bugs too (see pixels::load).
+        let image = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cb.get_image()));
+        let pix = match image.unwrap_or(Err(arboard::Error::ContentNotAvailable)) {
+            _ if copied_file.as_ref().is_some_and(|p| p.is_file()) => match pixels::load(copied_file.as_ref().unwrap()) {
+                Ok(p) => p,
+                Err(_) => return,
+            },
             Ok(img) => {
                 let (w, h) = (img.width as u32, img.height as u32);
                 if let Err(e) = pixels::check_size(w, h) {
@@ -518,13 +528,7 @@ impl PaintApp {
             Err(_) => {
                 // Maybe a file path / URI to an image was copied (e.g. from Dolphin).
                 let Ok(text) = cb.get_text() else { return };
-                let Some(path) = text
-                    .lines()
-                    .next()
-                    .map(|l| l.trim().trim_start_matches("file://").to_string())
-                    .map(PathBuf::from)
-                    .filter(|p| p.is_file())
-                else {
+                let Some(path) = text.lines().next().and_then(desktop::path_from_uri).filter(|p| p.is_file()) else {
                     return;
                 };
                 match pixels::load(&path) {
@@ -551,9 +555,18 @@ impl PaintApp {
     }
 
     pub fn run_action(&mut self, ctx: &egui::Context, a: Action) {
-        if self.doc.has_unsaved_work() && Self::needs_save_prompt(&a) {
+        // "Don't save" lets the next such action through once, without touching the
+        // document: if Open is then cancelled or fails, the work is still there.
+        if Self::needs_save_prompt(&a) && !std::mem::take(&mut self.skip_save_prompt) && self.doc.has_unsaved_work() {
             self.dialog = Some(Dialog::Unsaved(a));
             return;
+        }
+        // An action while the mouse is still drawing ends the stroke first, so the rest of
+        // it can't continue with reset settings (e.g. an eraser painting color 2).
+        if matches!(self.drag, Some(Drag::Stroke { .. })) {
+            self.drag = None;
+            self.stroke_ctx = None;
+            self.doc.end_stroke();
         }
         let s = self.s.clone();
         match a {
@@ -764,12 +777,24 @@ impl PaintApp {
 
     /// Set the image as desktop background (KDE Plasma, GNOME and others; see `desktop`).
     fn set_wallpaper(&mut self, mode: &str) {
+        if !desktop::can_set_wallpaper() {
+            self.dialog = Some(Dialog::Message(
+                "Paint can set the desktop background on KDE Plasma, GNOME, Cinnamon, MATE, Xfce and LXQt. \
+                 On this desktop, set it in your desktop's own settings."
+                    .into(),
+            ));
+            return;
+        }
         self.doc.commit_overlay(&self.s);
-        let dir = std::env::var_os("XDG_DATA_HOME")
+        // The user's own data folder (never a shared one like /tmp).
+        let Some(data) = std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-            .unwrap_or_else(std::env::temp_dir)
-            .join("mspaint-linux");
+        else {
+            self.dialog = Some(Dialog::Message("Could not find your data folder to keep the wallpaper in.".into()));
+            return;
+        };
+        let dir = data.join("mspaint-linux");
         let _ = std::fs::create_dir_all(&dir);
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -780,22 +805,28 @@ impl PaintApp {
             self.dialog = Some(Dialog::Message(format!("Could not write the wallpaper image.\n\n{e}")));
             return;
         }
-        // Remove older wallpapers we created (the desktop keeps its own reference to the new one).
-        if let Ok(rd) = std::fs::read_dir(&dir) {
-            for e in rd.flatten() {
-                let p = e.path();
-                if p != path && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("wallpaper-")) {
-                    let _ = std::fs::remove_file(p);
-                }
-            }
-        }
         let fit = match mode {
             "tile" => desktop::Fit::Tile,
             "center" => desktop::Fit::Center,
             _ => desktop::Fit::Fill,
         };
         if let Err(e) = desktop::set_wallpaper(&path, fit) {
+            // The desktop still shows the previous wallpaper: keep its file.
+            let _ = std::fs::remove_file(&path);
             self.dialog = Some(Dialog::Message(format!("Could not set the desktop background.\n\n{e}")));
+            return;
+        }
+        // Now the desktop uses the new picture, remove older wallpaper files we created.
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                let ours = p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("wallpaper-"));
+                // Only regular files (symlink_metadata does not follow links).
+                let file = std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_file());
+                if p != path && ours && file {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
         }
     }
 
@@ -803,7 +834,9 @@ impl PaintApp {
     // Keyboard
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() || self.modal_open() {
+        // An open menu or drop-down owns the keyboard (arrows, Enter, Esc): keys must not
+        // also nudge or delete a selection, switch tools or commit a text box.
+        if ctx.egui_wants_keyboard_input() || self.modal_open() || self.popup_was_open {
             return;
         }
         // Text box typing takes priority; Ctrl+B/I/U format the text.
@@ -1393,7 +1426,7 @@ impl PaintApp {
                     }
                     Some(1) => {
                         keep = false;
-                        self.doc.forget_changes();
+                        self.skip_save_prompt = true;
                         let a = if *action == Action::Exit { Action::ForceExit } else { action.clone() };
                         self.push(a);
                     }
@@ -1774,18 +1807,13 @@ impl PaintApp {
             ThemePref::Light => false,
             ThemePref::Dark => true,
             ThemePref::System => {
-                // Re-check the desktop's light/dark preference every few seconds so we follow changes live.
-                let now = ctx.input(|i| i.time);
-                if self.system_dark.is_none() || now - self.system_checked > 3.0 {
-                    self.system_checked = now;
-                    self.system_dark = Some(
-                        desktop::prefers_dark()
-                            .or_else(|| ctx.system_theme().map(|t| t == egui::Theme::Dark))
-                            .unwrap_or(false),
-                    );
+                // A background thread follows the desktop's preference (and repaints on change).
+                let watch = self.system_dark.get_or_insert_with(|| desktop::watch_dark(ctx.clone()));
+                match watch.load(std::sync::atomic::Ordering::Relaxed) {
+                    2 => true,
+                    1 => false,
+                    _ => ctx.system_theme() == Some(egui::Theme::Dark),
                 }
-                ctx.request_repaint_after(std::time::Duration::from_secs(3));
-                self.system_dark.unwrap_or(false)
             }
         };
         if self.applied_dark != Some(dark) {

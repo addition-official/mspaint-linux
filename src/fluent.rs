@@ -115,6 +115,9 @@ pub fn slider(ui: &mut Ui, pal: &Palette, value: &mut f32, range: RangeInclusive
         target = Some(lo + t.clamp(0.0, 1.0) * (hi - lo));
     }
     if resp.has_focus() {
+        // Keep focus here while the arrow keys adjust the value (egui would move focus).
+        let filter = egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() };
+        ui.memory_mut(|m| m.set_focus_lock_filter(resp.id, filter));
         // Whole units for sizes and percentages; 1% of the range for small ranges.
         let step = if hi - lo >= 20.0 { 1.0 } else { (hi - lo) / 100.0 };
         let (up, down) = ui.input(|i| {

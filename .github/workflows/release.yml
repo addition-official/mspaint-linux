@@ -1,8 +1,9 @@
 name: Release
 
-# Builds every package (.deb, .rpm, AppImage, .tar.gz) and publishes them as a GitHub
-# release named after the version in Cargo.toml. Run it from the Actions tab (Run
-# workflow), or push a tag like v0.3.1.
+# Builds every package (.deb, .rpm, AppImage, .tar.gz, plus SHA256SUMS) and publishes
+# them as a new GitHub release named after the version in Cargo.toml. Run it on main
+# from the Actions tab (Run workflow), or push a tag like v0.3.1. It never replaces the
+# files of a release that already exists: bump the version first.
 on:
   workflow_dispatch:
   push:
@@ -13,6 +14,7 @@ permissions:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Built on an older base (glibc 2.35) so the packages also run on older
     # distributions, e.g. Ubuntu 22.04 and Debian 12.
@@ -26,7 +28,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.99.0
-      - uses: Swatinem/rust-cache@v2
+      # No build cache: release packages are built from scratch.
       - run: cargo test
       - name: Packaging tools
         run: |
@@ -58,9 +60,10 @@ jobs:
           notes="- **Debian, Ubuntu, Linux Mint, Pop!_OS:** download the .deb, then \`sudo apt install ./mspaint-linux_${version}-1_amd64.deb\`
           - **Fedora, openSUSE:** download the .rpm, then \`sudo dnf install ./mspaint-linux-${version}-1.x86_64.rpm\` (openSUSE: \`sudo zypper install\`)
           - **Any distribution:** download the .AppImage, make it executable (\`chmod +x\`) and run it.
-          - **Or:** unpack the .tar.gz and run \`./install.sh\`."
+          - **Or:** unpack the .tar.gz and run \`./install.sh\`.
+          - **Check a download:** \`sha256sum -c SHA256SUMS --ignore-missing\` in the download folder."
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/* --clobber
-          else
-            gh release create "$tag" dist/* --title "Paint $version" --notes "$notes" --target "$GITHUB_SHA"
+            echo "Release $tag already exists. Bump the version in Cargo.toml to make a new one." >&2
+            exit 1
           fi
+          gh release create "$tag" dist/* --title "Paint $version" --notes "$notes" --target "$GITHUB_SHA"

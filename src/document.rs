@@ -1239,12 +1239,6 @@ impl Document {
             }
     }
 
-    /// "Don't save": drop pending work so the document no longer counts as unsaved.
-    pub fn forget_changes(&mut self) {
-        self.overlay = Overlay::None;
-        self.clear_float_layer();
-        self.saved_state = Some(self.state);
-    }
 }
 
 pub fn irect_to_rect(r: IRect) -> Rect {

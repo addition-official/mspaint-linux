@@ -339,14 +339,21 @@ pub fn render(layer: &mut Pixmap, kind: ShapeKind, geom: &Geom, sp: &ShapeParams
     if dirty.is_empty() {
         return dirty;
     }
+    // Whole-pixel geometry, so straight edges land on pixel boundaries.
+    let rp = |p: Pos2| p.round();
     let (closed_polys, open_line): (Vec<Vec<Pos2>>, Option<Vec<Pos2>>) = match geom {
-        Geom::Boxed(r) => (polygons(kind, *r), None),
-        Geom::Line(a, c) => (vec![], Some(vec![*a, *c])),
-        Geom::Curve(a, c1, c2, d) => (vec![], Some(curve_points(*a, *c1, *c2, *d))),
-        Geom::Polygon(pts, true) => (vec![pts.clone()], None),
-        Geom::Polygon(pts, false) => (vec![], Some(pts.clone())),
+        Geom::Boxed(r) => (polygons(kind, Rect::from_min_max(rp(r.min), rp(r.max))), None),
+        Geom::Line(a, c) => (vec![], Some(vec![rp(*a), rp(*c)])),
+        Geom::Curve(a, c1, c2, d) => (vec![], Some(curve_points(rp(*a), rp(*c1), rp(*c2), rp(*d)))),
+        Geom::Polygon(pts, true) => (vec![pts.iter().copied().map(rp).collect()], None),
+        Geom::Polygon(pts, false) => (vec![], Some(pts.iter().copied().map(rp).collect())),
     };
     let t = Transform::from_translate(-dirty.x0 as f32, -dirty.y0 as f32);
+    // An odd-width outline centered on a pixel boundary would cover two half-lit pixel
+    // rows (a 1px line drawn as 2px of gray): center it on pixels instead, like Paint.
+    let width = sp.width.max(1.0).round();
+    let half = if width as i32 % 2 == 1 { 0.5 } else { 0.0 };
+    let ts = Transform::from_translate(-dirty.x0 as f32 + half, -dirty.y0 as f32 + half);
     let draw_part = |layer: &mut Pixmap, style: ShapeStyle, color: Color32, f: &dyn Fn(&mut Pixmap)| {
         if style == ShapeStyle::None {
             return;
@@ -358,7 +365,7 @@ pub fn render(layer: &mut Pixmap, kind: ShapeKind, geom: &Geom, sp: &ShapeParams
         layer.draw_pixmap(dirty.x0, dirty.y0, tmp.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
     };
     let stroke = Stroke {
-        width: sp.width.max(1.0),
+        width,
         line_cap: LineCap::Round,
         line_join: if kind == ShapeKind::Rectangle { LineJoin::Miter } else { LineJoin::Round },
         ..Default::default()
@@ -369,7 +376,7 @@ pub fn render(layer: &mut Pixmap, kind: ShapeKind, geom: &Geom, sp: &ShapeParams
                 tmp.fill_path(&path, &paint_for(sp.fill_color, true), FillRule::Winding, t, None);
             });
             draw_part(layer, sp.outline, sp.outline_color, &|tmp| {
-                tmp.stroke_path(&path, &paint_for(sp.outline_color, true), &stroke, t, None);
+                tmp.stroke_path(&path, &paint_for(sp.outline_color, true), &stroke, ts, None);
             });
         }
     if let Some(line) = open_line {
@@ -382,7 +389,7 @@ pub fn render(layer: &mut Pixmap, kind: ShapeKind, geom: &Geom, sp: &ShapeParams
             // Lines and curves always use the outline color; "No outline" still draws them solid.
             let style = if sp.outline == ShapeStyle::None { ShapeStyle::Solid } else { sp.outline };
             draw_part(layer, style, sp.outline_color, &|tmp| {
-                tmp.stroke_path(&path, &paint_for(sp.outline_color, true), &stroke, t, None);
+                tmp.stroke_path(&path, &paint_for(sp.outline_color, true), &stroke, ts, None);
             });
         }
     }

@@ -3,7 +3,10 @@
 //! Cinnamon, MATE, Xfce and LXQt are supported.
 
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Desktop {
@@ -44,22 +47,96 @@ pub enum Fit {
     Center,
 }
 
+/// Run a desktop tool and wait for it, at most a few seconds: a tool that stays
+/// running (e.g. a file manager starting its desktop) must not freeze Paint.
 fn run(cmd: &str, args: &[&str]) -> Result<(), String> {
-    match Command::new(cmd).args(args).output() {
-        Ok(o) if o.status.success() => Ok(()),
-        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
-        Err(_) => Err(format!("{cmd} was not found.")),
+    use std::io::Read;
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| format!("{cmd} was not found."))?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(_)) => {
+                let mut err = String::new();
+                if let Some(mut s) = child.stderr.take() {
+                    let _ = s.read_to_string(&mut err);
+                }
+                return Err(if err.trim().is_empty() { format!("{cmd} failed.") } else { err.trim().to_string() });
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => {
+                // Still running: it has most likely done its job and kept going.
+                return Ok(());
+            }
+            Err(e) => return Err(e.to_string()),
+        }
     }
 }
 
 fn output(cmd: &str, args: &[&str]) -> Option<String> {
-    let o = Command::new(cmd).args(args).output().ok()?;
+    let o = Command::new(cmd).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// A file:// URI with the path percent-encoded (GNOME and Cinnamon cut a plain path at
+/// '#' and decode '%').
+pub fn file_uri(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut uri = String::from("file://");
+    for &b in path.as_os_str().as_bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+            uri.push(b as char);
+        } else {
+            uri.push_str(&format!("%{b:02X}"));
+        }
+    }
+    uri
+}
+
+/// The local path in a file:// URI (as file managers copy them), percent-decoded.
+/// Plain absolute paths are accepted too.
+pub fn path_from_uri(s: &str) -> Option<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let s = s.trim();
+    let rest = match s.strip_prefix("file://") {
+        Some(r) => r.strip_prefix("localhost").unwrap_or(r),
+        None if s.starts_with('/') => return Some(s.into()),
+        None => return None,
+    };
+    if !rest.starts_with('/') {
+        return None; // another host
+    }
+    let bytes = rest.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(v) = rest.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(v);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    Some(std::ffi::OsString::from_vec(out).into())
+}
+
+/// Whether Paint knows how to set the wallpaper on this desktop.
+pub fn can_set_wallpaper() -> bool {
+    current() != Desktop::Other
 }
 
 pub fn set_wallpaper(path: &Path, fit: Fit) -> Result<(), String> {
     let file = path.to_string_lossy();
-    let uri = format!("file://{file}");
+    let uri = file_uri(path);
     match current() {
         Desktop::Kde => {
             let mode = match fit {
@@ -110,9 +187,10 @@ pub fn set_wallpaper(path: &Path, fit: Fit) -> Result<(), String> {
             };
             let mut any = false;
             for p in props.lines().filter(|p| p.ends_with("/last-image")) {
-                run("xfconf-query", &["-c", "xfce4-desktop", "-p", p, "-s", &file])?;
+                // -n -t creates the property if it doesn't exist yet.
+                run("xfconf-query", &["-c", "xfce4-desktop", "-p", p, "-n", "-t", "string", "-s", &file])?;
                 let style_prop = p.replace("/last-image", "/image-style");
-                let _ = run("xfconf-query", &["-c", "xfce4-desktop", "-p", &style_prop, "-s", style]);
+                let _ = run("xfconf-query", &["-c", "xfce4-desktop", "-p", &style_prop, "-n", "-t", "int", "-s", style]);
                 any = true;
             }
             if any { Ok(()) } else { Err("No Xfce desktop backgrounds were found to change.".into()) }
@@ -133,13 +211,47 @@ pub fn set_wallpaper(path: &Path, fit: Fit) -> Result<(), String> {
     }
 }
 
-/// Whether the desktop prefers a dark theme, or None if it can't tell.
+/// Whether the desktop prefers a dark theme, or None if it can't tell. Runs desktop
+/// tools, so call it off the UI thread (see `watch_dark`).
 pub fn prefers_dark() -> Option<bool> {
-    match current() {
-        Desktop::Kde => crate::theme::kde_prefers_dark(),
-        Desktop::Gnome | Desktop::Cinnamon | Desktop::Mate | Desktop::Xfce | Desktop::Lxqt | Desktop::Other => {
-            gnome_prefers_dark().or_else(crate::theme::kde_prefers_dark)
+    let desktop = current();
+    if desktop == Desktop::Kde {
+        return crate::theme::kde_prefers_dark();
+    }
+    // The XDG portal's appearance setting is the common answer on modern desktops.
+    portal_prefers_dark().or_else(|| match desktop {
+        Desktop::Mate => theme_is_dark(output("gsettings", &["get", "org.mate.interface", "gtk-theme"])),
+        Desktop::Cinnamon => theme_is_dark(output("gsettings", &["get", "org.cinnamon.desktop.interface", "gtk-theme"])),
+        Desktop::Xfce => theme_is_dark(output("xfconf-query", &["-c", "xsettings", "-p", "/Net/ThemeName"])),
+        Desktop::Lxqt => {
+            let home = std::env::var_os("HOME")?;
+            let conf = std::fs::read_to_string(Path::new(&home).join(".config/lxqt/lxqt.conf")).ok()?;
+            theme_is_dark(conf.lines().find(|l| l.starts_with("theme=")).map(str::to_string))
         }
+        Desktop::Gnome | Desktop::Other => gnome_prefers_dark(),
+        Desktop::Kde => None,
+    })
+}
+
+fn theme_is_dark(name: Option<String>) -> Option<bool> {
+    name.map(|n| n.to_ascii_lowercase().contains("dark"))
+}
+
+/// org.freedesktop.appearance color-scheme: 1 = dark, 2 = light, 0 = no preference.
+fn portal_prefers_dark() -> Option<bool> {
+    let args = ["org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings"];
+    let value = output("busctl", &["--user", "call", args[0], args[1], args[2], "ReadOne", "ss", "org.freedesktop.appearance", "color-scheme"])
+        .or_else(|| {
+            output(
+                "gdbus",
+                &["call", "--session", "--dest", args[0], "--object-path", args[1], "--method", "org.freedesktop.portal.Settings.ReadOne", "org.freedesktop.appearance", "color-scheme"],
+            )
+        })?;
+    let n: u32 = value.chars().filter(char::is_ascii_digit).collect::<String>().parse().ok()?;
+    match n {
+        1 => Some(true),
+        2 => Some(false),
+        _ => None,
     }
 }
 
@@ -153,13 +265,52 @@ fn gnome_prefers_dark() -> Option<bool> {
             return Some(false);
         }
     }
-    let theme = output("gsettings", &["get", "org.gnome.desktop.interface", "gtk-theme"])?;
-    Some(theme.to_ascii_lowercase().contains("dark"))
+    theme_is_dark(output("gsettings", &["get", "org.gnome.desktop.interface", "gtk-theme"]))
+}
+
+/// Follow the desktop's light/dark preference on a background thread: checking runs
+/// desktop tools, which must not stall frames. The value is 0 (unknown), 1 (light) or
+/// 2 (dark); the UI is repainted when it changes.
+pub fn watch_dark(ctx: egui::Context) -> Arc<AtomicU8> {
+    let value = Arc::new(AtomicU8::new(0));
+    let shared = value.clone();
+    std::thread::Builder::new()
+        .name("theme-watch".into())
+        .spawn(move || {
+            loop {
+                let v = match prefers_dark() {
+                    Some(true) => 2,
+                    Some(false) => 1,
+                    None => 0,
+                };
+                if shared.swap(v, Ordering::Relaxed) != v {
+                    ctx.request_repaint();
+                }
+                std::thread::sleep(Duration::from_secs(3));
+            }
+        })
+        .ok();
+    value
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encodes_file_uris() {
+        assert_eq!(file_uri(Path::new("/home/a b/#1 50%.png")), "file:///home/a%20b/%231%2050%25.png");
+        assert_eq!(file_uri(Path::new("/tmp/é.png")), "file:///tmp/%C3%A9.png");
+    }
+
+    #[test]
+    fn decodes_file_uris() {
+        assert_eq!(path_from_uri("file:///home/a%20b/%231.png"), Some("/home/a b/#1.png".into()));
+        assert_eq!(path_from_uri("file://localhost/tmp/x.png"), Some("/tmp/x.png".into()));
+        assert_eq!(path_from_uri("/tmp/y.png"), Some("/tmp/y.png".into()));
+        assert_eq!(path_from_uri("file://server/x.png"), None);
+        assert_eq!(path_from_uri("hello"), None);
+    }
 
     #[test]
     fn detects_desktops() {

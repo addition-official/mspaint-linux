@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build every release package into dist/: .deb (Debian, Ubuntu, Mint), .rpm (Fedora,
 # openSUSE), an AppImage (any distribution) and a .tar.gz with the plain binary.
-# Needs cargo-deb and cargo-generate-rpm; appimagetool is downloaded unless
-# APPIMAGETOOL points at one.
+# Needs cargo-deb and cargo-generate-rpm; appimagetool (a pinned release, checked
+# against its SHA-256) is downloaded unless APPIMAGETOOL points at one.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -33,9 +33,13 @@ ln -s usr/bin/mspaint-linux "$appdir/AppRun"
 tool="${APPIMAGETOOL:-}"
 if [ -z "$tool" ]; then
     tool=dist/appimagetool
-    curl -fsSL -o "$tool" https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+    curl -fsSL -o "$tool" https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+    echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  $tool" | sha256sum -c -
     chmod +x "$tool"
 fi
 ARCH=x86_64 "$tool" --appimage-extract-and-run "$appdir" "dist/$name.AppImage"
 rm -rf "$appdir" dist/appimagetool
+
+# Checksums so downloads can be verified: sha256sum -c SHA256SUMS
+(cd dist && sha256sum -- *.deb *.rpm *.AppImage *.tar.gz > SHA256SUMS)
 ls -l dist
