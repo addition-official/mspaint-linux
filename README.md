@@ -185,7 +185,7 @@ Paintbox is an independent project inspired by the look and workflow of Windows 
 affiliated with or endorsed by Microsoft, and it uses no Microsoft code or assets. All icons are
 drawn in code.
 
-# A note on how this was built
+## A note on how this was built
 
 I used AI assistance to write most of the code for this project and this README. The idea, the
 direction, the design calls and the testing are mine: I compared it against the real Windows 11 Paint,
