@@ -1,0 +1,34 @@
+name: Flatpak
+
+# Builds the Flatpak from this checkout (the same way Flathub builds it, offline) and
+# uploads a paintbox.flatpak test bundle: download it from the run's artifacts, then
+# flatpak install --user paintbox.flatpak
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
+        with:
+          bundle: paintbox.flatpak
+          manifest-path: packaging/flatpak/io.github.addition_official.Paintbox.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+      # Flathub's own checks for the manifest and the built app (warnings only here).
+      - name: Flathub lint
+        continue-on-error: true
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.flatpak.Builder
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/io.github.addition_official.Paintbox.yml || true
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo repo || true

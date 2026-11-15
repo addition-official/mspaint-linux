@@ -12,6 +12,7 @@ mod fluent;
 mod icons;
 mod layers_panel;
 mod pixels;
+mod portal;
 mod ribbon;
 mod settings;
 mod shapes;

@@ -818,19 +818,21 @@ pub fn save(p: Pixmap, path: &std::path::Path) -> Result<(), String> {
     write_replacing(path, &data).map_err(|e| e.to_string())
 }
 
+/// RGB pixels on white, for formats (and printing) without transparency. With
+/// premultiplied colors that is just adding the white that shows through.
+pub fn rgb_on_white(p: &Pixmap) -> Vec<u8> {
+    let mut rgb = Vec::with_capacity(p.data().len() / 4 * 3);
+    for px in p.data().as_chunks::<4>().0 {
+        let clear = 255 - px[3];
+        rgb.extend([px[0].saturating_add(clear), px[1].saturating_add(clear), px[2].saturating_add(clear)]);
+    }
+    rgb
+}
+
 /// Encode as `ext` (PNG if unknown).
 pub fn encode(p: Pixmap, ext: &str) -> image::ImageResult<Vec<u8>> {
     use image::ImageFormat as F;
-    // Composite over white for formats without alpha. With premultiplied colors that
-    // is just adding the white that shows through.
-    let flatten = |p: &Pixmap| {
-        let mut rgb = Vec::with_capacity(p.data().len() / 4 * 3);
-        for px in p.data().as_chunks::<4>().0 {
-            let clear = 255 - px[3];
-            rgb.extend([px[0].saturating_add(clear), px[1].saturating_add(clear), px[2].saturating_add(clear)]);
-        }
-        image::RgbImage::from_raw(p.width(), p.height(), rgb).expect("rgb image")
-    };
+    let flatten = |p: &Pixmap| image::RgbImage::from_raw(p.width(), p.height(), rgb_on_white(p)).expect("rgb image");
     let mut out = std::io::Cursor::new(Vec::new());
     match ext {
         "jpg" | "jpeg" | "jpe" | "jfif" => {

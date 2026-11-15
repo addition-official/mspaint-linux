@@ -24,6 +24,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y fonts-noto-core
       - run: cargo clippy -- -D warnings
       - run: cargo test
+      - name: Flatpak crate list matches Cargo.lock
+        run: |
+          python3 packaging/flatpak/cargo-sources.py
+          git diff --exit-code packaging/flatpak/cargo-sources.json || { echo "Run python3 packaging/flatpak/cargo-sources.py and commit the result."; exit 1; }
       - name: Build .deb
         run: |
           cargo install cargo-deb --version 3.8.0 --locked

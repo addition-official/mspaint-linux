@@ -793,16 +793,24 @@ impl PaintApp {
             Action::ToggleThumbnail => self.show_thumbnail = !self.show_thumbnail,
             Action::Print => {
                 self.doc.commit_overlay(&s);
-                match list_printers() {
+                // Inside Flatpak there is no lp: the desktop's print dialog takes over.
+                let printers = if crate::portal::in_flatpak() { None } else { list_printers() };
+                match printers {
                     Some((printers, default)) if !printers.is_empty() => {
                         let landscape = self.doc.width() > self.doc.height();
                         self.dialog = Some(Dialog::Print(PrintState { printers, printer: default, copies: 1, fit: true, landscape }));
                     }
                     Some(_) => self.dialog = Some(Dialog::Message("No printers are set up. Add one in your system's printer settings.".into())),
                     None => {
-                        self.dialog = Some(Dialog::Message(
-                            "Printing needs CUPS (the lp and lpstat commands). Install the cups-client package (cups on Arch and openSUSE) with your package manager.".into(),
-                        ))
+                        let pic = self.doc.flattened();
+                        let pdf = crate::portal::picture_pdf(pic.width(), pic.height(), &pixels::rgb_on_white(&pic));
+                        if let Err(e) = crate::portal::print(&pdf, &self.doc.name()) {
+                            self.dialog = Some(Dialog::Message(if crate::portal::in_flatpak() {
+                                e
+                            } else {
+                                "Printing needs CUPS (the lp and lpstat commands). Install the cups-client package (cups on Arch and openSUSE) with your package manager.".into()
+                            }));
+                        }
                     }
                 }
             }

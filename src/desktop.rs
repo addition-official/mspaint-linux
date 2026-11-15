@@ -2,6 +2,7 @@
 //! reading the light/dark preference. KDE Plasma, GNOME (and Ubuntu, Budgie, Pantheon),
 //! Cinnamon, MATE, Xfce and LXQt are supported.
 
+use crate::portal;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, OnceLock};
@@ -155,29 +156,24 @@ fn x11_compositor_running() -> Option<bool> {
 pub fn file_dialog_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
-        let portal = ["org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.FileChooser"];
-        let busctl = Command::new("busctl")
-            .args(["--user", "get-property", portal[0], portal[1], portal[2], "version"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
         let in_path = |name: &str| {
             std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
         };
-        match busctl {
-            Ok(status) => status.success() || in_path("zenity"),
-            // Without busctl we can't tell: assume it works rather than block Open and Save.
-            Err(_) => true,
-        }
+        // Flatpak always has the portal.
+        portal::in_flatpak() || portal::has_file_chooser() || in_path("zenity")
     })
 }
 
 /// Whether Paint knows how to set the wallpaper on this desktop.
 pub fn can_set_wallpaper() -> bool {
-    current() != Desktop::Other
+    portal::in_flatpak() || current() != Desktop::Other
 }
 
 pub fn set_wallpaper(path: &Path, fit: Fit) -> Result<(), String> {
+    // The desktop tools aren't in the sandbox: ask the portal (which has no fit modes).
+    if portal::in_flatpak() {
+        return portal::set_wallpaper(path);
+    }
     let file = path.to_string_lossy();
     let uri = file_uri(path);
     match current() {
@@ -258,11 +254,14 @@ pub fn set_wallpaper(path: &Path, fit: Fit) -> Result<(), String> {
 /// tools, so call it off the UI thread (see `watch_dark`).
 pub fn prefers_dark() -> Option<bool> {
     let desktop = current();
-    if desktop == Desktop::Kde {
-        return crate::theme::kde_prefers_dark();
+    // Plasma's color scheme file (not readable from Flatpak, where the portal answers).
+    if desktop == Desktop::Kde
+        && let Some(dark) = crate::theme::kde_prefers_dark()
+    {
+        return Some(dark);
     }
     // The XDG portal's appearance setting is the common answer on modern desktops.
-    portal_prefers_dark().or_else(|| match desktop {
+    portal::prefers_dark().or_else(|| match desktop {
         Desktop::Mate => theme_is_dark(output("gsettings", &["get", "org.mate.interface", "gtk-theme"])),
         Desktop::Cinnamon => theme_is_dark(output("gsettings", &["get", "org.cinnamon.desktop.interface", "gtk-theme"])),
         Desktop::Xfce => theme_is_dark(output("xfconf-query", &["-c", "xsettings", "-p", "/Net/ThemeName"])),
@@ -278,24 +277,6 @@ pub fn prefers_dark() -> Option<bool> {
 
 fn theme_is_dark(name: Option<String>) -> Option<bool> {
     name.map(|n| n.to_ascii_lowercase().contains("dark"))
-}
-
-/// org.freedesktop.appearance color-scheme: 1 = dark, 2 = light, 0 = no preference.
-fn portal_prefers_dark() -> Option<bool> {
-    let args = ["org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings"];
-    let value = output("busctl", &["--user", "call", args[0], args[1], args[2], "ReadOne", "ss", "org.freedesktop.appearance", "color-scheme"])
-        .or_else(|| {
-            output(
-                "gdbus",
-                &["call", "--session", "--dest", args[0], "--object-path", args[1], "--method", "org.freedesktop.portal.Settings.ReadOne", "org.freedesktop.appearance", "color-scheme"],
-            )
-        })?;
-    let n: u32 = value.chars().filter(char::is_ascii_digit).collect::<String>().parse().ok()?;
-    match n {
-        1 => Some(true),
-        2 => Some(false),
-        _ => None,
-    }
 }
 
 /// GNOME's color scheme (GNOME 42+), else a theme name containing "dark".

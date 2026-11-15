@@ -67,6 +67,16 @@ pub fn hand_off(cb: &mut arboard::Clipboard, held: &Held) {
     if !held.still_on(cb) {
         return;
     }
+    // Inside Flatpak a child process would end with Paintbox's sandbox: the portal
+    // starts the helper in a sandbox of its own.
+    if crate::portal::in_flatpak() {
+        if let Ok((reader, mut writer)) = std::io::pipe()
+            && crate::portal::spawn_detached(&[FLAG], reader).is_ok()
+        {
+            let _ = writer.write_all(&held.encode());
+        }
+        return;
+    }
     // Inside an AppImage the binary lives on a mount that goes away when Paint
     // exits, so the helper is started from the AppImage file itself.
     let exe = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or_else(|| std::env::current_exe().ok());

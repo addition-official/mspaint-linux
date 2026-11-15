@@ -19,9 +19,12 @@ fontdb = "0.24.0"
 image = { version = "0.25.10", default-features = false, features = ["rayon", "png", "jpeg", "bmp", "gif", "tiff", "webp", "ico", "tga", "pnm", "qoi"] }
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
+flate2 = "1.1.10"
 tiny-skia = "0.12.0"
 # Already used by winit; here only to ask X11 whether a compositor is running.
 x11rb = { version = "0.13.2", default-features = false }
+# Talks to the XDG desktop portal (appearance, wallpaper, printing), also from inside Flatpak.
+zbus = { version = "5.19.0", default-features = false, features = ["blocking-api", "async-io"] }
 
 [profile.release]
 opt-level = 3
