@@ -1530,6 +1530,7 @@ dependencies = [
  "rfd",
  "serde",
  "tiny-skia",
+ "x11rb",
 ]
 
 [[package]]

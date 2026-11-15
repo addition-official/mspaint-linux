@@ -4,7 +4,7 @@
 
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
@@ -127,6 +127,49 @@ pub fn path_from_uri(s: &str) -> Option<std::path::PathBuf> {
         }
     }
     Some(std::ffi::OsString::from_vec(out).into())
+}
+
+/// Whether windows can have transparent (rounded) corners: always on Wayland, and on
+/// X11 only while a compositor runs. Without one the corners would show as black.
+pub fn has_compositor() -> bool {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        return true;
+    }
+    x11_compositor_running().unwrap_or(true)
+}
+
+fn x11_compositor_running() -> Option<bool> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt;
+    let (conn, screen) = x11rb::connect(None).ok()?;
+    let name = format!("_NET_WM_CM_S{screen}");
+    let atom = conn.intern_atom(false, name.as_bytes()).ok()?.reply().ok()?.atom;
+    let owner = conn.get_selection_owner(atom).ok()?.reply().ok()?.owner;
+    let _ = conn.flush();
+    Some(owner != x11rb::NONE)
+}
+
+/// Whether a file dialog can be shown: the XDG portal's FileChooser, or zenity (the two
+/// things the dialog library uses). Minimal window managers sometimes have neither, and
+/// then Open and Save would silently do nothing. Checked once.
+pub fn file_dialog_available() -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let portal = ["org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.FileChooser"];
+        let busctl = Command::new("busctl")
+            .args(["--user", "get-property", portal[0], portal[1], portal[2], "version"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let in_path = |name: &str| {
+            std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
+        };
+        match busctl {
+            Ok(status) => status.success() || in_path("zenity"),
+            // Without busctl we can't tell: assume it works rather than block Open and Save.
+            Err(_) => true,
+        }
+    })
 }
 
 /// Whether Paint knows how to set the wallpaper on this desktop.

@@ -20,6 +20,8 @@ image = { version = "0.25.10", default-features = false, features = ["rayon", "p
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 tiny-skia = "0.12.0"
+# Already used by winit; here only to ask X11 whether a compositor is running.
+x11rb = { version = "0.13.2", default-features = false }
 
 [profile.release]
 opt-level = 3
@@ -32,7 +34,7 @@ strip = true
 opt-level = 2
 
 [package.metadata.deb]
-maintainer = "mspaint-linux contributors"
+maintainer = "addition-official <addition-official@users.noreply.github.com>"
 section = "graphics"
 priority = "optional"
 extended-description = """\
@@ -41,21 +43,43 @@ Pencil, brushes, shapes, text, fill, color picker, selections, crop, \
 resize/skew, rotate/flip, zoom, rulers, gridlines and light/dark themes."""
 # $auto works out the minimum libc from the binary (built on an older base, so it runs
 # on older releases too); the rest are loaded at run time and can't be detected.
-depends = "$auto, libgl1, libegl1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-6, libxcursor1, libxrandr2, libxi6"
-recommends = "xdg-desktop-portal-kde | xdg-desktop-portal-gnome | xdg-desktop-portal-gtk"
+depends = "$auto, libgl1, libegl1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-egl1, libx11-6, libx11-xcb1, libxcursor1, libxi6"
+# The lightest portal first: apt installs the first alternative when none is present,
+# and KDE and GNOME systems already have their own.
+recommends = "xdg-desktop-portal-gtk | xdg-desktop-portal-kde | xdg-desktop-portal-gnome"
 assets = [
     ["target/release/mspaint-linux", "usr/bin/", "755"],
     ["assets/mspaint-linux.desktop", "usr/share/applications/", "644"],
     ["assets/mspaint-linux.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["assets/mspaint-linux.metainfo.xml", "usr/share/metainfo/", "644"],
     ["README.md", "usr/share/doc/mspaint-linux/README.md", "644"],
 ]
 
 # Fedora / openSUSE package (cargo generate-rpm).
 [package.metadata.generate-rpm]
 summary = "Windows 11 Paint style image editor"
+description = """\
+A clone of Windows 11 Paint for Linux: pencil, brushes, shapes, text, fill, color \
+picker, selections, crop, resize and skew, layers, background removal, rulers, \
+gridlines and light and dark themes."""
 assets = [
     { source = "target/release/mspaint-linux", dest = "/usr/bin/mspaint-linux", mode = "755" },
     { source = "assets/mspaint-linux.desktop", dest = "/usr/share/applications/mspaint-linux.desktop", mode = "644" },
     { source = "assets/mspaint-linux.svg", dest = "/usr/share/icons/hicolor/scalable/apps/mspaint-linux.svg", mode = "644" },
+    { source = "assets/mspaint-linux.metainfo.xml", dest = "/usr/share/metainfo/mspaint-linux.metainfo.xml", mode = "644" },
     { source = "README.md", dest = "/usr/share/doc/mspaint-linux/README.md", mode = "644", doc = true },
 ]
+
+# Libraries the binary loads at run time (so automatic detection can't see them), by
+# soname so the same package works on Fedora and openSUSE.
+[package.metadata.generate-rpm.requires]
+"libEGL.so.1()(64bit)" = "*"
+"libGL.so.1()(64bit)" = "*"
+"libxkbcommon.so.0()(64bit)" = "*"
+"libxkbcommon-x11.so.0()(64bit)" = "*"
+"libwayland-client.so.0()(64bit)" = "*"
+"libwayland-egl.so.1()(64bit)" = "*"
+"libX11.so.6()(64bit)" = "*"
+"libX11-xcb.so.1()(64bit)" = "*"
+"libXcursor.so.1()(64bit)" = "*"
+"libXi.so.6()(64bit)" = "*"

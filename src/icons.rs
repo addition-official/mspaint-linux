@@ -116,6 +116,30 @@ fn arc(p: &Painter, r: Rect, cx: f32, cy: f32, rad: f32, a0: f32, a1: f32, s: St
     p.add(Shape::line(pts, s));
 }
 
+/// Crisp thin lines at any display scale: whole physical pixels wide, centered on
+/// physical pixels. `at(x, y)` is an offset in points from a pixel-aligned center.
+struct Crisp {
+    c: Pos2,
+    ppp: f32,
+    width: f32,
+    half: f32,
+}
+
+impl Crisp {
+    fn new(p: &Painter, c: Pos2) -> Self {
+        let ppp = p.pixels_per_point();
+        let line_px = ppp.round().max(1.0);
+        let snap = |v: f32| (v * ppp).round() / ppp;
+        let half = if line_px as i32 % 2 == 1 { 0.5 / ppp } else { 0.0 };
+        Self { c: pos2(snap(c.x), snap(c.y)), ppp, width: line_px / ppp, half }
+    }
+
+    fn at(&self, x: f32, y: f32) -> Pos2 {
+        let snap = |v: f32| (v * self.ppp).round() / self.ppp;
+        pos2(self.c.x + snap(x) + self.half, self.c.y + snap(y) + self.half)
+    }
+}
+
 /// Paint `icon` inside `r` with foreground `fg` and accent color `accent`.
 pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
     let w = (r.width() / 24.0 * 1.5).max(1.0);
@@ -178,22 +202,20 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
             p.rect_stroke(Rect::from_min_max(g(r, 8.0, 7.0), g(r, 19.0, 21.0)), 2.0, s, StrokeKind::Middle);
             pl(p, r, &[(5.0, 17.0), (5.0, 5.0), (7.0, 3.0), (15.0, 3.0)], s);
         }
-        // Caption glyphs: 10px and pixel-snapped like Windows (1px lines on .5 coordinates).
+        // Caption glyphs: 10px and pixel-snapped like Windows, at any display scale.
         Icon::Minimize => {
-            let c = r.center().round();
-            p.line_segment([pos2(c.x - 5.0, c.y + 0.5), pos2(c.x + 5.0, c.y + 0.5)], Stroke::new(1.0, fg));
+            let k = Crisp::new(p, r.center());
+            p.line_segment([k.at(-5.0, 0.0), k.at(5.0, 0.0)], Stroke::new(k.width, fg));
         }
         Icon::Maximize => {
-            let c = r.center().round();
-            let sq = Rect::from_min_max(pos2(c.x - 4.5, c.y - 4.5), pos2(c.x + 4.5, c.y + 4.5));
-            p.rect_stroke(sq, 1.0, Stroke::new(1.0, fg), StrokeKind::Middle);
+            let k = Crisp::new(p, r.center());
+            p.rect_stroke(Rect::from_min_max(k.at(-5.0, -5.0), k.at(4.0, 4.0)), 1.0, Stroke::new(k.width, fg), StrokeKind::Middle);
         }
         Icon::Restore => {
-            let c = r.center().round();
-            let front = Rect::from_min_max(pos2(c.x - 4.5, c.y - 2.5), pos2(c.x + 2.5, c.y + 4.5));
-            p.rect_stroke(front, 1.0, Stroke::new(1.0, fg), StrokeKind::Middle);
-            let back = [pos2(c.x - 2.5, c.y - 4.5), pos2(c.x + 4.5, c.y - 4.5), pos2(c.x + 4.5, c.y + 2.5)];
-            p.add(Shape::line(back.to_vec(), Stroke::new(1.0, fg)));
+            let k = Crisp::new(p, r.center());
+            p.rect_stroke(Rect::from_min_max(k.at(-5.0, -3.0), k.at(2.0, 4.0)), 1.0, Stroke::new(k.width, fg), StrokeKind::Middle);
+            let back = vec![k.at(-3.0, -5.0), k.at(4.0, -5.0), k.at(4.0, 2.0)];
+            p.add(Shape::line(back, Stroke::new(k.width, fg)));
         }
         Icon::Close => {
             pl(p, r, &[(6.5, 6.5), (17.5, 17.5)], Stroke::new(1.0, fg));

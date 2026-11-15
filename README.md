@@ -53,13 +53,13 @@ included.
 
 Download the file for your system from the
 [latest release](https://github.com/addition-official/mspaint-linux/releases/latest) (64-bit; any
-distribution from about 2022 on). No Rust needed.
+distribution from about 2022 on, with glibc 2.35 or newer). No Rust needed.
 
 | System | File | Install |
 | --- | --- | --- |
 | Ubuntu, Debian, Linux Mint, Pop!_OS, Kubuntu | `.deb` | `sudo apt install ./mspaint-linux_*_amd64.deb` |
 | Fedora | `.rpm` | `sudo dnf install ./mspaint-linux-*.x86_64.rpm` |
-| openSUSE | `.rpm` | `sudo zypper install ./mspaint-linux-*.x86_64.rpm` |
+| openSUSE Tumbleweed | `.rpm` | `sudo zypper install ./mspaint-linux-*.x86_64.rpm` |
 | Any distribution (Arch, Manjaro, Void, ...) | `.AppImage` | `chmod +x mspaint-linux-*.AppImage`, then run it (or double-click it) |
 | Any distribution, installed to your home folder | `.tar.gz` | unpack it, then run `./install.sh` inside |
 

@@ -70,7 +70,7 @@ impl PaintApp {
 
         // Live size preview in the middle of the canvas while adjusting the size.
         if preview {
-            let r = self.s.size() * self.zoom / 2.0;
+            let r = self.s.size() * self.view_scale() / 2.0;
             let c = self.viewport.center();
             let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("size_preview")));
             p.circle_filled(c, r.max(1.0), self.s.color1.gamma_multiply(0.85));

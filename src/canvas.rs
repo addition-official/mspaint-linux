@@ -164,7 +164,7 @@ impl PaintApp {
     }
 
     fn shape_frame_pad(&self) -> f32 {
-        let stroke = if self.s.outline == ShapeStyle::None { 0.0 } else { self.s.shape_size * self.zoom / 2.0 };
+        let stroke = if self.s.outline == ShapeStyle::None { 0.0 } else { self.s.shape_size * self.view_scale() / 2.0 };
         stroke + 3.0
     }
 
@@ -172,7 +172,7 @@ impl PaintApp {
         let full = ui.available_rect_before_wrap();
         let ruler = if self.show_rulers { 20.0 } else { 0.0 };
         let area = Rect::from_min_max(full.min + vec2(ruler, ruler), full.max);
-        let img_size = vec2(self.doc.width() as f32, self.doc.height() as f32) * self.zoom;
+        let img_size = vec2(self.doc.width() as f32, self.doc.height() as f32) * self.view_scale();
         let content = vec2(
             area.width().max(img_size.x + 2.0 * MARGIN),
             area.height().max(img_size.y + 2.0 * MARGIN),
@@ -181,7 +181,7 @@ impl PaintApp {
 
         let mut sa = egui::ScrollArea::both().id_salt("canvas_scroll").auto_shrink(false);
         if let Some((img_pt, anchor)) = self.pending_zoom_anchor.take() {
-            let want = area.min.to_vec2() + offset + img_pt.to_vec2() * self.zoom - anchor.to_vec2();
+            let want = area.min.to_vec2() + offset + img_pt.to_vec2() * self.view_scale() - anchor.to_vec2();
             let max = (content - area.size()).max(Vec2::ZERO);
             sa = sa.scroll_offset(want.clamp(Vec2::ZERO, max));
         } else if let Some(s) = self.pending_scroll.take() {
@@ -280,7 +280,7 @@ impl PaintApp {
     }
 
     fn canvas_input(&mut self, ui: &Ui, resp: &Response, img: Rect) {
-        let z = self.zoom;
+        let z = self.view_scale();
         let to_img = |p: Pos2| ((p - img.min) / z).to_pos2();
         let to_scr = |p: Pos2| img.min + p.to_vec2() * z;
         let drag_button = self.drag_button;
@@ -515,7 +515,7 @@ impl PaintApp {
     /// Returns true if the press was consumed by the active overlay.
     #[allow(clippy::too_many_arguments)]
     fn overlay_press(&mut self, p: Pos2, p_scr: Pos2, to_scr: impl Fn(Pos2) -> Pos2, dbl: bool, ctrl: bool, shift: bool) -> bool {
-        let z = self.zoom;
+        let z = self.view_scale();
         let frame_pad = self.shape_frame_pad();
         match &mut self.doc.overlay {
             Overlay::Float(f) => {
@@ -891,7 +891,7 @@ impl PaintApp {
 
     /// The tool's own cursor at image point `c`.
     fn tool_cursor(&self, c: Pos2, to_scr: impl Fn(Pos2) -> Pos2) -> CanvasCursor {
-        let z = self.zoom;
+        let z = self.view_scale();
         match self.s.tool {
             Tool::Pencil | Tool::Brush => CanvasCursor::Circle { diameter: self.s.size() * z },
             Tool::Eraser => {
@@ -970,7 +970,7 @@ impl PaintApp {
     fn canvas_paint(&mut self, ui: &Ui, img: Rect) {
         let pal = self.pal;
         let p = ui.painter();
-        let z = self.zoom;
+        let z = self.view_scale();
         let to_scr = |q: Pos2| img.min + q.to_vec2() * z;
 
         // Drop shadow.
@@ -1117,7 +1117,7 @@ impl PaintApp {
     }
 
     fn paint_grid(&self, p: &egui::Painter, img: Rect) {
-        let z = self.zoom;
+        let z = self.view_scale();
         let step = [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0]
             .into_iter()
             .find(|s| s * z >= 8.0)
@@ -1151,7 +1151,7 @@ impl PaintApp {
         let bg = if pal.dark { Color32::from_gray(36) } else { Color32::WHITE };
         p.rect_filled(top, 0.0, bg);
         p.rect_filled(left, 0.0, bg);
-        let z = self.zoom;
+        let z = self.view_scale();
         let img = self.image_rect;
         let major = [1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0]
             .into_iter()
@@ -1167,7 +1167,9 @@ impl PaintApp {
             if x >= top.min.x + size {
                 let is_major = (v / major).round() * major == v;
                 let len = if is_major { size * 0.6 } else { size * 0.25 };
-                p.line_segment([pos2(x, top.max.y - len), pos2(x, top.max.y)], tick);
+                // On a physical pixel center, so 1px ticks stay sharp at fractional scales.
+                let xs = p.round_to_pixel_center(x);
+                p.line_segment([pos2(xs, top.max.y - len), pos2(xs, top.max.y)], tick);
                 if is_major {
                     p.text(pos2(x + 2.0, top.min.y + 1.0), egui::Align2::LEFT_TOP, format!("{}", v as i64), font.clone(), pal.text_dim);
                 }
@@ -1181,7 +1183,8 @@ impl PaintApp {
             if y >= left.min.y + size {
                 let is_major = (v / major).round() * major == v;
                 let len = if is_major { size * 0.6 } else { size * 0.25 };
-                p.line_segment([pos2(left.max.x - len, y), pos2(left.max.x, y)], tick);
+                let ys = p.round_to_pixel_center(y);
+                p.line_segment([pos2(left.max.x - len, ys), pos2(left.max.x, ys)], tick);
                 if is_major {
                     // Rotated to read bottom to top, below the tick, like Windows.
                     let g = p.layout_no_wrap(format!("{}", v as i64), font.clone(), pal.text_dim);

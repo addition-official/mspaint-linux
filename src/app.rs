@@ -191,6 +191,12 @@ pub struct PaintApp {
     pub corner: u8,
     /// Window title last sent to the window manager.
     last_title: String,
+    /// The window size was checked against the screen (see `ui`).
+    size_checked: bool,
+    /// Whether a compositor runs (for rounded corners), and when that was checked.
+    compositor: Option<(bool, f64)>,
+    /// Physical pixels per screen point (display scaling), see `view_scale`.
+    pub ppp: f32,
     /// Rows of the open menus drawn this frame, for arrow-key navigation.
     pub menu_rows: Vec<(egui::Id, egui::LayerId)>,
     /// The next menu item drawn takes keyboard focus (menu opened from the keyboard).
@@ -286,6 +292,9 @@ impl PaintApp {
             keyboard_was_owned: false,
             focus_first_item: false,
             menu_rows: Vec::new(),
+            ppp: 1.0,
+            compositor: None,
+            size_checked: false,
             show_layers: p.layers,
             show_settings: false,
             checker_tex: None,
@@ -330,13 +339,22 @@ impl PaintApp {
     // -----------------------------------------------------------------------
     // Zoom
 
+    /// Screen points per picture pixel. The zoom shown to the user is `self.zoom`; on
+    /// screen it is rounded to whole physical pixels at 100% and above, so with fractional
+    /// display scaling (125%, 150%) every picture pixel still covers the same number of
+    /// screen pixels and pixel art stays even and sharp.
+    pub fn view_scale(&self) -> f32 {
+        let device = self.zoom * self.ppp;
+        if device >= 1.0 { device.round() / self.ppp } else { self.zoom }
+    }
+
     pub fn set_zoom(&mut self, z: f32, anchor_screen: Option<Pos2>) {
         let z = z.clamp(ZOOM_MIN, ZOOM_MAX);
         if (z - self.zoom).abs() < 1e-6 {
             return;
         }
         let anchor = anchor_screen.unwrap_or(self.viewport.center());
-        let img_pt = ((anchor - self.image_rect.min) / self.zoom).to_pos2();
+        let img_pt = ((anchor - self.image_rect.min) / self.view_scale()).to_pos2();
         self.zoom = z;
         self.pending_zoom_anchor = Some((img_pt, anchor));
     }
@@ -357,12 +375,30 @@ impl PaintApp {
             self.zoom_fit_pending = true;
             return;
         }
-        let z = (avail.x / self.doc.width() as f32).min(avail.y / self.doc.height() as f32);
-        self.set_zoom(z.clamp(ZOOM_MIN, 1.0), None);
+        let mut z = (avail.x / self.doc.width() as f32).min(avail.y / self.doc.height() as f32).clamp(ZOOM_MIN, 1.0);
+        // Whole physical pixels round down here, so the picture still fits (see view_scale).
+        if z * self.ppp >= 1.0 {
+            z = (z * self.ppp).floor() / self.ppp;
+        }
+        self.set_zoom(z, None);
     }
 
     // -----------------------------------------------------------------------
     // Files
+
+    /// False (with a message saying what to install) when no file dialog can be shown.
+    fn file_dialog_ok(&mut self) -> bool {
+        if desktop::file_dialog_available() {
+            return true;
+        }
+        self.dialog = Some(Dialog::Message(
+            "No file dialog is available on this system. Install xdg-desktop-portal-gtk (or zenity) with your \
+             package manager, log out and back in, then try again. Meanwhile you can open a picture by \
+             dropping it on the window or passing it on the command line."
+                .into(),
+        ));
+        false
+    }
 
     fn add_recent(&mut self, p: PathBuf) {
         self.recent.retain(|x| x != &p);
@@ -417,6 +453,9 @@ impl PaintApp {
             self.doc.path.as_ref().and_then(|p| p.extension()).and_then(|e| e.to_str()).unwrap_or("png")
         });
         let ext = ext.to_ascii_lowercase();
+        if !self.file_dialog_ok() {
+            return false;
+        }
         let mut dlg = rfd::FileDialog::new().set_title("Save as").set_file_name(format!("{base}.{ext}"));
         if let Some(d) = self.start_dir() {
             dlg = dlg.set_directory(d);
@@ -550,7 +589,7 @@ impl PaintApp {
 
     fn paste_pixmap(&mut self, pix: tiny_skia::Pixmap) {
         // Paste at the top-left of the visible part of the canvas.
-        let vis = ((self.viewport.min - self.image_rect.min) / self.zoom).max(Vec2::ZERO).to_pos2();
+        let vis = ((self.viewport.min - self.image_rect.min) / self.view_scale()).max(Vec2::ZERO).to_pos2();
         self.set_tool(Tool::Select);
         self.doc.paste(&self.s, pix, vis);
     }
@@ -585,6 +624,9 @@ impl PaintApp {
                 self.drag = None;
             }
             Action::Open => {
+                if !self.file_dialog_ok() {
+                    return;
+                }
                 let mut dlg = Self::open_filter(rfd::FileDialog::new().set_title("Open"));
                 if let Some(d) = self.start_dir() {
                     dlg = dlg.set_directory(d);
@@ -595,6 +637,9 @@ impl PaintApp {
             }
             Action::OpenPath(p) => self.open_path(p),
             Action::Import => {
+                if !self.file_dialog_ok() {
+                    return;
+                }
                 let mut dlg = Self::open_filter(rfd::FileDialog::new().set_title("Import to canvas"));
                 if let Some(d) = self.start_dir() {
                     dlg = dlg.set_directory(d);
@@ -754,7 +799,7 @@ impl PaintApp {
                     Some(_) => self.dialog = Some(Dialog::Message("No printers are set up. Add one in your system's printer settings.".into())),
                     None => {
                         self.dialog = Some(Dialog::Message(
-                            "Printing needs CUPS (the lp and lpstat commands). Install the cups package with your distribution's package manager.".into(),
+                            "Printing needs CUPS (the lp and lpstat commands). Install the cups-client package (cups on Arch and openSUSE) with your package manager.".into(),
                         ))
                     }
                 }
@@ -1823,8 +1868,8 @@ impl PaintApp {
                     t.paint(ui.painter(), r);
                 }
                 // The part of the picture currently visible.
-                let vis_min = ((self.viewport.min - self.image_rect.min) / self.zoom).max(Vec2::ZERO);
-                let vis_max = ((self.viewport.max - self.image_rect.min) / self.zoom).min(vec2(w, h));
+                let vis_min = ((self.viewport.min - self.image_rect.min) / self.view_scale()).max(Vec2::ZERO);
+                let vis_max = ((self.viewport.max - self.image_rect.min) / self.view_scale()).min(vec2(w, h));
                 let vr = Rect::from_min_max(r.min + vis_min * scale, r.min + vis_max * scale);
                 ui.painter().rect_stroke(vr, 0.0, egui::Stroke::new(1.5, self.pal.accent), egui::StrokeKind::Inside);
                 if (resp.clicked() || resp.dragged())
@@ -2012,6 +2057,18 @@ impl eframe::App for PaintApp {
         let ctx = ui.ctx().clone();
         self.apply_theme(&ctx);
         self.popup_was_open = egui::Popup::is_any_open(&ctx);
+        self.ppp = ctx.pixels_per_point();
+        // Once at startup: a window taller or wider than the screen (the default size on a
+        // small or scaled display) is shrunk to fit, so the status bar isn't off-screen.
+        if !self.size_checked
+            && let Some((monitor, inner)) = ctx.input(|i| Some((i.viewport().monitor_size?, i.viewport().inner_rect?.size())))
+        {
+            self.size_checked = true;
+            if inner.x > monitor.x * 0.95 || inner.y > monitor.y * 0.9 {
+                let fit = vec2(inner.x.min(monitor.x * 0.9), inner.y.min(monitor.y * 0.85));
+                ctx.send_viewport_cmd(ViewportCommand::InnerSize(fit));
+            }
+        }
         self.menu_arrow_keys(&ctx);
 
         // Closing with unsaved changes asks first.
@@ -2038,7 +2095,13 @@ impl eframe::App for PaintApp {
         // window whenever we own the decorations and the window isn't maximized/fullscreen.
         let (maximized, fullscreen) =
             ctx.input(|i| (i.viewport().maximized.unwrap_or(false), i.viewport().fullscreen.unwrap_or(false)));
-        self.corner = if self.system_titlebar || maximized || fullscreen { 0 } else { WINDOW_RADIUS };
+        // Checked every few seconds: a compositor can start or stop while Paint runs.
+        let now = ctx.input(|i| i.time);
+        if self.compositor.is_none_or(|(_, at)| now - at > 5.0) {
+            self.compositor = Some((desktop::has_compositor(), now));
+        }
+        let composited = self.compositor.is_some_and(|(c, _)| c);
+        self.corner = if self.system_titlebar || maximized || fullscreen || !composited { 0 } else { WINDOW_RADIUS };
         self.on_window_edge = self.window_edges(&ctx);
         if !self.system_titlebar {
             let r = self.corner;
