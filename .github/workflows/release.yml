@@ -40,8 +40,32 @@ jobs:
           name: packages
           path: dist/*
 
+  # The Flatpak, as a single file people can install with `flatpak install`.
+  flatpak:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
+        with:
+          bundle: paintbox.flatpak
+          manifest-path: packaging/flatpak/io.github.addition_official.Paintbox.yml
+          cache: false
+          upload-artifact: false
+      - name: Name the bundle after the version
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          mkdir -p dist && mv paintbox.flatpak "dist/paintbox-$version-x86_64.flatpak"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: flatpak
+          path: dist/*
+
   publish:
-    needs: build
+    needs: [build, flatpak]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -49,8 +73,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: packages
           path: dist
+          merge-multiple: true
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,8 +84,11 @@ jobs:
           notes="- **Debian, Ubuntu, Linux Mint, Pop!_OS:** download the .deb, then \`sudo apt install ./paintbox_${version}-1_amd64.deb\`
           - **Fedora, openSUSE:** download the .rpm, then \`sudo dnf install ./paintbox-${version}-1.x86_64.rpm\` (openSUSE: \`sudo zypper install\`)
           - **Any distribution:** download the .AppImage, make it executable (\`chmod +x\`) and run it.
+          - **Flatpak (any distribution):** download the .flatpak, then \`flatpak install --user ./paintbox-${version}-x86_64.flatpak\`
           - **Or:** unpack the .tar.gz and run \`./install.sh\`.
           - **Check a download:** \`sha256sum -c SHA256SUMS --ignore-missing\` in the download folder."
+          # Checksums for every file, the Flatpak included.
+          (cd dist && rm -f SHA256SUMS && sha256sum -- * > SHA256SUMS)
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists. Bump the version in Cargo.toml to make a new one." >&2
             exit 1

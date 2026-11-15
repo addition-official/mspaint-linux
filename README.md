@@ -60,6 +60,7 @@ distribution from about 2022 on, with glibc 2.35 or newer). No Rust needed.
 | Ubuntu, Debian, Linux Mint, Pop!_OS, Kubuntu | `.deb` | `sudo apt install ./paintbox_*_amd64.deb` |
 | Fedora | `.rpm` | `sudo dnf install ./paintbox-*.x86_64.rpm` |
 | openSUSE Tumbleweed, Leap 15.6 | `.rpm` | `sudo zypper install ./paintbox-*.x86_64.rpm` |
+| Any distribution, with Flatpak (sandboxed) | `.flatpak` | `flatpak install --user ./paintbox-*.flatpak` (needs the [Flathub remote](https://flathub.org/setup) for its runtime) |
 | Any distribution (Arch, Manjaro, Void, ...) | `.AppImage` | `chmod +x paintbox-*.AppImage`, then run it (or double-click it) |
 | Any distribution, installed to your home folder | `.tar.gz` | unpack it, then run `./install.sh` inside |
 
