@@ -30,7 +30,8 @@ impl PaintApp {
         let mut preview = false;
         egui::Area::new(egui::Id::new("tool_sliders"))
             .fixed_pos(pos)
-            .order(egui::Order::Foreground)
+            // Above the canvas, below menus and drop-downs.
+            .order(egui::Order::Middle)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .corner_radius(12)

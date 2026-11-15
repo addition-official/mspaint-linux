@@ -1,10 +1,10 @@
 //! Text tool: system font discovery (fontconfig paths via fontdb) and rasterization.
 
 use crate::pixels::{IRect, max_pixel, new_pixmap, paint_for};
-use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
+use ab_glyph::{Font, FontVec, PxScale, ScaleFont, VariableFont};
 use egui::{Color32, Pos2, Rect, pos2};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -46,8 +46,63 @@ impl TextStyle {
 pub struct FontManager {
     db: fontdb::Database,
     pub families: Vec<String>,
-    cache: HashMap<(String, bool, bool), Option<Arc<FontVec>>>,
+    cache: HashMap<(String, bool, bool), Option<Arc<FontSet>>>,
+    fallbacks: Arc<Fallbacks>,
 }
+
+/// Fonts tried, in order, for characters the chosen font doesn't have (CJK, Arabic,
+/// symbols...). They are big, so they are read from disk only when first needed.
+struct Fallbacks {
+    sources: Vec<(std::path::PathBuf, u32)>,
+    loaded: OnceLock<Vec<FontVec>>,
+}
+
+impl Fallbacks {
+    fn fonts(&self) -> &[FontVec] {
+        self.loaded.get_or_init(|| {
+            self.sources
+                .iter()
+                .filter_map(|(path, index)| FontVec::try_from_vec_and_index(std::fs::read(path).ok()?, *index).ok())
+                .collect()
+        })
+    }
+}
+
+/// The chosen font plus the fallbacks for characters it lacks.
+pub struct FontSet {
+    pub main: FontVec,
+    fallbacks: Arc<Fallbacks>,
+}
+
+impl FontSet {
+    /// The font to draw `c` with: the chosen one if it has the character, else the first
+    /// fallback that does.
+    pub fn for_char(&self, c: char) -> &FontVec {
+        if c.is_control() || c == ' ' || self.main.glyph_id(c).0 != 0 {
+            return &self.main;
+        }
+        self.fallbacks.fonts().iter().find(|f| f.glyph_id(c).0 != 0).unwrap_or(&self.main)
+    }
+}
+
+const FALLBACK_FAMILIES: &[&str] = &[
+    "Noto Sans CJK SC",
+    "Noto Sans CJK JP",
+    "Noto Sans CJK KR",
+    "Source Han Sans SC",
+    "WenQuanYi Zen Hei",
+    "WenQuanYi Micro Hei",
+    "Droid Sans Fallback",
+    "IPAGothic",
+    "Noto Sans Arabic",
+    "Noto Sans Hebrew",
+    "Noto Sans Devanagari",
+    "Noto Sans Thai",
+    "Noto Sans Symbols",
+    "Noto Sans Symbols2",
+    "DejaVu Sans",
+    "Unifont",
+];
 
 impl FontManager {
     pub fn new() -> Self {
@@ -59,7 +114,18 @@ impl FontManager {
             .collect();
         families.sort_by_key(|a| a.to_lowercase());
         families.dedup();
-        Self { db, families, cache: HashMap::new() }
+        let sources = FALLBACK_FAMILIES
+            .iter()
+            .filter_map(|fam| {
+                let face = db.faces().find(|f| f.families.iter().any(|(n, _)| n == fam))?;
+                match &face.source {
+                    fontdb::Source::File(path) | fontdb::Source::SharedFile(path, _) => Some((path.clone(), face.index)),
+                    fontdb::Source::Binary(_) => None,
+                }
+            })
+            .collect();
+        let fallbacks = Arc::new(Fallbacks { sources, loaded: OnceLock::new() });
+        Self { db, families, cache: HashMap::new(), fallbacks }
     }
 
     /// A sensible default family for this desktop (most distributions ship Noto Sans).
@@ -89,16 +155,19 @@ impl FontManager {
         self.db.query(&q).or_else(|| self.db.faces().next().map(|f| f.id))
     }
 
-    pub fn font(&mut self, family: &str, bold: bool, italic: bool) -> Option<Arc<FontVec>> {
+    pub fn font(&mut self, family: &str, bold: bool, italic: bool) -> Option<Arc<FontSet>> {
         let key = (family.to_string(), bold, italic);
         if let Some(f) = self.cache.get(&key) {
             return f.clone();
         }
         let font = self.query(family, bold, italic).and_then(|id| {
-            self.db
-                .with_face_data(id, |d, i| FontVec::try_from_vec_and_index(d.to_vec(), i).ok())
-                .flatten()
-                .map(Arc::new)
+            let mut font = self.db.with_face_data(id, |d, i| FontVec::try_from_vec_and_index(d.to_vec(), i).ok()).flatten()?;
+            // A variable font (e.g. Fedora's Noto Sans) is one face for every weight:
+            // ask it for bold instead of getting the regular weight back.
+            if bold && self.db.face(id).is_some_and(|f| f.weight.0 < 600) {
+                font.set_variation(b"wght", 700.0);
+            }
+            Some(Arc::new(FontSet { main: font, fallbacks: self.fallbacks.clone() }))
         });
         self.cache.insert(key, font.clone());
         font
@@ -122,11 +191,14 @@ pub fn em_scale(font: &FontVec, px: f32) -> PxScale {
 }
 
 /// Greedy word-wrap layout within `width`.
-pub fn layout(font: &FontVec, px: f32, text: &str, origin: Pos2, width: f32, align: u8) -> Layout {
-    let sf = font.as_scaled(em_scale(font, px));
+pub fn layout(fonts: &FontSet, px: f32, text: &str, origin: Pos2, width: f32, align: u8) -> Layout {
+    let sf = fonts.main.as_scaled(em_scale(&fonts.main, px));
     let line_height = sf.height() + sf.line_gap();
     let chars: Vec<char> = text.chars().collect();
-    let adv = |c: char| sf.h_advance(font.glyph_id(c));
+    let adv = |c: char| {
+        let f = fonts.for_char(c);
+        f.as_scaled(em_scale(f, px)).h_advance(f.glyph_id(c))
+    };
     let mut caret = Vec::with_capacity(chars.len() + 1);
     let mut lines = Vec::new();
     let mut x = 0.0f32;
@@ -203,12 +275,11 @@ pub fn render(
         && let Some(r) = tiny_skia::Rect::from_ltrb(rect.min.x, rect.min.y, rect.max.x, rect.max.y) {
             layer.fill_rect(r, &paint_for(bg, false), Transform::identity(), None);
         }
-    let Some(font) = fm.font(&style.family, style.bold, style.italic) else { return dirty };
+    let Some(fonts) = fm.font(&style.family, style.bold, style.italic) else { return dirty };
     let px = style.px();
-    let lay = layout(&font, px, text, rect.min, rect.width(), style.align);
-    let scale = em_scale(&font, px);
-    let sf = font.as_scaled(scale);
-    let ascent = sf.ascent();
+    let lay = layout(&fonts, px, text, rect.min, rect.width(), style.align);
+    // The chosen font sets the baseline; fallback glyphs sit on it.
+    let ascent = fonts.main.as_scaled(em_scale(&fonts.main, px)).ascent();
     let chars: Vec<char> = text.chars().collect();
     // Render glyphs into a temporary pixmap clipped to the text box.
     let w = rect.width().ceil().max(1.0) as u32;
@@ -219,8 +290,8 @@ pub fn render(
             continue;
         }
         let p = lay.caret[i];
-        let gid = font.glyph_id(c);
-        let glyph = gid.with_scale_and_position(scale, ab_glyph::point(p.x - rect.min.x, p.y - rect.min.y + ascent));
+        let font = fonts.for_char(c);
+        let glyph = font.glyph_id(c).with_scale_and_position(em_scale(font, px), ab_glyph::point(p.x - rect.min.x, p.y - rect.min.y + ascent));
         if let Some(og) = font.outline_glyph(glyph) {
             let bb = og.px_bounds();
             og.draw(|gx, gy, cov| {
@@ -235,7 +306,8 @@ pub fn render(
         }
         let x0 = lay.caret[s].x - rect.min.x;
         let last = e - 1;
-        let x1 = lay.caret[last].x - rect.min.x + sf.h_advance(font.glyph_id(chars[last]));
+        let last_font = fonts.for_char(chars[last]);
+        let x1 = lay.caret[last].x - rect.min.x + last_font.as_scaled(em_scale(last_font, px)).h_advance(last_font.glyph_id(chars[last]));
         let mut bar = |yy: f32| {
             if let Some(r) = tiny_skia::Rect::from_xywh(x0, yy, (x1 - x0).max(0.5), thickness) {
                 tmp.fill_rect(r, &paint_for(color, true), Transform::identity(), None);

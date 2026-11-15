@@ -10,7 +10,7 @@ use crate::pixels;
 use crate::text::FontManager;
 use crate::theme::{self, Palette, ThemePref};
 use crate::tiles::TiledTexture;
-use crate::tools::Tool;
+use crate::tools::{SelectMode, Tool};
 use egui::{
     Align, Button, Color32, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Rect, RichText, Sense, TextureHandle,
     TextureOptions, Vec2, ViewportCommand, vec2,
@@ -133,6 +133,8 @@ pub enum Drag {
     Marquee { start: Pos2, cur: Pos2 },
     Lasso { pts: Vec<Pos2> },
     TextNew { start: Pos2, cur: Pos2 },
+    /// Selecting text in a text box with the mouse.
+    TextSelect,
     CanvasResize { handle: u8, size: Vec2, grab: Vec2 },
     Pan { last: Pos2 },
     /// Free-rotating the selection around `center`; `start` is the pointer angle at
@@ -189,8 +191,12 @@ pub struct PaintApp {
     pub corner: u8,
     /// Window title last sent to the window manager.
     last_title: String,
+    /// Rows of the open menus drawn this frame, for arrow-key navigation.
+    pub menu_rows: Vec<(egui::Id, egui::LayerId)>,
     /// The next menu item drawn takes keyboard focus (menu opened from the keyboard).
     pub focus_first_item: bool,
+    /// A text field had keyboard focus last frame (see `handle_keys`).
+    keyboard_was_owned: bool,
     /// "Don't save" was chosen: the next New/Open/Exit skips the save prompt.
     skip_save_prompt: bool,
     /// A menu or drop-down was open at the start of this frame (see `click_sense`).
@@ -277,7 +283,9 @@ impl PaintApp {
             drag_button: egui::PointerButton::Primary,
             popup_was_open: false,
             skip_save_prompt: false,
+            keyboard_was_owned: false,
             focus_first_item: false,
+            menu_rows: Vec::new(),
             show_layers: p.layers,
             show_settings: false,
             checker_tex: None,
@@ -292,7 +300,7 @@ impl PaintApp {
             edit_hsv: false,
             canvas_cursor: None,
             v_press_seen: false,
-            zoom_accum: 1.0,
+            zoom_accum: 0.0,
         };
         if let Some(path) = open {
             app.open_path(path);
@@ -836,11 +844,21 @@ impl PaintApp {
     fn handle_keys(&mut self, ctx: &egui::Context) {
         // An open menu or drop-down owns the keyboard (arrows, Enter, Esc): keys must not
         // also nudge or delete a selection, switch tools or commit a text box.
-        if ctx.egui_wants_keyboard_input() || self.modal_open() || self.popup_was_open {
+        // A text field that just let go of focus (Esc or Enter in the font size or zoom
+        // box) still sees that key this frame: it must not also reach the canvas.
+        let owned = ctx.egui_wants_keyboard_input();
+        let owned_before = std::mem::replace(&mut self.keyboard_was_owned, owned);
+        // The Settings page covers the canvas: its keys go nowhere else.
+        if owned || owned_before || self.modal_open() || self.popup_was_open || self.show_settings {
             return;
         }
         // Text box typing takes priority; Ctrl+B/I/U format the text.
-        if let Overlay::Text(_) = self.doc.overlay {
+        if let Overlay::Text(tb) = &mut self.doc.overlay {
+            // Ctrl+A selects the text in the box, not the whole canvas.
+            if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::A))) {
+                tb.anchor = Some(0);
+                tb.caret = tb.text.chars().count();
+            }
             for (key, field) in [(Key::B, 0), (Key::I, 1), (Key::U, 2)] {
                 if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, key))) {
                     let t = &mut self.s.text;
@@ -906,11 +924,14 @@ impl PaintApp {
             }
         }
         let (events, shift) = ctx.input(|i| (i.events.clone(), i.modifiers.shift));
+        let text_active = matches!(self.doc.overlay, Overlay::Text(_));
         for e in events {
             match e {
                 // egui-winit turns Ctrl+(Shift+)C/X into these events and sends no key
                 // event, so Ctrl+Shift+C (copy visible layers) and Ctrl+Shift+X (crop)
                 // are recognized here.
+                // In a text box these copy, cut and paste text (see text_input).
+                egui::Event::Copy | egui::Event::Cut if text_active => {}
                 egui::Event::Copy => self.push(if shift { Action::CopyVisible } else { Action::Copy }),
                 egui::Event::Cut => self.push(if shift { Action::Crop } else { Action::Cut }),
                 // egui swallows the key *press* of Ctrl+V (and only emits a Paste event when
@@ -918,6 +939,7 @@ impl PaintApp {
                 // without a matching press. Checking the modifiers on release is unreliable:
                 // Ctrl is often let go before V.
                 egui::Event::Key { key: Key::V, pressed: true, .. } => self.v_press_seen = true,
+                egui::Event::Key { key: Key::V, pressed: false, .. } if text_active => self.v_press_seen = false,
                 egui::Event::Key { key: Key::V, pressed: false, .. } => {
                     if !std::mem::take(&mut self.v_press_seen) {
                         self.push(Action::Paste);
@@ -926,7 +948,20 @@ impl PaintApp {
                 egui::Event::Key { key: Key::Delete | Key::Backspace, pressed: true, .. } => self.push(Action::DeleteSelection),
                 // Single-letter tool keys.
                 egui::Event::Key { key, pressed: true, modifiers, .. } if modifiers.is_none() && tool_for_key(key).is_some() => {
-                    self.push(Action::SetTool(tool_for_key(key).unwrap()));
+                    let tool = tool_for_key(key).unwrap();
+                    match (tool, self.s.tool) {
+                        // As in Paint: S again switches rectangle / free-form selection,
+                        // I again returns to the previous tool.
+                        (Tool::Select, Tool::Select) => {
+                            self.doc.commit_overlay(&self.s);
+                            self.s.select_mode = match self.s.select_mode {
+                                SelectMode::Rectangle => SelectMode::FreeForm,
+                                SelectMode::FreeForm => SelectMode::Rectangle,
+                            };
+                        }
+                        (Tool::Picker, Tool::Picker) => self.push(Action::SetTool(self.prev_tool)),
+                        _ => self.push(Action::SetTool(tool)),
+                    }
                 }
                 egui::Event::Key { key: Key::Escape, pressed: true, .. } => {
                     if matches!(self.drag, Some(Drag::ShapeNew { .. } | Drag::TextNew { .. })) {
@@ -965,54 +1000,103 @@ impl PaintApp {
 
     fn text_input(&mut self, ctx: &egui::Context) {
         let events = ctx.input(|i| i.events.clone());
+        // Layout for Up/Down (caret positions per line).
+        let lay = match (&self.doc.overlay, self.fm.font(&self.s.text.family, self.s.text.bold, self.s.text.italic)) {
+            (Overlay::Text(tb), Some(font)) => Some(crate::text::layout(&font, self.s.text.px(), &tb.text, tb.rect.min, tb.rect.width(), self.s.text.align)),
+            _ => None,
+        };
         let Overlay::Text(tb) = &mut self.doc.overlay else { return };
+        let mut to_clipboard = None;
         for e in events {
             let n = tb.text.chars().count();
             let byte = |t: &str, c: usize| t.char_indices().nth(c).map(|(b, _)| b).unwrap_or(t.len());
             match e {
-                egui::Event::Text(s) | egui::Event::Paste(s) => {
-                    // A typed word undoes as one step; a space or a paste starts a new one.
-                    tb.record(!s.contains(char::is_whitespace) && s.chars().count() == 1);
+                // Ctrl+C / Ctrl+X (egui turns them into these events) copy the selected text.
+                egui::Event::Copy | egui::Event::Cut => {
+                    if let Some(text) = tb.selected_text() {
+                        if matches!(e, egui::Event::Cut) {
+                            tb.record(false);
+                            tb.delete_selection();
+                        }
+                        to_clipboard = Some(text);
+                    }
+                }
+                // Input methods (fcitx, ibus) for Chinese, Japanese, Korean... commit text too.
+                egui::Event::Text(s) | egui::Event::Paste(s) | egui::Event::Ime(egui::ImeEvent::Commit(s)) => {
+                    // A typed word undoes as one step; a space, a paste or a replaced selection
+                    // starts a new one.
+                    let typing = !s.contains(char::is_whitespace) && s.chars().count() == 1 && tb.selection().is_none();
+                    tb.record(typing);
+                    tb.delete_selection();
                     let b = byte(&tb.text, tb.caret);
                     tb.text.insert_str(b, &s);
                     tb.caret += s.chars().count();
                 }
-                egui::Event::Key { key, pressed: true, modifiers, .. } if !modifiers.command => match key {
-                    Key::Backspace if tb.caret > 0 => {
-                        tb.record(false);
-                        let b = byte(&tb.text, tb.caret - 1);
-                        tb.text.remove(b);
-                        tb.caret -= 1;
+                egui::Event::Key { key, pressed: true, modifiers, .. } if !modifiers.command => {
+                    // Caret movement; with Shift it extends the selection.
+                    let line_start = |c: usize| {
+                        let before: Vec<char> = tb.text.chars().take(c).collect();
+                        before.iter().rposition(|ch| *ch == '\n').map(|p| p + 1).unwrap_or(0)
+                    };
+                    let line_end = |c: usize| tb.text.chars().skip(c).position(|ch| ch == '\n').map(|p| c + p).unwrap_or(n);
+                    let target = match key {
+                        Key::ArrowLeft => Some(match tb.selection() {
+                            Some((a, _)) if !modifiers.shift => a,
+                            _ => tb.caret.saturating_sub(1),
+                        }),
+                        Key::ArrowRight => Some(match tb.selection() {
+                            Some((_, b)) if !modifiers.shift => b,
+                            _ => (tb.caret + 1).min(n),
+                        }),
+                        Key::Home => Some(line_start(tb.caret)),
+                        Key::End => Some(line_end(tb.caret)),
+                        Key::ArrowUp | Key::ArrowDown => lay.as_ref().map(|lay| vertical_caret(lay, tb.caret, key == Key::ArrowUp, n)),
+                        _ => None,
+                    };
+                    if let Some(to) = target {
+                        if modifiers.shift {
+                            tb.anchor.get_or_insert(tb.caret);
+                        } else {
+                            tb.anchor = None;
+                        }
+                        tb.caret = to.min(n);
+                        continue;
                     }
-                    Key::Delete if tb.caret < n => {
-                        tb.record(false);
-                        let b = byte(&tb.text, tb.caret);
-                        tb.text.remove(b);
+                    match key {
+                        Key::Backspace | Key::Delete if tb.selection().is_some() => {
+                            tb.record(false);
+                            tb.delete_selection();
+                        }
+                        Key::Backspace if tb.caret > 0 => {
+                            tb.record(false);
+                            let b = byte(&tb.text, tb.caret - 1);
+                            tb.text.remove(b);
+                            tb.caret -= 1;
+                        }
+                        Key::Delete if tb.caret < n => {
+                            tb.record(false);
+                            let b = byte(&tb.text, tb.caret);
+                            tb.text.remove(b);
+                        }
+                        Key::Enter => {
+                            tb.record(false);
+                            tb.delete_selection();
+                            let b = byte(&tb.text, tb.caret);
+                            tb.text.insert(b, '\n');
+                            tb.caret += 1;
+                        }
+                        Key::Escape => {
+                            self.doc.commit_overlay(&self.s);
+                            return;
+                        }
+                        _ => {}
                     }
-                    Key::Enter => {
-                        tb.record(false);
-                        let b = byte(&tb.text, tb.caret);
-                        tb.text.insert(b, '\n');
-                        tb.caret += 1;
-                    }
-                    Key::ArrowLeft => tb.caret = tb.caret.saturating_sub(1),
-                    Key::ArrowRight => tb.caret = (tb.caret + 1).min(n),
-                    Key::Home => {
-                        let before: Vec<char> = tb.text.chars().take(tb.caret).collect();
-                        tb.caret = before.iter().rposition(|c| *c == '\n').map(|p| p + 1).unwrap_or(0);
-                    }
-                    Key::End => {
-                        let after = tb.text.chars().skip(tb.caret).position(|c| c == '\n');
-                        tb.caret = after.map(|p| tb.caret + p).unwrap_or(n);
-                    }
-                    Key::Escape => {
-                        self.doc.commit_overlay(&self.s);
-                        return;
-                    }
-                    _ => {}
-                },
+                }
                 _ => {}
             }
+        }
+        if let (Some(text), Some(cb)) = (to_clipboard, &mut self.clipboard) {
+            let _ = cb.set_text(text);
         }
         // Grow the box downward to fit the text.
         if let Overlay::Text(tb) = &mut self.doc.overlay
@@ -1119,6 +1203,9 @@ impl PaintApp {
                     ui.add_space(8.0);
                     let gear = self.icon_button(ui, Icon::Gear, true);
                     if gear.clicked() {
+                        // Finish what's on the canvas first: it is hidden while Settings is open.
+                        self.drag = None;
+                        self.doc.commit_overlay(&self.s);
                         self.show_settings = true;
                     }
                     gear.on_hover_text("Settings");
@@ -1143,13 +1230,31 @@ impl PaintApp {
                 self.focus_first_item = true;
             }
         }
-        if Popup::is_any_open(ctx) {
-            let (down, up) = ctx.input(|i| (i.key_pressed(Key::ArrowDown), i.key_pressed(Key::ArrowUp)));
-            if (down || up) && ctx.memory(|m| m.focused().is_none()) {
-                // Nothing focused yet: start at the first item (egui then moves focus).
-                self.focus_first_item = true;
-            }
+    }
+
+    /// Up/Down move through the rows of the open menu (wrapping), using the rows drawn
+    /// last frame. Moving by screen direction, as egui would, can leave the menu.
+    fn menu_arrow_keys(&mut self, ctx: &egui::Context) {
+        let rows = std::mem::take(&mut self.menu_rows);
+        if !self.popup_was_open || rows.is_empty() {
+            return;
         }
+        let (down, up) = ctx.input_mut(|i| (i.consume_key(Modifiers::NONE, Key::ArrowDown), i.consume_key(Modifiers::NONE, Key::ArrowUp)));
+        if !(down || up) {
+            return;
+        }
+        let focused = ctx.memory(|m| m.focused());
+        // Stay within the menu (or submenu) that has focus; else the first one.
+        let layer = focused.and_then(|f| rows.iter().find(|(id, _)| *id == f)).map(|(_, l)| *l).unwrap_or(rows[0].1);
+        let ids: Vec<egui::Id> = rows.iter().filter(|(_, l)| *l == layer).map(|(id, _)| *id).collect();
+        let n = ids.len();
+        let next = match focused.and_then(|f| ids.iter().position(|i| *i == f)) {
+            Some(c) if down => (c + 1) % n,
+            Some(c) => (c + n - 1) % n,
+            None if down => 0,
+            None => n - 1,
+        };
+        ctx.memory_mut(|m| m.request_focus(ids[next]));
     }
 
     /// Without system decorations we have to offer resizing from the window edges.
@@ -1310,6 +1415,9 @@ impl PaintApp {
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         let pal = self.pal;
+        // On narrow windows the less important fields go first, so nothing overlaps the
+        // zoom controls on the right.
+        let width = ui.available_width();
         ui.horizontal_centered(|ui| {
             let item = |ui: &mut egui::Ui, icon: Icon, text: String, width: f32| {
                 ui.allocate_ui_with_layout(vec2(width, 24.0), Layout::left_to_right(Align::Center), |ui| {
@@ -1347,20 +1455,22 @@ impl PaintApp {
                 },
             };
             item(ui, Icon::SelectionSize, sel, 130.0);
-            ui.separator();
             let canvas = match &self.drag {
                 Some(Drag::CanvasResize { size, .. }) => *size,
                 _ => vec2(self.doc.width() as f32, self.doc.height() as f32),
             };
-            item(ui, Icon::CanvasSize, format!("{} × {}px", canvas.x, canvas.y), 140.0);
-            if let Some(size) = self.doc.file_size {
+            if width >= 820.0 {
+                ui.separator();
+                item(ui, Icon::CanvasSize, format!("{} × {}px", canvas.x, canvas.y), 140.0);
+            }
+            if let Some(size) = self.doc.file_size.filter(|_| width >= 960.0) {
                 ui.separator();
                 item(ui, Icon::Disk, format!("Size: {}", human_size(size)), 120.0);
             }
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(8.0);
-                if self.quick_button(ui, Icon::ZoomIn, "Zoom in", self.zoom < ZOOM_MAX) {
+                if self.quick_button(ui, Icon::ZoomIn, "Zoom in (Ctrl+Page Up)", self.zoom < ZOOM_MAX) {
                     self.zoom_step(1, None);
                 }
                 let mut z = self.zoom.ln();
@@ -1370,7 +1480,7 @@ impl PaintApp {
                     let target = if (target - 1.0).abs() < 0.05 { 1.0 } else { target };
                     self.set_zoom(target, None);
                 }
-                if self.quick_button(ui, Icon::ZoomOut, "Zoom out", self.zoom > ZOOM_MIN) {
+                if self.quick_button(ui, Icon::ZoomOut, "Zoom out (Ctrl+Page Down)", self.zoom > ZOOM_MIN) {
                     self.zoom_step(-1, None);
                 }
                 // Zoom box: type a value, or pick one from the drop-down (right to left here).
@@ -1887,7 +1997,7 @@ impl PaintApp {
             egui::Area::new(egui::Id::new("textbar"))
                 .pivot(egui::Align2::CENTER_TOP)
                 .fixed_pos(egui::pos2(self.viewport.center().x, self.viewport.min.y + 10.0))
-                .order(egui::Order::Foreground)
+                .order(egui::Order::Middle)
                 .show(&ctx, |ui| {
                     egui::Frame::popup(ui.style())
                         .inner_margin(egui::Margin::symmetric(10, 6))
@@ -1902,6 +2012,7 @@ impl eframe::App for PaintApp {
         let ctx = ui.ctx().clone();
         self.apply_theme(&ctx);
         self.popup_was_open = egui::Popup::is_any_open(&ctx);
+        self.menu_arrow_keys(&ctx);
 
         // Closing with unsaved changes asks first.
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.doc.has_unsaved_work() {
@@ -2049,11 +2160,20 @@ pub fn content_dialog(
         .stroke(egui::Stroke::new(1.0, pal.separator))
         .shadow(visuals.popup_shadow);
     egui::Modal::new(egui::Id::new(id)).frame(frame).show(ctx, |ui| {
-        // Dialog controls get visible borders, like Fluent text boxes and buttons.
+        // Fluent (WinUI) buttons and boxes: a light fill with a subtle border that stays the
+        // same on hover; hover and press only change the fill.
+        let (rest, hover, press, border) = if pal.dark {
+            (Color32::from_rgb(0x2D, 0x2D, 0x2D), Color32::from_rgb(0x32, 0x32, 0x32), Color32::from_rgb(0x27, 0x27, 0x27), Color32::from_rgb(0x3D, 0x3D, 0x3D))
+        } else {
+            (Color32::from_rgb(0xFB, 0xFB, 0xFB), Color32::from_rgb(0xF6, 0xF6, 0xF6), Color32::from_rgb(0xF5, 0xF5, 0xF5), Color32::from_rgb(0xE5, 0xE5, 0xE5))
+        };
         let w = &mut ui.visuals_mut().widgets;
-        w.inactive.weak_bg_fill = w.inactive.bg_fill;
-        w.inactive.bg_stroke = egui::Stroke::new(1.0, pal.separator);
-        w.hovered.bg_stroke = egui::Stroke::new(1.0, pal.text_dim);
+        for (state, fill) in [(&mut w.inactive, rest), (&mut w.hovered, hover), (&mut w.active, press)] {
+            state.weak_bg_fill = fill;
+            state.bg_fill = fill;
+            state.bg_stroke = egui::Stroke::new(1.0, border);
+        }
+        w.active.fg_stroke.color = pal.text_dim;
         let spacing = ui.spacing().item_spacing;
         ui.spacing_mut().item_spacing.y = 0.0;
         let inner = width - 48.0;
@@ -2071,13 +2191,15 @@ pub fn content_dialog(
             .inner_margin(egui::Margin::same(24))
             .show(ui, |ui| {
                 ui.set_width(inner);
+                // Access keys are underlined only while Alt is held, as in Windows.
+                let alt = ui.input(|i| i.modifiers.alt);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     let n = buttons.len() as f32;
                     let bw = (inner - 8.0 * (n - 1.0)) / n;
                     for (i, label) in buttons.iter().enumerate() {
                         let fg = if i == 0 { if pal.dark { Color32::BLACK } else { Color32::WHITE } } else { pal.text };
-                        let (job, key) = access_label(label, fg);
+                        let (job, key) = access_label(label, fg, alt);
                         let mut b = Button::new(job).min_size(vec2(100.0, 30.0));
                         if i == 0 {
                             b = b.fill(pal.accent);
@@ -2085,7 +2207,17 @@ pub fn content_dialog(
                         let pressed = key.is_some_and(|k| {
                             ui.input(|inp| inp.key_pressed(k) && inp.modifiers.is_none())
                         });
-                        if ui.add_sized([bw, 32.0], b).clicked() || pressed {
+                        let resp = ui.add_sized([bw, 32.0], b);
+                        if i == 0 {
+                            // The accent button: a bit lighter (light theme) or darker (dark) on
+                            // hover, more so while pressed. Text keeps its color.
+                            let k = if resp.is_pointer_button_down_on() { 50 } else if resp.hovered() { 25 } else { 0 };
+                            if k > 0 {
+                                let veil = if pal.dark { Color32::from_black_alpha(k) } else { Color32::from_white_alpha(k) };
+                                ui.painter().rect_filled(resp.rect, 4.0, veil);
+                            }
+                        }
+                        if resp.clicked() || pressed {
                             clicked = Some(i);
                         }
                     }
@@ -2097,9 +2229,23 @@ pub fn content_dialog(
     clicked
 }
 
+/// Caret index one line up or down from `caret`, keeping roughly the same x; the start or
+/// end of the text when there is no line in that direction.
+fn vertical_caret(lay: &crate::text::Layout, caret: usize, up: bool, n: usize) -> usize {
+    let Some(at) = lay.caret.get(caret) else { return caret };
+    let target_y = at.y + if up { -lay.line_height } else { lay.line_height };
+    lay.caret
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| (p.y - target_y).abs() < lay.line_height / 2.0)
+        .min_by(|(_, a), (_, b)| (a.x - at.x).abs().total_cmp(&(b.x - at.x).abs()))
+        .map(|(i, _)| i)
+        .unwrap_or(if up { 0 } else { n })
+}
+
 /// Button text with a Windows access key: "Do&n't save" shows "Don't save" with the
 /// n underlined, and pressing N picks it.
-fn access_label(label: &str, color: Color32) -> (egui::text::LayoutJob, Option<Key>) {
+fn access_label(label: &str, color: Color32, underline: bool) -> (egui::text::LayoutJob, Option<Key>) {
     let mut job = egui::text::LayoutJob::default();
     let font = egui::FontId::proportional(14.0);
     let plain = egui::TextFormat { font_id: font.clone(), color, ..Default::default() };
@@ -2110,8 +2256,8 @@ fn access_label(label: &str, color: Color32) -> (egui::text::LayoutJob, Option<K
             && let Some(k) = chars.next()
         {
             key = Key::from_name(&k.to_ascii_uppercase().to_string());
-            let underline = egui::TextFormat { underline: egui::Stroke::new(1.0, color), ..plain.clone() };
-            job.append(&k.to_string(), 0.0, underline);
+            let format = if underline { egui::TextFormat { underline: egui::Stroke::new(1.0, color), ..plain.clone() } } else { plain.clone() };
+            job.append(&k.to_string(), 0.0, format);
         } else {
             job.append(&c.to_string(), 0.0, plain.clone());
         }

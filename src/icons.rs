@@ -63,6 +63,7 @@ pub enum Icon {
     Picture,
     /// Nothing (keeps menu labels aligned).
     Blank,
+    InvertColors,
     New,
     Open,
     Recent,
@@ -322,6 +323,20 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
             pl(p, r, &[(6.5, 13.5), (12.0, 19.0), (17.5, 13.5)], s);
         }
         Icon::Blank => {}
+        Icon::InvertColors => {
+            // A circle, half filled: light becomes dark and dark becomes light.
+            let c = g(r, 12.0, 12.0);
+            let rad = r.width() / 24.0 * 8.5;
+            // The left half: from the bottom (90°) round to the top (270°).
+            let half: Vec<Pos2> = (0..=16)
+                .map(|i| {
+                    let a = (90.0 + 180.0 * i as f32 / 16.0f32).to_radians();
+                    c + vec2(a.cos(), a.sin()) * rad
+                })
+                .collect();
+            p.add(Shape::convex_polygon(half, fg, Stroke::NONE));
+            p.circle_stroke(c, rad, s);
+        }
         Icon::Palette => {
             // Painter's palette with a thumb hole and paint dots.
             let pts: Vec<Pos2> = (0..=32)
@@ -364,8 +379,11 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, fg: Color32, accent: Color32) {
             pl(p, r, &[(5.5, 4.5), (5.0, 9.5), (10.0, 9.0)], s);
         }
         Icon::Rotate180 => {
-            arc(p, r, 12.0, 12.0, 7.5, 180.0, 360.0 + 90.0, s);
-            pl(p, r, &[(1.5, 9.0), (4.5, 12.5), (7.5, 9.0)], s);
+            // A U-turn over the top, arrow pointing down on the right.
+            arc(p, r, 12.0, 14.0, 7.5, 180.0, 360.0, s);
+            pl(p, r, &[(4.5, 14.0), (4.5, 20.0)], s);
+            pl(p, r, &[(16.5, 16.0), (19.5, 20.0), (22.5, 16.0)], s);
+            pl(p, r, &[(19.5, 14.0), (19.5, 20.0)], s);
         }
         Icon::FlipV => {
             closed(p, r, &[(4.0, 3.0), (20.0, 3.0), (12.0, 10.0)], s);

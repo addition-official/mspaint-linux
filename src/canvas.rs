@@ -258,7 +258,7 @@ impl PaintApp {
         }
         let more = [
             (Icon::Resize, "Resize and skew", "Ctrl+W", Action::ResizeDialog),
-            (Icon::Invert, "Invert color", "Ctrl+Shift+I", Action::InvertColors),
+            (Icon::InvertColors, "Invert color", "Ctrl+Shift+I", Action::InvertColors),
             (Icon::RemoveBg, "Remove background", "", Action::RemoveBackground),
         ];
         for (icon, label, shortcut, a) in more {
@@ -309,12 +309,32 @@ impl PaintApp {
         self.cursor_img = if hovered || self.drag.is_some() { ptr.map(to_img) } else { None };
         self.canvas_cursor = None;
 
-        // Ctrl+wheel steps through the zoom presets, anchored at the pointer.
-        if hovered && (zoom_delta - 1.0).abs() > 1e-4 {
-            self.zoom_accum *= zoom_delta;
-            if self.zoom_accum > 1.05 || self.zoom_accum < 1.0 / 1.05 {
-                self.zoom_step(if self.zoom_accum > 1.0 { 1 } else { -1 }, ptr);
-                self.zoom_accum = 1.0;
+        // Ctrl+wheel steps through the zoom presets, one step per wheel notch, anchored at
+        // the pointer. Raw wheel events are counted: egui spreads each notch over several
+        // frames. A touchpad pinch (zoom_delta with two fingers) counts the same way.
+        if hovered {
+            let notches: f32 = ui.input(|i| {
+                let wheel: f32 = i
+                    .events
+                    .iter()
+                    .filter_map(|e| match e {
+                        egui::Event::MouseWheel { unit, delta, modifiers, .. } if modifiers.command => Some(match unit {
+                            egui::MouseWheelUnit::Line => delta.y,
+                            egui::MouseWheelUnit::Point => delta.y / 50.0,
+                            egui::MouseWheelUnit::Page => delta.y * 3.0,
+                        }),
+                        _ => None,
+                    })
+                    .sum();
+                let pinch = if i.multi_touch().is_some() { zoom_delta.ln() / 1.1f32.ln() } else { 0.0 };
+                wheel + pinch
+            });
+            // At most one step per frame: some X11 setups deliver one notch as two
+            // identical events, and a wheel turned fast should still step one at a time.
+            self.zoom_accum += notches;
+            if self.zoom_accum.abs() >= 1.0 {
+                self.zoom_step(self.zoom_accum.signum() as i32, ptr);
+                self.zoom_accum = 0.0;
             }
         }
 
@@ -584,21 +604,15 @@ impl PaintApp {
                     return true;
                 }
                 if sr.contains(p_scr) {
-                    // Place the caret.
-                    if let Some(font) = self.fm.font(&self.s.text.family, self.s.text.bold, self.s.text.italic) {
-                        let lay = crate::text::layout(&font, self.s.text.px(), &tb.text, tb.rect.min, tb.rect.width(), self.s.text.align);
-                        let best = lay
-                            .caret
-                            .iter()
-                            .enumerate()
-                            .min_by(|(_, a), (_, b)| {
-                                let da = (a.y + lay.line_height / 2.0 - p.y).abs() * 1000.0 + (a.x - p.x).abs();
-                                let db = (b.y + lay.line_height / 2.0 - p.y).abs() * 1000.0 + (b.x - p.x).abs();
-                                da.total_cmp(&db)
-                            })
-                            .map(|(i, _)| i)
-                            .unwrap_or(0);
+                    // Place the caret; dragging selects (Shift+click extends the selection).
+                    if let Some(best) = text_index_at(&mut self.fm, &self.s, tb, p) {
+                        if shift {
+                            tb.anchor.get_or_insert(tb.caret);
+                        } else {
+                            tb.anchor = Some(best);
+                        }
                         tb.caret = best;
+                        self.drag = Some(Drag::TextSelect);
                     }
                     return true;
                 }
@@ -780,6 +794,13 @@ impl PaintApp {
                 self.drag = Some(Drag::Lasso { pts });
             }
             Drag::TextNew { start, .. } => self.drag = Some(Drag::TextNew { start, cur: p }),
+            Drag::TextSelect => {
+                if let Overlay::Text(tb) = &mut self.doc.overlay
+                    && let Some(i) = text_index_at(&mut self.fm, &self.s, tb, p)
+                {
+                    tb.caret = i;
+                }
+            }
             Drag::CanvasResize { handle, grab, .. } => {
                 let max = pixels::MAX_SIDE as f32;
                 let w = if handle == 1 { self.doc.width() as f32 } else { (p.x - grab.x).round().clamp(1.0, max) };
@@ -856,6 +877,14 @@ impl PaintApp {
                 }
             }
             Drag::Rotate { .. } => self.rotate_base = None,
+            Drag::TextSelect => {
+                // A click without dragging just places the caret.
+                if let Overlay::Text(tb) = &mut self.doc.overlay
+                    && tb.anchor == Some(tb.caret)
+                {
+                    tb.anchor = None;
+                }
+            }
             Drag::PolygonPoint | Drag::Box { .. } | Drag::LineEnd { .. } | Drag::Pan { .. } => {}
         }
     }
@@ -886,6 +915,7 @@ impl PaintApp {
             Drag::Box { hit, .. } => CanvasCursor::Os(handle_cursor(*hit)),
             Drag::CanvasResize { handle, .. } => CanvasCursor::Os(canvas_handle_cursor(*handle)),
             Drag::Pan { .. } | Drag::Rotate { .. } => CanvasCursor::Os(CursorIcon::Grabbing),
+            Drag::TextSelect => CanvasCursor::Os(CursorIcon::Text),
             Drag::ShapeNew { .. }
             | Drag::CurveBend
             | Drag::PolygonPoint
@@ -1026,6 +1056,23 @@ impl PaintApp {
             let r = Rect::from_min_max(to_scr(tb.rect.min), to_scr(tb.rect.max)).expand(TEXT_FRAME);
             dashed_rect(p, r, pal.accent);
             draw_handles(p, r, pal.accent);
+            // Selected text: an accent highlight over each selected part of a line.
+            if let Some((a, b)) = tb.selection()
+                && let Some(font) = self.fm.font(&self.s.text.family, self.s.text.bold, self.s.text.italic)
+            {
+                let lay = crate::text::layout(&font, self.s.text.px(), &tb.text, tb.rect.min, tb.rect.width(), self.s.text.align);
+                for &(ls, le, _) in &lay.lines {
+                    let (s, e) = (a.max(ls), b.min(le));
+                    if s >= e {
+                        continue;
+                    }
+                    let start = lay.caret[s];
+                    // The caret after a wrapped line's last character sits on the next line.
+                    let end_x = if lay.caret[e].y == start.y { lay.caret[e].x } else { tb.rect.max.x };
+                    let hl = Rect::from_min_max(to_scr(start), to_scr(pos2(end_x, start.y + lay.line_height)));
+                    p.rect_filled(hl, 0.0, pal.accent.gamma_multiply(0.35));
+                }
+            }
             let blink = (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;
             if blink && let Some(font) = self.fm.font(&self.s.text.family, self.s.text.bold, self.s.text.italic) {
                 let lay = crate::text::layout(&font, self.s.text.px(), &tb.text, tb.rect.min, tb.rect.width(), self.s.text.align);
@@ -1033,6 +1080,14 @@ impl PaintApp {
                     let a = to_scr(*c);
                     let b = to_scr(*c + vec2(0.0, lay.line_height));
                     p.line_segment([a, b], Stroke::new(1.5, self.s.color1));
+                }
+            }
+            // Tell the input method where the text box and caret are, which also turns it on.
+            if let Some(font) = self.fm.font(&self.s.text.family, self.s.text.bold, self.s.text.italic) {
+                let lay = crate::text::layout(&font, self.s.text.px(), &tb.text, tb.rect.min, tb.rect.width(), self.s.text.align);
+                if let Some(c) = lay.caret.get(tb.caret) {
+                    let cursor = Rect::from_two_pos(to_scr(*c), to_scr(*c + vec2(1.0, lay.line_height)));
+                    ui.ctx().output_mut(|o| o.ime = Some(egui::output::IMEOutput { purpose: Default::default(), rect: r, cursor_rect: cursor, should_interrupt_composition: false }));
                 }
             }
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
@@ -1147,4 +1202,19 @@ impl PaintApp {
         p.line_segment([top.left_bottom(), top.right_bottom()], Stroke::new(1.0, pal.separator));
         p.line_segment([left.right_top(), left.right_bottom()], Stroke::new(1.0, pal.separator));
     }
+}
+
+/// The caret index in a text box closest to image point `p`.
+fn text_index_at(fm: &mut crate::text::FontManager, s: &crate::document::Settings, tb: &TextBox, p: Pos2) -> Option<usize> {
+    let font = fm.font(&s.text.family, s.text.bold, s.text.italic)?;
+    let lay = crate::text::layout(&font, s.text.px(), &tb.text, tb.rect.min, tb.rect.width(), s.text.align);
+    lay.caret
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| {
+            let da = (a.y + lay.line_height / 2.0 - p.y).abs() * 1000.0 + (a.x - p.x).abs();
+            let db = (b.y + lay.line_height / 2.0 - p.y).abs() * 1000.0 + (b.x - p.x).abs();
+            da.total_cmp(&db)
+        })
+        .map(|(i, _)| i)
 }

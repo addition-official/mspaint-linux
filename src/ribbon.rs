@@ -7,12 +7,12 @@ use crate::tools::{BrushKind, SelectMode, ShapeKind, ShapeStyle, Tool, size_pres
 use egui::{Color32, PopupCloseBehavior, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, Vec2, vec2};
 
 const TOOLS: [(Tool, Icon, &str); 6] = [
-    (Tool::Pencil, Icon::Pencil, "Pencil"),
-    (Tool::Fill, Icon::Fill, "Fill"),
-    (Tool::Text, Icon::Text, "Text"),
-    (Tool::Eraser, Icon::Eraser, "Eraser"),
-    (Tool::Picker, Icon::Picker, "Color picker"),
-    (Tool::Magnifier, Icon::Magnifier, "Magnifier"),
+    (Tool::Pencil, Icon::Pencil, "Pencil (P)"),
+    (Tool::Fill, Icon::Fill, "Fill (B)"),
+    (Tool::Text, Icon::Text, "Text (T)"),
+    (Tool::Eraser, Icon::Eraser, "Eraser (E)"),
+    (Tool::Picker, Icon::Picker, "Color picker (I)"),
+    (Tool::Magnifier, Icon::Magnifier, "Magnifier (Z)"),
 ];
 
 /// Group widths, full and folded (see `ribbon`).
@@ -24,6 +24,12 @@ const SHAPES_W: f32 = GALLERY.x + 6.0 + 52.0;
 const SHAPES_COMPACT_W: f32 = 52.0 + 6.0 + 52.0;
 const IMAGE_W: f32 = 180.0;
 const IMAGE_COMPACT_W: f32 = 52.0;
+/// Names shown when hovering the palette, as in Paint.
+const PALETTE_NAMES: [&str; 20] = [
+    "Black", "Gray-50%", "Dark red", "Red", "Orange", "Yellow", "Green", "Turquoise", "Indigo", "Purple",
+    "White", "Gray-25%", "Brown", "Rose", "Gold", "Light yellow", "Lime", "Light turquoise", "Blue-gray", "Lavender",
+];
+
 pub const PALETTE: [[u8; 3]; 20] = [
     [0, 0, 0],
     [127, 127, 127],
@@ -301,7 +307,7 @@ impl PaintApp {
         self.with_group(ui, "Image", IMAGE_W, |app, ui, c| {
             // Selection: big split button.
             let icon = if app.s.select_mode == SelectMode::FreeForm { Icon::SelectFree } else { Icon::SelectRect };
-            let (main, chev) = app.split_btn_at(ui, r(c.min.x + 2.0, c.min.y + 2.0, 44.0, 62.0), "select", icon, app.s.tool == Tool::Select, "Selection");
+            let (main, chev) = app.split_btn_at(ui, r(c.min.x + 2.0, c.min.y + 2.0, 44.0, 62.0), "select", icon, app.s.tool == Tool::Select, "Selection (S)");
             if main.clicked() {
                 app.set_tool(Tool::Select);
             }
@@ -425,13 +431,28 @@ impl PaintApp {
         self.menu_item(ui, icon, label, "", checked, true)
     }
 
+    /// Keyboard support for a menu row: register it for arrow-key navigation (see
+    /// `PaintApp::menu_arrow_keys`), take focus when the menu was opened from the keyboard,
+    /// and keep egui from moving focus out of the menu by screen direction.
+    fn menu_row_focus(&mut self, ui: &Ui, resp: &Response) {
+        self.menu_rows.push((resp.id, ui.layer_id()));
+        if std::mem::take(&mut self.focus_first_item) {
+            resp.request_focus();
+        }
+        if resp.has_focus() {
+            let filter = egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() };
+            ui.memory_mut(|m| m.set_focus_lock_filter(resp.id, filter));
+        }
+    }
+
     /// Menu row that opens a submenu (pass its response to `SubMenu::show`): icon
     /// gutter, label and a right-pointing chevron.
-    pub fn submenu_row(&self, ui: &mut Ui, icon: Icon, label: &str) -> Response {
+    pub fn submenu_row(&mut self, ui: &mut Ui, icon: Icon, label: &str) -> Response {
         let width = ui.available_width().clamp(190.0, 260.0);
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+        self.menu_row_focus(ui, &resp);
         let open = egui::Popup::is_id_open(ui.ctx(), egui::containers::menu::SubMenu::id_from_widget_id(resp.id));
-        self.pal.paint_button(ui.painter(), rect, resp.hovered() || open, false, false);
+        self.pal.paint_button(ui.painter(), rect, resp.hovered() || open || resp.has_focus(), false, false);
         let fg = self.pal.text;
         self.paint_icon_fg(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), 16.0, icon, fg);
         ui.painter().text(egui::pos2(rect.min.x + 34.0, rect.center().y), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(13.5), fg);
@@ -448,8 +469,8 @@ impl PaintApp {
         let width = ui.available_width().clamp(190.0, 260.0);
         let sense = if enabled { Sense::click() } else { Sense::hover() };
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), sense);
-        if enabled && std::mem::take(&mut self.focus_first_item) {
-            resp.request_focus();
+        if enabled {
+            self.menu_row_focus(ui, &resp);
         }
         // Keyboard focus looks like hover, as in Windows menus.
         let focused = resp.has_focus();
@@ -772,7 +793,8 @@ impl PaintApp {
             } else {
                 self.s.custom_colors.get(i - 20).copied().unwrap_or(Color32::TRANSPARENT)
             };
-            let resp = self.color_circle_at(ui, rect, &format!("pal{i}"), color, false, "");
+            let tip = PALETTE_NAMES.get(i).copied().unwrap_or(if color == Color32::TRANSPARENT { "" } else { "Custom color" });
+            let resp = self.color_circle_at(ui, rect, &format!("pal{i}"), color, false, tip);
             if color == Color32::TRANSPARENT {
                 if resp.clicked() {
                     self.push(Action::EditColors);
@@ -868,18 +890,27 @@ impl PaintApp {
             ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
             ui.spacing_mut().interact_size.y = 32.0;
             let fams = self.fm.families.clone();
-            egui::ComboBox::from_id_salt("font_family")
+            let combo = egui::ComboBox::from_id_salt("font_family")
                 .icon(fluent::combo_chevron)
                 .selected_text(self.s.text.family.clone())
                 .width(190.0)
                 .height(420.0)
                 .show_ui(ui, |ui| {
+                    // Open scrolled to the current font, as a Windows combo box does.
+                    let scrolled = egui::Id::new("font_list_scrolled");
+                    let first = !ui.data(|d| d.get_temp::<bool>(scrolled).unwrap_or(false));
                     for f in &fams {
-                        ui.selectable_value(&mut self.s.text.family, f.clone(), f);
+                        let r = ui.selectable_value(&mut self.s.text.family, f.clone(), f);
+                        if first && *f == self.s.text.family {
+                            r.scroll_to_me(Some(egui::Align::Center));
+                        }
                     }
-                })
-                .response
-                .on_hover_text("Font");
+                    ui.data_mut(|d| d.insert_temp(scrolled, true));
+                });
+            if combo.inner.is_none() {
+                ui.data_mut(|d| d.remove::<bool>(egui::Id::new("font_list_scrolled")));
+            }
+            combo.response.on_hover_text("Font");
             // Font size: type any size, or pick one from the list (an editable combo box).
             ui.spacing_mut().item_spacing.x = 0.0;
             fluent::number_entry(ui, "font_size", &mut self.s.text.size_pt, 1.0..=999.0, 0, "", 48.0).on_hover_text("Font size");
@@ -911,13 +942,13 @@ impl PaintApp {
             };
             let t = self.s.text.clone();
             let mut new = t.clone();
-            if self.toggle_box(ui, t.bold, "Bold", letter(RichText::new("B").strong())) {
+            if self.toggle_box(ui, t.bold, "Bold (Ctrl+B)", letter(RichText::new("B").strong())) {
                 new.bold = !t.bold;
             }
-            if self.toggle_box(ui, t.italic, "Italic", letter(RichText::new("I").italics())) {
+            if self.toggle_box(ui, t.italic, "Italic (Ctrl+I)", letter(RichText::new("I").italics())) {
                 new.italic = !t.italic;
             }
-            if self.toggle_box(ui, t.underline, "Underline", letter(RichText::new("U").underline())) {
+            if self.toggle_box(ui, t.underline, "Underline (Ctrl+U)", letter(RichText::new("U").underline())) {
                 new.underline = !t.underline;
             }
             if self.toggle_box(ui, t.strikethrough, "Strikethrough", letter(RichText::new("S").strikethrough())) {

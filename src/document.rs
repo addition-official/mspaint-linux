@@ -120,11 +120,38 @@ pub struct TextBox {
     pub history: Vec<(String, usize)>,
     /// In a run of typed characters, which undoes as one step.
     pub typing: bool,
+    /// The other end of the text selection (in chars), if any.
+    pub anchor: Option<usize>,
 }
 
 impl TextBox {
     pub fn new(rect: Rect) -> Self {
-        Self { rect, text: String::new(), caret: 0, history: Vec::new(), typing: false }
+        Self { rect, text: String::new(), caret: 0, history: Vec::new(), typing: false, anchor: None }
+    }
+
+    /// The selected char range (start, end), if anything is selected.
+    pub fn selection(&self) -> Option<(usize, usize)> {
+        let a = self.anchor?;
+        (a != self.caret).then(|| (a.min(self.caret), a.max(self.caret)))
+    }
+
+    pub fn selected_text(&self) -> Option<String> {
+        let (a, b) = self.selection()?;
+        Some(self.text.chars().skip(a).take(b - a).collect())
+    }
+
+    /// Remove the selected text (if any) and put the caret there.
+    pub fn delete_selection(&mut self) -> bool {
+        let Some((a, b)) = self.selection() else {
+            self.anchor = None;
+            return false;
+        };
+        let byte = |c: usize| self.text.char_indices().nth(c).map(|(i, _)| i).unwrap_or(self.text.len());
+        let range = byte(a)..byte(b);
+        self.text.replace_range(range, "");
+        self.caret = a;
+        self.anchor = None;
+        true
     }
 
     /// Remember the state before an edit. Typed characters are grouped per word.
@@ -138,6 +165,7 @@ impl TextBox {
     /// Undo the last edit; false when there is nothing left to undo in the box.
     pub fn undo(&mut self) -> bool {
         self.typing = false;
+        self.anchor = None;
         match self.history.pop() {
             Some((text, caret)) => {
                 self.text = text;
@@ -962,9 +990,10 @@ impl Document {
     /// Paste a pixmap as a new floating selection at `at`.
     pub fn paste(&mut self, s: &Settings, pix: Pixmap, at: Pos2) {
         self.commit_overlay(s);
-        // Grow the canvas if the pasted image is larger, as Paint does.
+        // Grow the canvas if the pasted image is larger, as Paint does (within the size limit).
         let (pw, ph) = (pix.width(), pix.height());
-        if pw > self.width() || ph > self.height() {
+        let grown_ok = pixels::check_size(pw.max(self.width()), ph.max(self.height())).is_ok();
+        if (pw > self.width() || ph > self.height()) && grown_ok {
             self.begin_edit();
             let (nw, nh) = (pw.max(self.width()), ph.max(self.height()));
             self.transform_all(|p, _| pixels::resize_canvas(p, nw, nh, Color32::TRANSPARENT));
@@ -972,8 +1001,8 @@ impl Document {
             self.begin_edit();
         }
         let at = pos2(
-            at.x.clamp(0.0, (self.width() - pw) as f32).round(),
-            at.y.clamp(0.0, (self.height() - ph) as f32).round(),
+            at.x.clamp(0.0, self.width().saturating_sub(pw) as f32).round(),
+            at.y.clamp(0.0, self.height().saturating_sub(ph) as f32).round(),
         );
         self.overlay = Overlay::Float(Floating {
             rect: Rect::from_min_size(at, vec2(pw as f32, ph as f32)),

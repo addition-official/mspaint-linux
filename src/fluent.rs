@@ -229,11 +229,17 @@ fn number_box(
     let edit_id = id.with("edit");
     let format = |v: f32| format!("{v:.decimals$}{suffix}");
     let editing = ui.memory(|m| m.has_focus(edit_id));
-    let mut text = if editing { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| format(*value)) } else { format(*value) };
+    // Until the user types, the box keeps showing the current value (e.g. while zooming
+    // with the wheel), and leaving it changes nothing.
+    let typed_id = id.with("typed");
+    let typed_before = editing && ui.data(|d| d.get_temp::<bool>(typed_id).unwrap_or(false));
+    let mut text = if typed_before { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| format(*value)) } else { format(*value) };
     let mut resp = ui.add_sized(
         [width, 26.0],
-        egui::TextEdit::singleline(&mut text).id(edit_id).horizontal_align(egui::Align::Center).margin(vec2(6.0, 4.0)),
+        egui::TextEdit::singleline(&mut text).id(edit_id).horizontal_align(egui::Align::Min).margin(vec2(8.0, 4.0)),
     );
+    let typed = typed_before || resp.changed();
+    ui.data_mut(|d| d.insert_temp(typed_id, typed && resp.has_focus()));
     if resp.gained_focus()
         && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id)
     {
@@ -245,8 +251,14 @@ fn number_box(
         state.store(ui.ctx(), edit_id);
     }
     let mut changed = false;
-    if if live { resp.changed() } else { resp.lost_focus() } {
-        let typed = text.trim().trim_end_matches(suffix).trim().replace(',', ".");
+    if if live { resp.changed() } else { resp.lost_focus() && typed } {
+        let raw = text.trim().trim_end_matches(suffix).trim();
+        // "1,920" is a thousands separator; "1,5" a decimal comma.
+        let typed = if decimals == 0 || raw.contains('.') || raw.split(',').skip(1).any(|g| g.len() == 3) {
+            raw.replace(',', "")
+        } else {
+            raw.replace(',', ".")
+        };
         if let Ok(v) = typed.parse::<f32>()
             && v.is_finite()
         {
