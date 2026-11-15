@@ -793,8 +793,10 @@ impl PaintApp {
             Action::ToggleThumbnail => self.show_thumbnail = !self.show_thumbnail,
             Action::Print => {
                 self.doc.commit_overlay(&s);
-                // Inside Flatpak there is no lp: the desktop's print dialog takes over.
-                let printers = if crate::portal::in_flatpak() { None } else { list_printers() };
+                // Like Windows, use the desktop's own print dialog (with a preview, paper
+                // sizes and the printer's options). Paintbox's simple CUPS dialog is the
+                // fallback where the desktop has none (inside Flatpak there is no lp).
+                let printers = if crate::portal::in_flatpak() || crate::portal::has_print() { None } else { list_printers() };
                 match printers {
                     Some((printers, default)) if !printers.is_empty() => {
                         let landscape = self.doc.width() > self.doc.height();

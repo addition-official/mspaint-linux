@@ -47,11 +47,20 @@ pub fn prefers_dark() -> Option<bool> {
     }
 }
 
+/// Whether the portal offers `interface` (it answers for its version).
+fn has(interface: &str) -> bool {
+    let Some(bus) = bus() else { return false };
+    bus.call_method(Some(DEST), PATH, Some("org.freedesktop.DBus.Properties"), "Get", &(interface, "version")).is_ok()
+}
+
 /// Whether the portal offers file dialogs.
 pub fn has_file_chooser() -> bool {
-    let Some(bus) = bus() else { return false };
-    bus.call_method(Some(DEST), PATH, Some("org.freedesktop.DBus.Properties"), "Get", &("org.freedesktop.portal.FileChooser", "version"))
-        .is_ok()
+    has("org.freedesktop.portal.FileChooser")
+}
+
+/// Whether the desktop's own print dialog is available.
+pub fn has_print() -> bool {
+    has("org.freedesktop.portal.Print")
 }
 
 /// Ask the desktop to use the picture at `path` as the wallpaper. The desktop may ask
