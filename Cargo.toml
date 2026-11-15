@@ -1,6 +1,6 @@
 [package]
 name = "mspaint-linux"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 description = "A Windows 11 Paint style image editor for Linux"
 license = "MIT"
@@ -51,6 +51,7 @@ assets = [
     ["target/release/mspaint-linux", "usr/bin/", "755"],
     ["assets/mspaint-linux.desktop", "usr/share/applications/", "644"],
     ["assets/mspaint-linux.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["assets/mspaint-linux.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
     ["assets/mspaint-linux.metainfo.xml", "usr/share/metainfo/", "644"],
     ["README.md", "usr/share/doc/mspaint-linux/README.md", "644"],
 ]
@@ -66,6 +67,7 @@ assets = [
     { source = "target/release/mspaint-linux", dest = "/usr/bin/mspaint-linux", mode = "755" },
     { source = "assets/mspaint-linux.desktop", dest = "/usr/share/applications/mspaint-linux.desktop", mode = "644" },
     { source = "assets/mspaint-linux.svg", dest = "/usr/share/icons/hicolor/scalable/apps/mspaint-linux.svg", mode = "644" },
+    { source = "assets/mspaint-linux.png", dest = "/usr/share/icons/hicolor/256x256/apps/mspaint-linux.png", mode = "644" },
     { source = "assets/mspaint-linux.metainfo.xml", dest = "/usr/share/metainfo/mspaint-linux.metainfo.xml", mode = "644" },
     { source = "README.md", dest = "/usr/share/doc/mspaint-linux/README.md", mode = "644", doc = true },
 ]

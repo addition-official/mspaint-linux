@@ -24,6 +24,7 @@ done
 BIN="$PREFIX/bin/mspaint-linux"
 DESKTOP="$PREFIX/share/applications/mspaint-linux.desktop"
 ICON="$PREFIX/share/icons/hicolor/scalable/apps/mspaint-linux.svg"
+ICON_PNG="$PREFIX/share/icons/hicolor/256x256/apps/mspaint-linux.png"
 METAINFO="$PREFIX/share/metainfo/mspaint-linux.metainfo.xml"
 
 refresh_menus() {
@@ -36,7 +37,7 @@ refresh_menus() {
 }
 
 if [ "$UNINSTALL" = 1 ]; then
-    $SUDO rm -f "$BIN" "$DESKTOP" "$ICON" "$METAINFO"
+    $SUDO rm -f "$BIN" "$DESKTOP" "$ICON" "$ICON_PNG" "$METAINFO"
     refresh_menus
     echo "Paint has been removed from $PREFIX."
     exit 0
@@ -61,6 +62,7 @@ echo "Installing to $PREFIX..."
 $SUDO install -Dm755 "$SRC" "$BIN"
 $SUDO install -Dm644 assets/mspaint-linux.desktop "$DESKTOP"
 $SUDO install -Dm644 assets/mspaint-linux.svg "$ICON"
+$SUDO install -Dm644 assets/mspaint-linux.png "$ICON_PNG"
 $SUDO install -Dm644 assets/mspaint-linux.metainfo.xml "$METAINFO"
 refresh_menus
 

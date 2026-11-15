@@ -12,14 +12,14 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # Pinned so a new Rust release (with new lints) can't suddenly fail CI.
       # Bump deliberately after checking `cargo clippy` with the new version.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: 1.99.0
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Fonts for the text tests
         run: sudo apt-get update && sudo apt-get install -y fonts-noto-core
       - run: cargo clippy -- -D warnings
@@ -28,7 +28,7 @@ jobs:
         run: |
           cargo install cargo-deb --version 3.8.0 --locked
           cargo deb
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mspaint-linux-deb
           path: target/debian/*.deb

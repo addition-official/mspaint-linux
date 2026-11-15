@@ -11,14 +11,15 @@ rm -rf dist
 mkdir -p dist
 cargo build --release
 cargo deb --no-build --output dist/
-cargo generate-rpm --output dist/
+# xz: also readable by the older rpm of openSUSE Leap (the default zstd may not be).
+cargo generate-rpm --payload-compress xz --output dist/
 
 # Plain binary with install.sh, which installs it without building.
 name="mspaint-linux-$version-x86_64"
 stage="dist/$name"
 mkdir -p "$stage/assets"
 cp target/release/mspaint-linux install.sh README.md "$stage/"
-cp assets/mspaint-linux.desktop assets/mspaint-linux.svg assets/mspaint-linux.metainfo.xml "$stage/assets/"
+cp assets/mspaint-linux.desktop assets/mspaint-linux.svg assets/mspaint-linux.png assets/mspaint-linux.metainfo.xml "$stage/assets/"
 tar -C dist -czf "dist/$name.tar.gz" "$name"
 rm -rf "$stage"
 
@@ -28,8 +29,12 @@ appdir=dist/AppDir
 install -Dm755 target/release/mspaint-linux "$appdir/usr/bin/mspaint-linux"
 install -Dm644 assets/mspaint-linux.desktop "$appdir/usr/share/applications/mspaint-linux.desktop"
 install -Dm644 assets/mspaint-linux.svg "$appdir/usr/share/icons/hicolor/scalable/apps/mspaint-linux.svg"
+install -Dm644 assets/mspaint-linux.png "$appdir/usr/share/icons/hicolor/256x256/apps/mspaint-linux.png"
 install -Dm644 assets/mspaint-linux.metainfo.xml "$appdir/usr/share/metainfo/mspaint-linux.appdata.xml"
-cp assets/mspaint-linux.desktop assets/mspaint-linux.svg "$appdir/"
+# A PNG icon: AppImage launchers and file managers show .DirIcon, and many can't
+# read SVG.
+cp assets/mspaint-linux.desktop assets/mspaint-linux.png "$appdir/"
+cp assets/mspaint-linux.png "$appdir/.DirIcon"
 ln -s usr/bin/mspaint-linux "$appdir/AppRun"
 tool="${APPIMAGETOOL:-}"
 if [ -z "$tool" ]; then
