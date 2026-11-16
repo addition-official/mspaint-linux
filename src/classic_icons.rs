@@ -217,7 +217,7 @@ pub fn custom_dir() -> Option<std::path::PathBuf> {
     let data = std::env::var_os("XDG_DATA_HOME")
         .map(std::path::PathBuf::from)
         .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))?;
+        .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).map(|h| h.join(".local/share")))?;
     Some(data.join("paintbox").join("icons"))
 }
 
@@ -240,16 +240,61 @@ pub fn reload_custom() {
     if let Ok(mut c) = custom::CACHE.lock() {
         *c = None;
     }
+    if let Ok(mut n) = COUNT.lock() {
+        *n = None;
+    }
 }
+
+/// `custom_count`'s answer, until the next reload (it checks many files).
+static COUNT: std::sync::Mutex<Option<usize>> = std::sync::Mutex::new(None);
 
 /// How many buttons currently have a custom icon file.
 pub fn custom_count() -> usize {
+    if let Some(n) = COUNT.lock().ok().and_then(|n| *n) {
+        return n;
+    }
+    let n = count_files();
+    if let Ok(mut c) = COUNT.lock() {
+        *c = Some(n);
+    }
+    n
+}
+
+/// Commands that share a picture in the classic set (all the rotations, the flips, the
+/// text alignments): each can have its own custom file, and without one shows its
+/// Windows 11 line icon in the classic blue so they stay told apart.
+pub const EXTRA: [(&str, crate::icons::Icon); 8] = {
+    use crate::icons::Icon as I;
+    [
+        ("rotate-right", I::RotateRight),
+        ("rotate-left", I::RotateLeft),
+        ("rotate-180", I::Rotate180),
+        ("flip-vertical", I::FlipV),
+        ("flip-horizontal", I::FlipH),
+        ("align-left", I::AlignLeft),
+        ("align-center", I::AlignCenter),
+        ("align-right", I::AlignRight),
+    ]
+};
+
+/// Paint one of the `EXTRA` icons; false when `icon` isn't one of them.
+pub fn paint_extra(p: &Painter, rect: Rect, icon: crate::icons::Icon, enabled: bool) -> bool {
+    let Some((name, _)) = EXTRA.iter().find(|(_, i)| *i == icon) else { return false };
+    if !paint_custom(p, rect, name, enabled) {
+        let (fg, accent) = if enabled { (Color32::from_rgb(0x1C, 0x2A, 0x48), Color32::from_rgb(0x2B, 0x6C, 0xC4)) } else { (Color32::from_gray(0xA0), Color32::from_gray(0xA0)) };
+        crate::icons::paint(p, rect, icon, fg, accent);
+    }
+    true
+}
+
+fn count_files() -> usize {
     let Some(dir) = custom_dir() else { return 0 };
     let names = CIcon::ALL
         .iter()
         .map(|i| i.file_name())
         .chain(crate::tools::ShapeKind::ALL.iter().map(|k| k.file_name()))
         .chain(crate::tools::BrushKind::ALL.iter().map(|k| k.file_name()))
+        .chain(EXTRA.iter().map(|(n, _)| *n))
         .chain(["app-icon"]);
     names.filter(|n| find_file(&dir, n, 16).is_some() || find_file(&dir, n, 32).is_some()).count()
 }
@@ -257,7 +302,7 @@ pub fn custom_count() -> usize {
 /// `name-SIZE.ext` first (made for that size), then `name.ext`.
 fn find_file(dir: &std::path::Path, name: &str, size: u32) -> Option<std::path::PathBuf> {
     for stem in [format!("{name}-{size}"), name.to_string()] {
-        for ext in ["png", "ico", "bmp"] {
+        for ext in ["png", "ico", "bmp", "PNG", "ICO", "BMP"] {
             let p = dir.join(format!("{stem}.{ext}"));
             if p.is_file() {
                 return Some(p);
@@ -265,6 +310,23 @@ fn find_file(dir: &std::path::Path, name: &str, size: u32) -> Option<std::path::
         }
     }
     None
+}
+
+/// Decode a custom icon file: at most 512x512 pixels and a 4 MB file. The size limits
+/// apply before decoding, so a bad file can't make Paintbox use lots of memory.
+fn load_icon_image(path: &std::path::Path) -> Option<image::RgbaImage> {
+    if std::fs::metadata(path).ok()?.len() > 4 << 20 {
+        return None;
+    }
+    let mut reader = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(512);
+    limits.max_image_height = Some(512);
+    limits.max_alloc = Some(16 << 20);
+    reader.limits(limits);
+    // Decoders have had bugs that panic on broken files (see pixels::load).
+    let img = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reader.decode())).ok()?.ok()?;
+    Some(img.to_rgba8())
 }
 
 /// The custom icon file `name` at `size` points, loading it the first time.
@@ -276,15 +338,7 @@ fn custom_texture(ctx: &egui::Context, name: &'static str, size: u32) -> Option<
         return t.clone();
     }
     let tex = custom_dir().and_then(|dir| find_file(&dir, name, size)).and_then(|path| {
-        // Icons are small: refuse anything big rather than decode it.
-        if std::fs::metadata(&path).ok()?.len() > 4 << 20 {
-            return None;
-        }
-        let img = image::open(&path).ok()?;
-        if img.width() > 512 || img.height() > 512 {
-            return None;
-        }
-        let rgba = img.to_rgba8();
+        let rgba = load_icon_image(&path)?;
         let ci = egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
         Some(ctx.load_texture(format!("custom-icon-{name}-{size}"), ci, egui::TextureOptions::LINEAR))
     });
@@ -598,5 +652,32 @@ fn draw(d: &Pen, icon: CIcon) {
             d.line(&[(9.0, 8.0), (15.0, 8.0)], 1.6, rgb(0xC0, 0x30, 0x30));
             d.poly(&[(12.5, 5.5), (15.5, 8.0), (12.5, 10.5)], rgb(0xC0, 0x30, 0x30), rgb(0xC0, 0x30, 0x30));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icon_files_are_size_checked_before_decoding() {
+        let dir = std::env::temp_dir().join(format!("paintbox-icons-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A small PNG that claims to be 11000x11000 pixels.
+        let huge = dir.join("huge.png");
+        image::RgbImage::new(1, 1).save(&huge).unwrap();
+        let mut bytes = std::fs::read(&huge).unwrap();
+        bytes[16..20].copy_from_slice(&11000u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&11000u32.to_be_bytes());
+        std::fs::write(&huge, bytes).unwrap();
+        assert!(load_icon_image(&huge).is_none());
+        // A real 32x32 icon loads; garbage doesn't.
+        let ok = dir.join("ok.png");
+        image::RgbaImage::new(32, 32).save(&ok).unwrap();
+        assert_eq!(load_icon_image(&ok).map(|i| i.dimensions()), Some((32, 32)));
+        let junk = dir.join("junk.png");
+        std::fs::write(&junk, b"not a picture").unwrap();
+        assert!(load_icon_image(&junk).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

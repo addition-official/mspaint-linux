@@ -449,7 +449,7 @@ impl PaintApp {
     /// gutter, label and a right-pointing chevron.
     pub fn submenu_row(&mut self, ui: &mut Ui, icon: Icon, label: &str) -> Response {
         let width = ui.available_width().clamp(190.0, 260.0);
-        let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+        let (rect, resp) = ui.allocate_exact_size(vec2(width, self.menu_row_h()), Sense::click());
         self.menu_row_focus(ui, &resp);
         let open = egui::Popup::is_id_open(ui.ctx(), egui::containers::menu::SubMenu::id_from_widget_id(resp.id));
         self.pal.paint_button(ui.painter(), rect, resp.hovered() || open || resp.has_focus(), false, false);
@@ -458,19 +458,32 @@ impl PaintApp {
         self.menu_row_icon(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), icon, true);
         ui.painter().text(egui::pos2(rect.min.x + 34.0, rect.center().y), egui::Align2::LEFT_CENTER, label, font, fg);
         let c = egui::pos2(rect.max.x - 12.0, rect.center().y);
-        let s = Stroke::new(1.2, self.pal.text_dim);
-        ui.painter().line_segment([c + vec2(-2.0, -4.0), c + vec2(2.0, 0.0)], s);
-        ui.painter().line_segment([c + vec2(2.0, 0.0), c + vec2(-2.0, 4.0)], s);
+        if self.pal.classic != 0 {
+            // Classic menus point to submenus with a small solid triangle.
+            ui.painter().add(egui::Shape::convex_polygon(vec![c + vec2(-2.0, -4.0), c + vec2(2.0, 0.0), c + vec2(-2.0, 4.0)], fg, Stroke::NONE));
+        } else {
+            let s = Stroke::new(1.2, self.pal.text_dim);
+            ui.painter().line_segment([c + vec2(-2.0, -4.0), c + vec2(2.0, 0.0)], s);
+            ui.painter().line_segment([c + vec2(2.0, 0.0), c + vec2(-2.0, 4.0)], s);
+        }
         resp
+    }
+
+    /// Menu row height: Windows 11's airy rows, or the classic menus' compact ones.
+    fn menu_row_h(&self) -> f32 {
+        if self.pal.classic != 0 { 24.0 } else { 28.0 }
     }
 
     /// A menu row's icon: the Windows 11 line icon, or in the classic styles the
     /// colorful one (or none, where classic menus had none).
     fn menu_row_icon(&self, ui: &Ui, center: egui::Pos2, icon: Icon, enabled: bool) {
+        let rect = Rect::from_center_size(center, vec2(16.0, 16.0));
         if self.pal.classic == 0 {
             self.paint_icon_fg(ui, center, 16.0, icon, self.pal.icon_fg(enabled, false));
-        } else if let Some(ci) = crate::classic::menu_icon(icon) {
-            crate::classic_icons::paint(ui.painter(), Rect::from_center_size(center, vec2(16.0, 16.0)), ci, enabled);
+        } else if !crate::classic_icons::paint_extra(ui.painter(), rect, icon, enabled)
+            && let Some(ci) = crate::classic::menu_icon(icon)
+        {
+            crate::classic_icons::paint(ui.painter(), rect, ci, enabled);
         }
     }
 
@@ -479,7 +492,7 @@ impl PaintApp {
     pub fn menu_item(&mut self, ui: &mut Ui, icon: Icon, label: &str, shortcut: &str, checked: bool, enabled: bool) -> bool {
         let width = ui.available_width().clamp(190.0, 260.0);
         let sense = if enabled { Sense::click() } else { Sense::hover() };
-        let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), sense);
+        let (rect, resp) = ui.allocate_exact_size(vec2(width, self.menu_row_h()), sense);
         if enabled {
             self.menu_row_focus(ui, &resp);
         }
@@ -488,7 +501,19 @@ impl PaintApp {
         self.pal.paint_button(ui.painter(), rect, resp.hovered() || focused, enabled && resp.is_pointer_button_down_on(), false);
         let fg = self.pal.icon_fg(enabled, false);
         let font = egui::FontId::proportional(if self.pal.classic != 0 { 12.5 } else { 13.5 });
-        self.menu_row_icon(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), icon, enabled);
+        let classic = self.pal.classic != 0;
+        let gutter = egui::pos2(rect.min.x + 16.0, rect.center().y);
+        if classic && checked {
+            // Classic menus show a check mark in the icon gutter, on a highlighted square.
+            let b = Rect::from_center_size(gutter, vec2(20.0, 20.0));
+            let radius = if self.pal.classic == 7 { 2.0 } else { 0.0 };
+            ui.painter().rect_filled(b, radius, self.pal.selected);
+            ui.painter().rect_stroke(b, radius, Stroke::new(1.0, self.pal.selected_border), egui::StrokeKind::Inside);
+            ui.painter().line_segment([gutter + vec2(-4.0, 0.0), gutter + vec2(-1.0, 3.0)], Stroke::new(1.6, fg));
+            ui.painter().line_segment([gutter + vec2(-1.0, 3.0), gutter + vec2(4.0, -3.0)], Stroke::new(1.6, fg));
+        } else {
+            self.menu_row_icon(ui, gutter, icon, enabled);
+        }
         ui.painter().text(egui::pos2(rect.min.x + 34.0, rect.center().y), egui::Align2::LEFT_CENTER, label, font, fg);
         if !shortcut.is_empty() {
             ui.painter().text(
@@ -496,10 +521,10 @@ impl PaintApp {
                 egui::Align2::RIGHT_CENTER,
                 shortcut,
                 egui::FontId::proportional(12.5),
-                self.pal.text_dim,
+                if classic { fg } else { self.pal.text_dim },
             );
         }
-        if checked {
+        if checked && !classic {
             ui.painter().text(
                 egui::pos2(rect.max.x - 10.0, rect.center().y),
                 egui::Align2::RIGHT_CENTER,

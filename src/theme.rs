@@ -168,6 +168,8 @@ pub fn apply(ctx: &egui::Context, pal: &Palette) {
     v.handle_shape = egui::style::HandleShape::Circle;
     ctx.set_visuals(v);
     ctx.all_styles_mut(|s| {
+        // Floating scroll bars (the classic styles switch to solid ones).
+        s.spacing.scroll = egui::style::ScrollStyle::default();
         s.spacing.scroll.fade.strength = 0.0;
         s.spacing.slider_rail_height = 4.0;
         s.spacing.button_padding = egui::vec2(8.0, 4.0);

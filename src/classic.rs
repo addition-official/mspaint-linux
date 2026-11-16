@@ -94,12 +94,13 @@ impl Skin {
                 label: rgb(0x60, 0x60, 0x60),
                 sep: rgb(0xE2, 0xE3, 0xE4),
                 text: rgb(0x26, 0x26, 0x26),
-                hover: [rgb(0xE8, 0xEF, 0xF7), rgb(0xE8, 0xEF, 0xF7)],
-                hover_border: rgb(0xA4, 0xCE, 0xF9),
+                // Light blue on hover, a clearly deeper blue when selected.
+                hover: [rgb(0xE5, 0xF3, 0xFF), rgb(0xE5, 0xF3, 0xFF)],
+                hover_border: rgb(0xCC, 0xE8, 0xFF),
                 press: [rgb(0xC9, 0xE0, 0xF7), rgb(0xC9, 0xE0, 0xF7)],
                 press_border: rgb(0x62, 0xA2, 0xE4),
-                sel: [rgb(0xCC, 0xE4, 0xF7), rgb(0xCC, 0xE4, 0xF7)],
-                sel_border: rgb(0x99, 0xC9, 0xEF),
+                sel: [rgb(0xCC, 0xE8, 0xFF), rgb(0xCC, 0xE8, 0xFF)],
+                sel_border: rgb(0x62, 0xA2, 0xE4),
                 app_btn: [rgb(0x19, 0x79, 0xCA), rgb(0x19, 0x79, 0xCA)],
                 app_btn_hover: [rgb(0x29, 0x8B, 0xDA), rgb(0x29, 0x8B, 0xDA)],
                 tab_border: rgb(0xDA, 0xDB, 0xDC),
@@ -182,6 +183,8 @@ impl Skin {
             s.spacing.scroll = egui::style::ScrollStyle::solid();
             s.spacing.scroll.bar_width = 12.0;
             s.spacing.scroll.foreground_color = false;
+            // Content doesn't fade out under the edges, as in Windows.
+            s.spacing.scroll.fade.strength = 0.0;
         });
     }
 
@@ -460,7 +463,7 @@ impl PaintApp {
         let ctx = ui.ctx().clone();
         let h = 19.0;
         let widths = [44.0, 26.0, 27.0];
-        let mut right = rect.max.x - 6.0;
+        let mut right = rect.max.x - if maximized { 2.0 } else { 6.0 };
         for i in 0..3 {
             let br = r(right - widths[i], rect.min.y, widths[i], h);
             self.no_drag.push(br);
@@ -559,7 +562,21 @@ impl PaintApp {
         if app_resp.clicked() {
             self.app_menu_pane = 0;
         }
-        egui::Popup::menu(&app_resp).width(480.0).show(|ui| self.classic_app_menu(ui));
+        // Alt+F opens the File menu; Alt+H and Alt+V switch tabs, as in Paint.
+        let ctx = ui.ctx().clone();
+        let alt = |key| ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::ALT, key)));
+        if alt(egui::Key::F) {
+            self.app_menu_pane = 0;
+            egui::Popup::open_id(&ctx, egui::Popup::default_response_id(&app_resp));
+        }
+        if alt(egui::Key::H) {
+            self.classic_tab = 0;
+        }
+        if alt(egui::Key::V) {
+            self.classic_tab = 1;
+        }
+        // Rows close it themselves; clicks on headers or empty space keep it open.
+        egui::Popup::menu(&app_resp).width(480.0).close_behavior(PopupCloseBehavior::CloseOnClickOutside).show(|ui| self.classic_app_menu(ui));
 
         // Home, View (and Text while typing).
         let mut x = app_rect.max.x + 4.0;
@@ -588,6 +605,23 @@ impl PaintApp {
                 self.classic_tab = i as u8;
             }
             x = tab.max.x + 2.0;
+        }
+        // With the system title bar, the quick access buttons move down here (Paint's
+        // "Show below the ribbon" puts them in a row of their own; beside the tabs keeps
+        // the window shorter).
+        if self.system_titlebar {
+            x += 8.0;
+            for (icon, tip, action, enabled) in [
+                (CIcon::Save, "Save (Ctrl+S)", Action::Save, true),
+                (CIcon::Undo, "Undo (Ctrl+Z)", Action::Undo, self.doc.can_undo()),
+                (CIcon::Redo, "Redo (Ctrl+Y)", Action::Redo, self.doc.can_redo()),
+            ] {
+                let b = r(x, tabs.min.y + 1.0, 22.0, 22.0);
+                if self.icon_btn(ui, b, tip, icon, false, enabled).on_hover_text(tip).clicked() {
+                    self.push(action);
+                }
+                x += 23.0;
+            }
         }
         // Settings, where Windows had its help button.
         let help = r(tabs.max.x - 26.0, tabs.min.y + 3.0, 20.0, 18.0);
@@ -654,8 +688,28 @@ impl PaintApp {
                         let c = pos2(row.max.x - 10.0, row.center().y);
                         ui.painter().add(egui::Shape::convex_polygon(vec![c + vec2(-2.0, -4.0), c + vec2(2.0, 0.0), c + vec2(-2.0, 4.0)], rgb(0x40, 0x40, 0x40), Stroke::NONE));
                     }
-                    if resp.hovered() {
-                        self.app_menu_pane = pane;
+                    if resp.hovered() && pane != self.app_menu_pane {
+                        let now = ui.input(|i| i.time);
+                        match self.app_menu_hover {
+                            Some((p, since)) if p == pane => {
+                                if now - since > 0.3 {
+                                    self.app_menu_pane = pane;
+                                    self.app_menu_hover = None;
+                                } else {
+                                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
+                                }
+                            }
+                            _ => {
+                                // Commands with choices open them at once; leaving them
+                                // for a plain command waits a moment.
+                                if pane != 0 {
+                                    self.app_menu_pane = pane;
+                                } else {
+                                    self.app_menu_hover = Some((pane, now));
+                                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
+                                }
+                            }
+                        }
                     }
                     if resp.clicked() {
                         let action = match i {
@@ -888,6 +942,27 @@ impl PaintApp {
                         ui.close();
                     }
                 }
+                // Opacity (pencil, brushes) or tolerance (fill), which the Windows 11
+                // look shows as sliders beside the canvas.
+                let pal = app.pal;
+                let (label, value, range) = match app.s.tool {
+                    Tool::Pencil | Tool::Brush => ("Opacity", &mut app.s.opacity, 1.0..=100.0),
+                    Tool::Fill => ("Tolerance", &mut app.s.tolerance, 0.0..=100.0),
+                    _ => return,
+                };
+                ui.add_space(4.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new(label).size(12.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    if crate::fluent::slider(ui, &pal, value, range, 110.0, false).changed() {
+                        *value = value.round();
+                    }
+                    ui.label(egui::RichText::new(format!("{}%", *value)).size(12.0));
+                });
             });
         });
         self.colors_cgroup(ui);
@@ -1047,11 +1122,11 @@ impl PaintApp {
                 }
             }
         });
-        self.cgroup(ui, "Display", 2.0 * 54.0 + 4.0, |app, ui, c| {
+        self.cgroup(ui, "Display", 54.0 + 66.0 + 4.0, |app, ui, c| {
             if app.big_button(ui, r(c.min.x + 2.0, c.min.y, 52.0, CONTENT_H), "cfull", CIcon::FullScreen, "Full\nscreen", false, false, true).on_hover_text("Full screen (F11)").clicked() {
                 app.push(Action::Fullscreen);
             }
-            if app.big_button(ui, r(c.min.x + 56.0, c.min.y, 52.0, CONTENT_H), "cthumb", CIcon::Thumbnail, "Thumbnail", false, app.show_thumbnail, true).clicked() {
+            if app.big_button(ui, r(c.min.x + 56.0, c.min.y, 64.0, CONTENT_H), "cthumb", CIcon::Thumbnail, "Thumbnail", false, app.show_thumbnail, true).clicked() {
                 app.push(Action::ToggleThumbnail);
             }
         });
@@ -1109,7 +1184,7 @@ impl PaintApp {
                 let b = r(c.min.x + 112.0 + i as f32 * 25.0, c.min.y + 38.0, 24.0, 22.0);
                 let resp = ui.interact(b, ui.id().with(("calign", i)), app.click_sense(ui));
                 app.skin().btn_bg(ui.painter(), b, resp.hovered(), resp.is_pointer_button_down_on(), t.align == align);
-                crate::icons::paint(ui.painter(), b.shrink(4.0), icon, rgb(0x1C, 0x2A, 0x48), rgb(0x2B, 0x6C, 0xC4));
+                classic_icons::paint_extra(ui.painter(), Rect::from_center_size(b.center(), vec2(16.0, 16.0)), icon, true);
                 if resp.on_hover_text(tip).clicked() {
                     new.align = align;
                 }
@@ -1154,32 +1229,34 @@ impl PaintApp {
             .filter(|p| p.x >= 0.0 && p.y >= 0.0 && p.x < self.doc.width() as f32 && p.y < self.doc.height() as f32)
             .map(|p| format!("{}, {}px", p.x.floor(), p.y.floor()))
             .unwrap_or_default();
-        let mut x = rect.min.x + 6.0;
-        text(ui, x, crate::icons::Icon::Cursor, pos);
-        x += 150.0;
-        sep(ui, x - 6.0);
-        let sel = match (&self.drag, self.doc.floating()) {
-            (Some(Drag::Marquee { start, cur }), _) => format!("{} × {}px", (cur.x - start.x).abs().round(), (cur.y - start.y).abs().round()),
-            (_, Some(f)) => format!("{} × {}px", f.rect.width().round(), f.rect.height().round()),
-            _ => String::new(),
-        };
-        text(ui, x, crate::icons::Icon::SelectionSize, sel);
-        x += 150.0;
-        sep(ui, x - 6.0);
+        let sel = self.selection_size_text();
         let canvas = match &self.drag {
             Some(Drag::CanvasResize { size, .. }) => *size,
             _ => vec2(self.doc.width() as f32, self.doc.height() as f32),
         };
-        text(ui, x, crate::icons::Icon::CanvasSize, format!("{} × {}px", canvas.x, canvas.y));
-        x += 160.0;
-        sep(ui, x - 6.0);
-        if let Some(size) = self.doc.file_size.filter(|_| rect.width() > 900.0) {
-            text(ui, x, crate::icons::Icon::Disk, format!("Size: {}", human_size(size)));
-            sep(ui, x + 144.0);
+        // Fields from the left, each shown only while it fits before the zoom controls
+        // (the last ones go first when the window gets narrow).
+        let right = rect.max.x - 12.0;
+        let zoom_left = right - 18.0 - 110.0 - 20.0 - 52.0;
+        let mut fields = vec![
+            (crate::icons::Icon::Cursor, pos, 150.0),
+            (crate::icons::Icon::SelectionSize, sel, 150.0),
+            (crate::icons::Icon::CanvasSize, format!("{} × {}px", canvas.x, canvas.y), 160.0),
+        ];
+        if let Some(size) = self.doc.file_size {
+            fields.push((crate::icons::Icon::Disk, format!("Size: {}", human_size(size)), 150.0));
+        }
+        let mut x = rect.min.x + 6.0;
+        for (icon, s, width) in fields {
+            if x + width > zoom_left {
+                break;
+            }
+            text(ui, x, icon, s);
+            x += width;
+            sep(ui, x - 6.0);
         }
 
         // Zoom: percentage, minus, slider, plus.
-        let right = rect.max.x - 12.0;
         let slider = r(right - 18.0 - 110.0, rect.center().y - 8.0, 110.0, 16.0);
         let plus = r(right - 16.0, rect.center().y - 8.0, 16.0, 16.0);
         let minus = r(slider.min.x - 20.0, rect.center().y - 8.0, 16.0, 16.0);
@@ -1249,6 +1326,21 @@ pub fn dialog(
         if !skin.win7 {
             ui.painter().line_segment([strip.left_bottom(), strip.right_bottom()], Stroke::new(1.0, rgb(0xE6, 0xE6, 0xE6)));
         }
+        // Close button, which answers like the last button (Cancel, or OK when alone).
+        let x = if skin.win7 { r(strip.max.x - 46.0, strip.min.y + 1.0, 42.0, 18.0) } else { r(strip.max.x - 46.0, strip.min.y, 46.0, strip.height()) };
+        let xr = ui.interact(x, ui.id().with("dialog_close"), Sense::click());
+        let red = xr.hovered() || xr.is_pointer_button_down_on();
+        if red {
+            let fill = if xr.is_pointer_button_down_on() { rgb(0xF1, 0x70, 0x7A) } else { rgb(0xE8, 0x11, 0x23) };
+            ui.painter().rect_filled(x, if skin.win7 { 3.0 } else { 0.0 }, fill);
+        }
+        let (c, k) = (x.center(), 4.5);
+        let s = Stroke::new(1.0, if red { Color32::WHITE } else { skin.title_text });
+        ui.painter().line_segment([c + vec2(-k, -k), c + vec2(k, k)], s);
+        ui.painter().line_segment([c + vec2(-k, k), c + vec2(k, -k)], s);
+        if xr.on_hover_text("Close").clicked() {
+            clicked = Some(buttons.len().saturating_sub(1));
+        }
         egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 14, bottom: 12 }).show(ui, |ui| {
             ui.spacing_mut().item_spacing = spacing;
             ui.set_width(inner);
@@ -1261,7 +1353,7 @@ pub fn dialog(
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 for (i, label) in buttons.iter().enumerate().rev() {
-                    let (job, key) = crate::app::access_label(label, rgb(0x1E, 0x1E, 0x1E), alt);
+                    let (job, key) = crate::app::access_label(label, rgb(0x1E, 0x1E, 0x1E), alt, 12.5);
                     let galley = ui.painter().layout_job(job);
                     let w = (galley.size().x + 24.0).max(75.0);
                     let (rect, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());

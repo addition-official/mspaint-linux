@@ -38,19 +38,24 @@ impl PaintApp {
 
                     ui.label(RichText::new("Appearance").size(14.0).strong());
                     ui.add_space(6.0);
-                    card(ui, &pal, |ui| {
-                        card_header(ui, &pal, Icon::Palette, "App theme", "Select which app theme to display");
-                        ui.add_space(10.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(44.0);
-                            ui.vertical(|ui| {
-                                for (t, n) in [(ThemePref::Light, "Light"), (ThemePref::Dark, "Dark"), (ThemePref::System, "Use system setting")] {
-                                    fluent::radio_value(ui, &pal, &mut self.theme_pref, t, n);
-                                }
+                    // The classic styles are always light, as Windows 7 and 10 were, so the
+                    // theme choice only shows with the Windows 11 style.
+                    let classic = pal.classic != 0;
+                    if !classic {
+                        card(ui, &pal, |ui| {
+                            card_header(ui, &pal, Icon::Palette, "App theme", "Select which app theme to display");
+                            ui.add_space(10.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(44.0);
+                                ui.vertical(|ui| {
+                                    for (t, n) in [(ThemePref::Light, "Light"), (ThemePref::Dark, "Dark"), (ThemePref::System, "Use system setting")] {
+                                        fluent::radio_value(ui, &pal, &mut self.theme_pref, t, n);
+                                    }
+                                });
                             });
                         });
-                    });
-                    ui.add_space(4.0);
+                        ui.add_space(4.0);
+                    }
                     card(ui, &pal, |ui| {
                         card_header(ui, &pal, Icon::Picture, "Style", "Look like Paint in Windows 11, Windows 10 or Windows 7 (the classic styles are always light)");
                         ui.add_space(10.0);
@@ -74,8 +79,11 @@ impl PaintApp {
                         });
                     });
 
-                    ui.add_space(4.0);
-                    card(ui, &pal, |ui| self.custom_icons_card(ui));
+                    // Custom icons replace the classic styles' pictures only.
+                    if classic {
+                        ui.add_space(4.0);
+                        card(ui, &pal, |ui| self.custom_icons_card(ui));
+                    }
 
                     ui.add_space(24.0);
                     ui.label(RichText::new("About").size(14.0).strong());
@@ -91,7 +99,7 @@ impl PaintApp {
                             });
                         });
                         ui.add_space(8.0);
-                        ui.label("A simple, familiar paint program for Linux, inspired by Windows 11 Paint. Written in Rust.");
+                        ui.label("A simple, familiar paint program for Linux, inspired by Paint in Windows 11, 10 and 7. Written in Rust.");
                         ui.label(RichText::new("Not affiliated with or endorsed by Microsoft.").size(12.0).color(pal.text_dim));
                     });
                     ui.add_space(24.0);
@@ -164,6 +172,15 @@ impl PaintApp {
                                 ci::paint(ui.painter(), r, CIcon::Brushes, true);
                             }
                             ui.label(RichText::new(format!("{}.png", k.file_name())).monospace().size(12.0));
+                            if i % 2 == 1 {
+                                ui.end_row();
+                            }
+                        }
+                        ui.end_row();
+                        for (i, (name, icon)) in ci::EXTRA.iter().enumerate() {
+                            let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                            ci::paint_extra(ui.painter(), r, *icon, true);
+                            ui.label(RichText::new(format!("{name}.png")).monospace().size(12.0));
                             if i % 2 == 1 {
                                 ui.end_row();
                             }

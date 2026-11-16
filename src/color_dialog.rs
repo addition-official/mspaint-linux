@@ -67,6 +67,7 @@ impl ColorEdit {
                 });
             ui.add_space(8.0);
             let resp = ui.add(egui::TextEdit::singleline(&mut self.hex).desired_width(100.0).char_limit(7));
+            crate::fluent::focus_border(ui, &resp);
             if resp.changed()
                 && let Ok(c) = Color32::from_hex(&format!("#{}", self.hex.trim().trim_start_matches('#')))
             {

@@ -571,8 +571,33 @@ fn shape_icon(p: &Painter, r: Rect, kind: ShapeKind, s: Stroke) {
         ShapeKind::Polygon => closed(p, r, &[(4.0, 9.0), (11.0, 4.0), (20.0, 7.0), (17.0, 13.0), (20.0, 20.0), (6.0, 20.0)], s),
         _ => {
             for poly in shapes::polygons(kind, inner) {
-                p.add(Shape::closed_line(poly, s));
+                outline_without_spikes(p, &poly, s);
             }
+        }
+    }
+}
+
+/// A closed outline, broken into open lines at corners sharper than about 30 degrees
+/// (the heart's dip and tip): egui joins lines with a miter, which at such a corner
+/// shoots a long spike out of the icon.
+fn outline_without_spikes(p: &Painter, poly: &[Pos2], s: Stroke) {
+    let n = poly.len();
+    let sharp = |i: usize| {
+        let (a, b, c) = (poly[(i + n - 1) % n], poly[i], poly[(i + 1) % n]);
+        let (u, v) = ((a - b).normalized(), (c - b).normalized());
+        u.dot(v) > 0.85
+    };
+    let Some(start) = (0..n).find(|&i| sharp(i)) else {
+        p.add(Shape::closed_line(poly.to_vec(), s));
+        return;
+    };
+    let mut line = vec![poly[start]];
+    for k in 1..=n {
+        let i = (start + k) % n;
+        line.push(poly[i]);
+        if sharp(i) {
+            p.add(Shape::line(std::mem::take(&mut line), s));
+            line.push(poly[i]);
         }
     }
 }

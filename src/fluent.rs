@@ -293,6 +293,12 @@ fn classic_slider(ui: &Ui, pal: &Palette, a: egui::Pos2, b: egui::Pos2, at: egui
 /// Fluent chevron for `ComboBox::icon`.
 pub fn combo_chevron(ui: &Ui, rect: Rect, visuals: &egui::style::WidgetVisuals, _open: bool) {
     let c = rect.center();
+    if is_classic(ui.visuals()) {
+        // Classic combo boxes have a small solid triangle.
+        let pts = vec![c + vec2(-3.5, -1.5), c + vec2(3.5, -1.5), c + vec2(0.0, 2.0)];
+        ui.painter().add(egui::Shape::convex_polygon(pts, visuals.fg_stroke.color, Stroke::NONE));
+        return;
+    }
     let s = Stroke::new(1.2, visuals.fg_stroke.color);
     let pts = vec![c + vec2(-4.0, -2.0), c + vec2(0.0, 2.0), c + vec2(4.0, -2.0)];
     ui.painter().add(egui::Shape::line(pts, s));
@@ -320,7 +326,14 @@ pub fn focus_ring(ctx: &egui::Context, pal: &Palette) {
     let Some(id) = ctx.memory(|m| m.focused()) else { return };
     let Some(resp) = ctx.read_response(id) else { return };
     let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("focus_ring")));
-    p.rect_stroke(resp.rect.expand(2.0), 6.0, Stroke::new(2.0, pal.text), egui::StrokeKind::Outside);
+    if pal.classic != 0 {
+        // Classic Windows marks keyboard focus with a thin dotted rectangle.
+        let r = resp.rect.shrink(2.0);
+        let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+        p.extend(egui::Shape::dotted_line(&pts, pal.text, 2.0, 0.5));
+    } else {
+        p.rect_stroke(resp.rect.expand(2.0), 6.0, Stroke::new(2.0, pal.text), egui::StrokeKind::Outside);
+    }
 }
 
 /// Number box like a WinUI NumberBox: type a value (the whole text is selected when it
@@ -352,6 +365,21 @@ pub fn number_entry(
     number_box(ui, id_salt, value, range, decimals, suffix, width, false)
 }
 
+/// Whether the classic styles' visuals are active (only they draw selected text white
+/// on blue; Windows 11 uses the accent color).
+fn is_classic(v: &egui::Visuals) -> bool {
+    v.selection.stroke.color == Color32::WHITE
+}
+
+/// The classic styles keep selected text white on blue, which makes egui draw a focused
+/// text box's border white too; this draws it blue again, as in Windows.
+pub fn focus_border(ui: &Ui, resp: &Response) {
+    let v = ui.visuals();
+    if resp.has_focus() && is_classic(v) {
+        ui.painter().rect_stroke(resp.rect, v.widgets.inactive.corner_radius, Stroke::new(1.0, v.selection.bg_fill), egui::StrokeKind::Inside);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn number_box(
     ui: &mut Ui,
@@ -376,8 +404,12 @@ fn number_box(
         [width, 26.0],
         egui::TextEdit::singleline(&mut text).id(edit_id).horizontal_align(egui::Align::Min).margin(vec2(8.0, 4.0)),
     );
+    focus_border(ui, &resp);
     let typed = typed_before || resp.changed();
-    ui.data_mut(|d| d.insert_temp(typed_id, typed && resp.has_focus()));
+    // Ask for the focus outside `data_mut`: both take egui's lock, and asking inside
+    // would wait on itself forever (the app hung on the first typed key).
+    let keep = typed && resp.has_focus();
+    ui.data_mut(|d| d.insert_temp(typed_id, keep));
     if resp.gained_focus()
         && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id)
     {

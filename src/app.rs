@@ -164,6 +164,9 @@ pub struct PaintApp {
     /// What the right side of the classic File menu shows: 0 recent pictures,
     /// 1 Save as formats, 2 desktop background modes.
     pub app_menu_pane: u8,
+    /// The pane the mouse asks for, and since when (it switches after a moment, so
+    /// moving diagonally toward the right side doesn't flip it).
+    pub app_menu_hover: Option<(u8, f64)>,
     /// A text box was being edited last frame (the Text tab opens when one starts).
     pub classic_text_seen: bool,
     applied_dark: Option<(bool, Style)>,
@@ -206,6 +209,8 @@ pub struct PaintApp {
     title_press_moved: bool,
     /// The current mouse press closed a menu: the canvas ignores it until release.
     pub swallow_press: bool,
+    /// The current press closed the open menus (see `ui`).
+    closed_by_press: bool,
     /// Buttons on the title bar and tab row (this frame, and last frame's): a press
     /// that starts on one of them is a click, never a window move.
     pub no_drag: Vec<Rect>,
@@ -281,6 +286,7 @@ impl PaintApp {
             style: p.style,
             classic_tab: 0,
             app_menu_pane: 0,
+            app_menu_hover: None,
             classic_text_seen: false,
             applied_dark: None,
             tex: None,
@@ -315,6 +321,7 @@ impl PaintApp {
             on_window_edge: false,
             title_press_moved: false,
             swallow_press: false,
+            closed_by_press: false,
             no_drag: Vec::new(),
             no_drag_prev: Vec::new(),
             corner: WINDOW_RADIUS,
@@ -1305,6 +1312,24 @@ impl PaintApp {
         });
     }
 
+    /// The status bar's selection size: the marquee or new text box being dragged, the
+    /// floating selection, or the shape or text box being edited, as in Paint.
+    pub fn selection_size_text(&self) -> String {
+        let size = |w: f32, h: f32| format!("{} × {}px", w.abs().round(), h.abs().round());
+        match (&self.drag, self.doc.floating()) {
+            (Some(Drag::Marquee { start, cur }), _) | (Some(Drag::TextNew { start, cur }), _) => size(cur.x - start.x, cur.y - start.y),
+            (_, Some(f)) => size(f.rect.width(), f.rect.height()),
+            _ => match &self.doc.overlay {
+                Overlay::Shape(sh) => {
+                    let b = sh.geom.bounds();
+                    size(b.width(), b.height())
+                }
+                Overlay::Text(tb) => size(tb.rect.width(), tb.rect.height()),
+                _ => String::new(),
+            },
+        }
+    }
+
     /// Menu bar behavior egui doesn't have: with one menu open, hovering the other
     /// switches to it; Alt+F and Alt+V open them; arrow keys move through the items.
     fn menu_bar_keys(&mut self, ctx: &egui::Context, file: &egui::Response, view: &egui::Response) {
@@ -1393,13 +1418,18 @@ impl PaintApp {
     /// requested that late. A press without movement stays a click, so double-click
     /// maximizes. Pressing at the window edge resizes instead (see `window_edges`).
     pub fn window_grab(&mut self, ctx: &egui::Context, bar: &egui::Response, maximized: bool) {
+        // Presses on the buttons drawn over the bar are theirs (disabled ones too).
+        let on_button = ctx.input(|i| i.pointer.press_origin()).is_some_and(|o| self.no_drag_prev.iter().chain(&self.no_drag).any(|r| r.contains(o)));
         if bar.double_clicked() {
-            ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+            if !on_button {
+                ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+            }
             return;
         }
         let (pressed, down, moved) = ctx.input(|i| {
-            // A maximized window is restored by moving it: only for a real drag.
-            let need = if maximized { 6.0 } else { 0.5 };
+            // A few pixels, so a slightly shaky click stays a click; more for a
+            // maximized window, which moving restores.
+            let need = if maximized { 6.0 } else { 3.0 };
             let travel = match (i.pointer.press_origin(), i.pointer.interact_pos()) {
                 (Some(a), Some(b)) => (b - a).length(),
                 _ => 0.0,
@@ -1412,9 +1442,9 @@ impl PaintApp {
             self.title_press_moved = false;
         }
         // Presses on the buttons drawn over the bar are theirs.
-        let on_button = ctx.input(|i| i.pointer.press_origin()).is_some_and(|o| self.no_drag_prev.iter().chain(&self.no_drag).any(|r| r.contains(o)));
         if !on_button && !self.on_window_edge && !self.title_press_moved && down && moved && bar.is_pointer_button_down_on() {
             self.title_press_moved = true;
+            self.swallow_press = false;
             ctx.send_viewport_cmd(ViewportCommand::StartDrag);
         }
     }
@@ -1559,24 +1589,7 @@ impl PaintApp {
                 .unwrap_or_default();
             item(ui, Icon::Cursor, pos, 130.0);
             ui.separator();
-            let sel = match (&self.drag, self.doc.floating()) {
-                (Some(Drag::Marquee { start, cur }), _) => {
-                    format!("{} × {}px", (cur.x - start.x).abs().round(), (cur.y - start.y).abs().round())
-                }
-                (Some(Drag::TextNew { start, cur }), _) => {
-                    format!("{} × {}px", (cur.x - start.x).abs().round(), (cur.y - start.y).abs().round())
-                }
-                (_, Some(f)) => format!("{} × {}px", f.rect.width().round(), f.rect.height().round()),
-                // Shapes and text boxes show their size while drawn or edited, as in Paint.
-                _ => match &self.doc.overlay {
-                    Overlay::Shape(sh) => {
-                        let b = sh.geom.bounds();
-                        format!("{} × {}px", b.width().round(), b.height().round())
-                    }
-                    Overlay::Text(tb) => format!("{} × {}px", tb.rect.width().round(), tb.rect.height().round()),
-                    _ => String::new(),
-                },
-            };
+            let sel = self.selection_size_text();
             item(ui, Icon::SelectionSize, sel, 130.0);
             let canvas = match &self.drag {
                 Some(Drag::CanvasResize { size, .. }) => *size,
@@ -1823,7 +1836,7 @@ impl PaintApp {
             }
             Dialog::CustomRotate { angle } => {
                 let clicked = modal("custom_rotate", ctx, 340.0, "Custom rotate", &["OK", "Cancel"], &mut |ui| {
-                    ui.horizontal_centered(|ui| {
+                    ui.horizontal(|ui| {
                         ui.label("Angle");
                         let field = fluent::number_field(ui, "rotate_angle", angle, -360.0..=360.0, 1, "°", 90.0);
                         if ui.memory(|m| m.focused().is_none()) {
@@ -1926,7 +1939,11 @@ impl PaintApp {
             .title_bar(false)
             .resizable(false)
             .fixed_size(size)
-            .frame(egui::Frame::popup(&ctx.global_style()).corner_radius(8).inner_margin(egui::Margin::same(8)))
+            .frame(egui::Frame::popup(&ctx.global_style()).corner_radius(match pal.classic {
+                0 => 8,
+                7 => 3,
+                _ => 0,
+            }).inner_margin(egui::Margin::same(8)))
             .default_pos(egui::pos2(self.viewport.max.x - size.x - 40.0, self.viewport.min.y + 20.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -2072,6 +2089,12 @@ impl PaintApp {
 impl PaintApp {
     /// Menu row, ribbon, canvas, layers panel and status bar.
     fn main_view(&mut self, ui: &mut egui::Ui) {
+        // Full screen shows only the picture, as in Paint (Esc or F11 leaves it).
+        if ui.ctx().input(|i| i.viewport().fullscreen.unwrap_or(false)) {
+            let pal = self.pal;
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.workspace)).show(ui, |ui| self.canvas(ui));
+            return;
+        }
         if self.style.classic() {
             self.classic_view(ui);
             return;
@@ -2187,12 +2210,17 @@ impl eframe::App for PaintApp {
         self.popup_was_open = egui::Popup::is_any_open(&ctx);
         // As in Windows, pressing the mouse anywhere outside an open menu or drop-down
         // closes it. (egui waits for a whole click, so a drag elsewhere left it open.)
-        if self.popup_was_open
-            && let Some(at) = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None })
-            && ctx.layer_id_at(at).is_none_or(|l| l.order != egui::Order::Foreground)
-        {
-            egui::Popup::close_all(&ctx);
-            self.swallow_press = true;
+        let press_at = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None });
+        if let Some(at) = press_at {
+            if self.popup_was_open && ctx.layer_id_at(at).is_none_or(|l| l.order != egui::Order::Foreground) {
+                egui::Popup::close_all(&ctx);
+                self.swallow_press = true;
+                self.closed_by_press = true;
+            } else {
+                // A press that closed no menu is an ordinary one, whatever came before
+                // (a window move hides the release from egui).
+                self.swallow_press = false;
+            }
         }
         self.ppp = ctx.pixels_per_point();
         // Once at startup: a window taller or wider than the screen (the default size on a
@@ -2242,7 +2270,9 @@ impl eframe::App for PaintApp {
         // Windows 10 windows are square; Windows 7 kept them square at the bottom too.
         self.corner = if self.style.classic() || self.system_titlebar || maximized || fullscreen || !composited { 0 } else { WINDOW_RADIUS };
         self.on_window_edge = self.window_edges(&ctx);
-        if !self.system_titlebar && self.style.classic() {
+        if fullscreen {
+            // No title bar in full screen (see `main_view`).
+        } else if !self.system_titlebar && self.style.classic() {
             egui::Panel::top("titlebar")
                 .exact_size(crate::classic::TITLE_H)
                 .frame(egui::Frame::new())
@@ -2275,6 +2305,14 @@ impl eframe::App for PaintApp {
         self.thumbnail_window(&ctx);
         fluent::focus_ring(&ctx, &self.pal);
 
+        // The click that closed a menu must not open it again: buttons that open
+        // menus toggle them on release, which comes after the press closed it.
+        if self.closed_by_press && !ctx.input(|i| i.pointer.any_down()) {
+            self.closed_by_press = false;
+            if egui::Popup::is_any_open(&ctx) {
+                egui::Popup::close_all(&ctx);
+            }
+        }
         for a in std::mem::take(&mut self.actions) {
             self.run_action(&ctx, a);
         }
@@ -2416,7 +2454,7 @@ pub fn content_dialog(
                     let bw = (inner - 8.0 * (n - 1.0)) / n;
                     for (i, label) in buttons.iter().enumerate() {
                         let fg = if i == 0 { if pal.dark { Color32::BLACK } else { Color32::WHITE } } else { pal.text };
-                        let (job, key) = access_label(label, fg, alt);
+                        let (job, key) = access_label(label, fg, alt, 14.0);
                         let mut b = Button::new(job).min_size(vec2(100.0, 30.0));
                         if i == 0 {
                             b = b.fill(pal.accent);
@@ -2462,9 +2500,9 @@ fn vertical_caret(lay: &crate::text::Layout, caret: usize, up: bool, n: usize) -
 
 /// Button text with a Windows access key: "Do&n't save" shows "Don't save" with the
 /// n underlined, and pressing N picks it.
-pub fn access_label(label: &str, color: Color32, underline: bool) -> (egui::text::LayoutJob, Option<Key>) {
+pub fn access_label(label: &str, color: Color32, underline: bool, size: f32) -> (egui::text::LayoutJob, Option<Key>) {
     let mut job = egui::text::LayoutJob::default();
-    let font = egui::FontId::proportional(14.0);
+    let font = egui::FontId::proportional(size);
     let plain = egui::TextFormat { font_id: font.clone(), color, ..Default::default() };
     let mut key = None;
     let mut chars = label.chars();

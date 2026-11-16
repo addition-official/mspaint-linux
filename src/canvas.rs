@@ -177,7 +177,10 @@ impl PaintApp {
         let classic = self.style.classic();
         let pad = if classic { crate::classic::CANVAS_PAD } else { MARGIN };
         let content = if classic {
-            vec2(area.width().max(img_size.x + pad + MARGIN), area.height().max(img_size.y + pad + MARGIN))
+            // Solid scroll bars take room of their own: fill only what's left, so a
+            // picture that fits doesn't scroll.
+            let room = area.size() - Vec2::splat(ui.spacing().scroll.allocated_width());
+            vec2(room.x.max(img_size.x + pad + MARGIN), room.y.max(img_size.y + pad + MARGIN))
         } else {
             vec2(area.width().max(img_size.x + 2.0 * MARGIN), area.height().max(img_size.y + 2.0 * MARGIN))
         };
@@ -532,7 +535,8 @@ impl PaintApp {
             Overlay::Float(f) => {
                 let r = Rect::from_min_max(to_scr(f.rect.min), to_scr(f.rect.max));
                 // Free rotation (Paint 11.2601+): drag the handle above the selection.
-                if (rotate_handle(r, self.viewport).0 - p_scr).length() <= 9.0 {
+                // The classic styles have no such handle, as in the older Paint.
+                if self.pal.classic == 0 && (rotate_handle(r, self.viewport).0 - p_scr).length() <= 9.0 {
                     let (w, h) = (f.rect.width().round().max(1.0) as u32, f.rect.height().round().max(1.0) as u32);
                     let base = if (w, h) == (f.pix.width(), f.pix.height()) { f.pix.clone() } else { pixels::resize(&f.pix, w, h) };
                     let center = f.rect.center();
@@ -946,7 +950,7 @@ impl PaintApp {
         match &self.doc.overlay {
             Overlay::Float(f) => {
                 let r = Rect::from_min_max(to_scr(f.rect.min), to_scr(f.rect.max));
-                if (rotate_handle(r, self.viewport).0 - p_scr).length() <= 9.0 {
+                if self.pal.classic == 0 && (rotate_handle(r, self.viewport).0 - p_scr).length() <= 9.0 {
                     return os(CursorIcon::Grab);
                 }
                 if let Some(h) = hit_box(r, p_scr, true) {
@@ -1018,9 +1022,11 @@ impl PaintApp {
             dashed_rect(p, r, pal.accent);
             draw_handles(p, r, pal.accent);
             let (rh, edge) = rotate_handle(r, self.viewport);
-            p.line_segment([edge, rh], Stroke::new(1.0, pal.accent));
-            p.circle_filled(rh, 6.0, Color32::WHITE);
-            p.circle_stroke(rh, 6.0, Stroke::new(1.5, pal.accent));
+            if pal.classic == 0 {
+                p.line_segment([edge, rh], Stroke::new(1.0, pal.accent));
+                p.circle_filled(rh, 6.0, Color32::WHITE);
+                p.circle_stroke(rh, 6.0, Stroke::new(1.5, pal.accent));
+            }
             if let Some(Drag::Rotate { angle, .. }) = &self.drag {
                 p.text(
                     rh + vec2(12.0, -10.0),
@@ -1122,8 +1128,9 @@ impl PaintApp {
         // Canvas resize handles.
         for h in self.canvas_handles(img) {
             let hr = Rect::from_center_size(h, vec2(HANDLE, HANDLE));
-            p.rect_filled(hr, 1.5, if pal.dark { Color32::from_gray(60) } else { Color32::WHITE });
-            p.rect_stroke(hr, 1.5, Stroke::new(1.0, pal.text_dim), StrokeKind::Inside);
+            let radius = if pal.classic == 0 { 1.5 } else { 0.0 };
+            p.rect_filled(hr, radius, if pal.dark { Color32::from_gray(60) } else { Color32::WHITE });
+            p.rect_stroke(hr, radius, Stroke::new(1.0, pal.text_dim), StrokeKind::Inside);
         }
     }
 
