@@ -36,6 +36,10 @@ pub enum CIcon {
     AppMenu,
     Opaque,
     Transparent,
+    StatusCursor,
+    StatusSelection,
+    StatusCanvas,
+    StatusDisk,
 }
 
 fn rgb(r: u8, g: u8, b: u8) -> Color32 {
@@ -92,7 +96,7 @@ impl Pen<'_> {
 }
 
 impl CIcon {
-    pub const ALL: [CIcon; 29] = [
+    pub const ALL: [CIcon; 33] = [
         CIcon::Paste,
         CIcon::Cut,
         CIcon::Copy,
@@ -122,6 +126,10 @@ impl CIcon {
         CIcon::AppMenu,
         CIcon::Opaque,
         CIcon::Transparent,
+        CIcon::StatusCursor,
+        CIcon::StatusSelection,
+        CIcon::StatusCanvas,
+        CIcon::StatusDisk,
     ];
 
     /// The file name (without extension) a custom icon for this button uses.
@@ -156,6 +164,10 @@ impl CIcon {
             CIcon::AppMenu => "app-menu",
             CIcon::Opaque => "text-opaque",
             CIcon::Transparent => "text-transparent",
+            CIcon::StatusCursor => "status-position",
+            CIcon::StatusSelection => "status-selection",
+            CIcon::StatusCanvas => "status-canvas",
+            CIcon::StatusDisk => "status-file-size",
         }
     }
 }
@@ -468,6 +480,41 @@ fn draw(d: &Pen, icon: CIcon) {
             }
             d.p.rect_stroke(d.r(1.5, 1.5, 13.0, 13.0), 0.0, Stroke::new(0.8 * d.k, outline), StrokeKind::Inside);
             d.text(8.0, 8.5, 11.0, "A", rgb(0x1C, 0x2A, 0x48));
+        }
+        CIcon::StatusCursor => {
+            // Arrow pointer: white with a dark outline.
+            d.poly(&[(3.0, 1.5), (3.0, 13.0), (5.8, 10.4), (7.6, 14.6), (9.4, 13.8), (7.6, 9.7), (11.4, 9.7)], Color32::WHITE, rgb(0x20, 0x20, 0x20));
+        }
+        CIcon::StatusSelection => {
+            let r = d.r(1.5, 3.5, 13.0, 9.0);
+            d.p.rect_filled(r, 0.0, rgb(0xE6, 0xF0, 0xFB));
+            let n = 13;
+            for i in 0..n {
+                if i % 2 == 0 {
+                    let x0 = 1.5 + i as f32;
+                    d.line(&[(x0, 3.5), (x0 + 1.0, 3.5)], 0.9, rgb(0x20, 0x20, 0x20));
+                    d.line(&[(x0, 12.5), (x0 + 1.0, 12.5)], 0.9, rgb(0x20, 0x20, 0x20));
+                }
+            }
+            for i in 0..9 {
+                if i % 2 == 0 {
+                    let y0 = 3.5 + i as f32;
+                    d.line(&[(1.5, y0), (1.5, y0 + 1.0)], 0.9, rgb(0x20, 0x20, 0x20));
+                    d.line(&[(14.5, y0), (14.5, y0 + 1.0)], 0.9, rgb(0x20, 0x20, 0x20));
+                }
+            }
+        }
+        CIcon::StatusCanvas => {
+            // A sheet with a resize grip in the corner.
+            d.boxed(1.5, 2.5, 11.0, 10.0, Color32::WHITE, rgb(0x6E, 0x78, 0x84), 0.0);
+            for (x, y) in [(13.0, 13.0), (11.0, 13.0), (13.0, 11.0)] {
+                d.p.rect_filled(d.r(x, y, 1.6, 1.6), 0.0, rgb(0x2B, 0x6C, 0xC4));
+            }
+        }
+        CIcon::StatusDisk => {
+            d.boxed(2.0, 2.0, 12.0, 12.0, rgb(0x3E, 0x7B, 0xD0), rgb(0x1F, 0x4E, 0x96), 1.0);
+            d.boxed(4.5, 2.0, 7.0, 4.5, rgb(0xF4, 0xF6, 0xF9), rgb(0x1F, 0x4E, 0x96), 0.0);
+            d.boxed(4.0, 9.0, 8.0, 5.0, Color32::WHITE, rgb(0x1F, 0x4E, 0x96), 0.0);
         }
     }
 }

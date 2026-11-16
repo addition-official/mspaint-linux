@@ -36,20 +36,23 @@ impl ColorEdit {
     /// The editor itself, `width` wide. `hsv_fields` picks HSV over RGB fields.
     pub fn ui(&mut self, ui: &mut Ui, pal: &Palette, width: f32, hsv_fields: &mut bool) {
         let preview_w = 72.0;
+        let classic = pal.classic != 0;
         let spec = Rect::from_min_size(ui.cursor().min, vec2(width - preview_w - 12.0, 168.0));
-        self.spectrum(ui, spec);
+        self.spectrum(ui, spec, classic);
         let preview = Rect::from_min_size(pos2(spec.max.x + 12.0, spec.min.y), vec2(preview_w, spec.height()));
         // New color on top, the original below, as in Windows.
         let p = ui.painter();
         let (top, bottom) = preview.split_top_bottom_at_fraction(0.5);
-        let r = 6;
+        // Square in the classic styles.
+        let r = if classic { 0 } else { 6 };
         p.rect_filled(top, egui::CornerRadius { nw: r, ne: r, sw: 0, se: 0 }, self.color());
         p.rect_filled(bottom, egui::CornerRadius { nw: 0, ne: 0, sw: r, se: r }, self.original);
-        p.rect_stroke(preview, r, Stroke::new(1.0, pal.separator), egui::StrokeKind::Outside);
+        let rim = if classic { Color32::from_rgb(0x80, 0x80, 0x80) } else { pal.separator };
+        p.rect_stroke(preview, r, Stroke::new(1.0, rim), egui::StrokeKind::Outside);
         ui.allocate_rect(spec.union(preview), Sense::hover());
         ui.add_space(12.0);
         let slider = Rect::from_min_size(ui.cursor().min, vec2(spec.width(), 20.0));
-        self.value_slider(ui, slider);
+        self.value_slider(ui, slider, classic);
         ui.allocate_rect(slider, Sense::hover());
         ui.add_space(14.0);
 
@@ -104,7 +107,7 @@ impl ColorEdit {
     }
 
     /// Hue across, saturation down (full at the top), at the current value.
-    fn spectrum(&mut self, ui: &mut Ui, rect: Rect) {
+    fn spectrum(&mut self, ui: &mut Ui, rect: Rect, classic: bool) {
         let resp = ui.interact(rect, ui.id().with("spectrum"), Sense::click_and_drag());
         if let Some(p) = resp.interact_pointer_pos()
             && (resp.dragged() || resp.clicked() || resp.is_pointer_button_down_on())
@@ -129,13 +132,18 @@ impl ColorEdit {
         }
         let p = ui.painter_at(rect.expand(8.0));
         p.add(mesh);
-        p.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_black_alpha(40)), egui::StrokeKind::Outside);
+        let edge = if classic { Color32::from_rgb(0x80, 0x80, 0x80) } else { Color32::from_black_alpha(40) };
+        p.rect_stroke(rect, 0.0, Stroke::new(1.0, edge), egui::StrokeKind::Outside);
         let at = pos2(rect.min.x + self.hsv[0] / 360.0 * rect.width(), rect.min.y + (1.0 - self.hsv[1]) * rect.height());
-        marker(&p, at, 7.0);
+        if classic {
+            crosshair(&p, at);
+        } else {
+            marker(&p, at, 7.0);
+        }
     }
 
     /// Value from black to the full-brightness color, with a round thumb.
-    fn value_slider(&mut self, ui: &mut Ui, rect: Rect) {
+    fn value_slider(&mut self, ui: &mut Ui, rect: Rect, classic: bool) {
         let resp = ui.interact(rect, ui.id().with("value"), Sense::click_and_drag());
         let track = rect.shrink2(vec2(0.0, 4.0));
         if let Some(p) = resp.interact_pointer_pos()
@@ -145,6 +153,27 @@ impl ColorEdit {
         }
         let mut mesh = Mesh::default();
         let full = hsv_to_rgb([self.hsv[0], self.hsv[1], 1.0]);
+        if classic {
+            // A plain gradient bar with a small arrow under the value.
+            let bar = Rect::from_min_max(track.min, pos2(track.max.x, track.max.y - 4.0));
+            for (x, c) in [(bar.min.x, Color32::BLACK), (bar.max.x, full)] {
+                mesh.colored_vertex(pos2(x, bar.min.y), c);
+                mesh.colored_vertex(pos2(x, bar.max.y), c);
+            }
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(1, 2, 3);
+            let p = ui.painter_at(rect.expand(8.0));
+            p.add(mesh);
+            p.rect_stroke(bar, 0.0, Stroke::new(1.0, Color32::from_rgb(0x80, 0x80, 0x80)), egui::StrokeKind::Outside);
+            let x = bar.min.x + self.hsv[2] * bar.width();
+            let tip = pos2(x, bar.max.y + 1.0);
+            p.add(egui::Shape::convex_polygon(
+                vec![tip, tip + vec2(-5.0, 6.0), tip + vec2(5.0, 6.0)],
+                Color32::from_rgb(0x20, 0x20, 0x20),
+                Stroke::NONE,
+            ));
+            return;
+        }
         let r = track.height() / 2.0;
         let inner = track.shrink2(vec2(r, 0.0));
         for (x, c) in [(inner.min.x, Color32::BLACK), (inner.max.x, full)] {
@@ -160,6 +189,14 @@ impl ColorEdit {
         p.add(mesh);
         let at = pos2(inner.min.x + self.hsv[2] * inner.width(), track.center().y);
         marker(&p, at, 8.0);
+    }
+}
+
+/// The classic spectrum marker: a small crosshair with a gap in the middle.
+fn crosshair(p: &egui::Painter, at: Pos2) {
+    for (a, b) in [(vec2(-8.0, 0.0), vec2(-3.0, 0.0)), (vec2(3.0, 0.0), vec2(8.0, 0.0)), (vec2(0.0, -8.0), vec2(0.0, -3.0)), (vec2(0.0, 3.0), vec2(0.0, 8.0))] {
+        p.line_segment([at + a, at + b], Stroke::new(3.0, Color32::WHITE));
+        p.line_segment([at + a, at + b], Stroke::new(1.5, Color32::BLACK));
     }
 }
 

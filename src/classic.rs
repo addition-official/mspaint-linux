@@ -992,7 +992,13 @@ impl PaintApp {
         gradient(ui.painter(), rect, skin.status[0], skin.status[1], 0.0);
         ui.painter().line_segment([rect.left_top(), rect.right_top()], Stroke::new(1.0, skin.ribbon_border));
         let text = |ui: &Ui, x: f32, icon: crate::icons::Icon, s: String| {
-            crate::icons::paint(ui.painter(), Rect::from_center_size(pos2(x + 8.0, rect.center().y), vec2(14.0, 14.0)), icon, rgb(0x40, 0x40, 0x40), rgb(0x2B, 0x6C, 0xC4));
+            let ci = match icon {
+                crate::icons::Icon::Cursor => CIcon::StatusCursor,
+                crate::icons::Icon::SelectionSize => CIcon::StatusSelection,
+                crate::icons::Icon::CanvasSize => CIcon::StatusCanvas,
+                _ => CIcon::StatusDisk,
+            };
+            classic_icons::paint(ui.painter(), Rect::from_center_size(pos2(x + 8.0, rect.center().y), vec2(16.0, 16.0)), ci, true);
             ui.painter().text(pos2(x + 22.0, rect.center().y), Align2::LEFT_CENTER, s, FontId::proportional(12.0), rgb(0x20, 0x20, 0x20));
         };
         let sep = |ui: &Ui, x: f32| {
@@ -1186,6 +1192,8 @@ pub fn menu_icon(icon: crate::icons::Icon) -> Option<CIcon> {
         I::Brush(_) => CIcon::Brushes,
         I::Transparent => CIcon::Transparent,
         I::Palette => CIcon::EditColors,
+        I::Picture => CIcon::Thumbnail,
+        I::Desktop => CIcon::FullScreen,
         _ => return None,
     })
 }

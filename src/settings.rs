@@ -195,7 +195,11 @@ fn card(ui: &mut Ui, pal: &crate::theme::Palette, add: impl FnOnce(&mut Ui)) {
 fn card_header(ui: &mut Ui, pal: &crate::theme::Palette, icon: Icon, title: &str, text: &str) {
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(28.0, 32.0), Sense::hover());
-        icons::paint(ui.painter(), egui::Rect::from_center_size(r.center(), vec2(20.0, 20.0)), icon, pal.text, pal.accent);
+        if pal.classic == 0 {
+            icons::paint(ui.painter(), egui::Rect::from_center_size(r.center(), vec2(20.0, 20.0)), icon, pal.text, pal.accent);
+        } else if let Some(ci) = crate::classic::menu_icon(icon) {
+            crate::classic_icons::paint(ui.painter(), egui::Rect::from_center_size(r.center(), vec2(24.0, 24.0)), ci, true);
+        }
         ui.add_space(12.0);
         ui.vertical(|ui| {
             ui.label(RichText::new(title).size(14.0));
