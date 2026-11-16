@@ -204,6 +204,8 @@ pub struct PaintApp {
     pub on_window_edge: bool,
     /// The window was asked to move for the current title bar press.
     title_press_moved: bool,
+    /// The current mouse press closed a menu: the canvas ignores it until release.
+    pub swallow_press: bool,
     /// Buttons on the title bar and tab row (this frame, and last frame's): a press
     /// that starts on one of them is a click, never a window move.
     pub no_drag: Vec<Rect>,
@@ -312,6 +314,7 @@ impl PaintApp {
             decorations_applied: None,
             on_window_edge: false,
             title_press_moved: false,
+            swallow_press: false,
             no_drag: Vec::new(),
             no_drag_prev: Vec::new(),
             corner: WINDOW_RADIUS,
@@ -2182,6 +2185,15 @@ impl eframe::App for PaintApp {
             self.dialog = Some(Dialog::Message(e));
         }
         self.popup_was_open = egui::Popup::is_any_open(&ctx);
+        // As in Windows, pressing the mouse anywhere outside an open menu or drop-down
+        // closes it. (egui waits for a whole click, so a drag elsewhere left it open.)
+        if self.popup_was_open
+            && let Some(at) = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None })
+            && ctx.layer_id_at(at).is_none_or(|l| l.order != egui::Order::Foreground)
+        {
+            egui::Popup::close_all(&ctx);
+            self.swallow_press = true;
+        }
         self.ppp = ctx.pixels_per_point();
         // Once at startup: a window taller or wider than the screen (the default size on a
         // small or scaled display) is shrunk to fit, so the status bar isn't off-screen.

@@ -284,6 +284,13 @@ impl PaintApp {
     }
 
     fn canvas_input(&mut self, ui: &Ui, resp: &Response, img: Rect) {
+        // The press that closed a menu does nothing else, as in Windows.
+        if self.swallow_press {
+            if !ui.input(|i| i.pointer.any_down()) {
+                self.swallow_press = false;
+            }
+            return;
+        }
         let z = self.view_scale();
         let to_img = |p: Pos2| ((p - img.min) / z).to_pos2();
         let to_scr = |p: Pos2| img.min + p.to_vec2() * z;
