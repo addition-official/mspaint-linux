@@ -59,6 +59,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.0" date="2026-11-16">
+      <description>
+        <p>New classic styles: the ribbon of Paint in Windows 10 and Windows 7 (Settings, Style).</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-11-15">
       <description>
         <p>Paint for Linux is now called Paintbox.</p>

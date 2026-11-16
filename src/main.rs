@@ -3,6 +3,8 @@
 mod app;
 mod brush;
 mod canvas;
+mod classic;
+mod classic_icons;
 mod clipkeep;
 mod color_dialog;
 mod cursor;

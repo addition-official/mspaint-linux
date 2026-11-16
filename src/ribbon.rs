@@ -25,7 +25,7 @@ const SHAPES_COMPACT_W: f32 = 52.0 + 6.0 + 52.0;
 const IMAGE_W: f32 = 180.0;
 const IMAGE_COMPACT_W: f32 = 52.0;
 /// Names shown when hovering the palette, as in Paint.
-const PALETTE_NAMES: [&str; 20] = [
+pub const PALETTE_NAMES: [&str; 20] = [
     "Black", "Gray-50%", "Dark red", "Red", "Orange", "Yellow", "Green", "Turquoise", "Indigo", "Purple",
     "White", "Gray-25%", "Brown", "Rose", "Gold", "Light yellow", "Lime", "Light turquoise", "Blue-gray", "Lavender",
 ];
@@ -75,7 +75,7 @@ impl PaintApp {
         );
     }
 
-    fn paint_icon(&self, ui: &Ui, center: egui::Pos2, size: f32, icon: Icon, enabled: bool) {
+    pub fn paint_icon(&self, ui: &Ui, center: egui::Pos2, size: f32, icon: Icon, enabled: bool) {
         self.paint_icon_fg(ui, center, size, icon, self.pal.icon_fg(enabled, false));
     }
 
@@ -427,7 +427,7 @@ impl PaintApp {
     }
 
     /// Menu entry with an icon in a fixed gutter; `checked` shows a tick on the right.
-    fn menu_item_icon(&mut self, ui: &mut Ui, icon: Icon, label: &str, checked: bool) -> bool {
+    pub fn menu_item_icon(&mut self, ui: &mut Ui, icon: Icon, label: &str, checked: bool) -> bool {
         self.menu_item(ui, icon, label, "", checked, true)
     }
 
@@ -587,7 +587,7 @@ impl PaintApp {
     }
 
     /// Stroke previews for the brush list, rendered with the real brush code.
-    fn brush_previews(&mut self, ctx: &egui::Context) -> Vec<egui::TextureHandle> {
+    pub fn brush_previews(&mut self, ctx: &egui::Context) -> Vec<egui::TextureHandle> {
         let dark = self.pal.dark;
         if self.brush_preview_dark != Some(dark) || self.brush_preview_tex.is_empty() {
             let ink = if dark { Color32::from_gray(235) } else { Color32::from_gray(30) };
@@ -746,13 +746,13 @@ impl PaintApp {
         });
     }
 
-    fn size_for(&self, tool: Tool) -> f32 {
+    pub fn size_for(&self, tool: Tool) -> f32 {
         let mut s = self.s.clone();
         s.tool = tool;
         s.size()
     }
 
-    fn size_mut_for(&mut self, tool: Tool) -> &mut f32 {
+    pub fn size_mut_for(&mut self, tool: Tool) -> &mut f32 {
         match tool {
             Tool::Pencil => &mut self.s.pencil_size,
             Tool::Eraser => &mut self.s.eraser_size,
@@ -889,43 +889,10 @@ impl PaintApp {
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
             ui.spacing_mut().interact_size.y = 32.0;
-            let fams = self.fm.families.clone();
-            let combo = egui::ComboBox::from_id_salt("font_family")
-                .icon(fluent::combo_chevron)
-                .selected_text(self.s.text.family.clone())
-                .width(190.0)
-                .height(420.0)
-                .show_ui(ui, |ui| {
-                    // Open scrolled to the current font, as a Windows combo box does.
-                    let scrolled = egui::Id::new("font_list_scrolled");
-                    let first = !ui.data(|d| d.get_temp::<bool>(scrolled).unwrap_or(false));
-                    for f in &fams {
-                        let r = ui.selectable_value(&mut self.s.text.family, f.clone(), f);
-                        if first && *f == self.s.text.family {
-                            r.scroll_to_me(Some(egui::Align::Center));
-                        }
-                    }
-                    ui.data_mut(|d| d.insert_temp(scrolled, true));
-                });
-            if combo.inner.is_none() {
-                ui.data_mut(|d| d.remove::<bool>(egui::Id::new("font_list_scrolled")));
-            }
-            combo.response.on_hover_text("Font");
+            self.font_family_combo(ui, 190.0);
             // Font size: type any size, or pick one from the list (an editable combo box).
             ui.spacing_mut().item_spacing.x = 0.0;
-            fluent::number_entry(ui, "font_size", &mut self.s.text.size_pt, 1.0..=999.0, 0, "", 48.0).on_hover_text("Font size");
-            let (r, chev) = ui.allocate_exact_size(vec2(22.0, 26.0), Sense::click());
-            self.pal.paint_button(ui.painter(), r, chev.hovered(), chev.is_pointer_button_down_on(), false);
-            self.paint_chevron(ui, r.center());
-            egui::Popup::menu(&chev).width(90.0).show(|ui| {
-                egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                    for sz in [8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 36.0, 48.0, 72.0] {
-                        if ui.add(egui::Button::selectable(self.s.text.size_pt == sz, format!("{sz}"))).clicked() {
-                            self.s.text.size_pt = sz;
-                        }
-                    }
-                });
-            });
+            self.font_size_box(ui);
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.separator();
             let letter = |text: RichText| {
@@ -967,6 +934,49 @@ impl PaintApp {
             ui.separator();
             fluent::checkbox(ui, &self.pal, &mut new.opaque, "Background fill");
             self.s.text = new;
+        });
+    }
+
+    /// The font family drop-down (text toolbar and the classic Text tab).
+    pub fn font_family_combo(&mut self, ui: &mut Ui, width: f32) {
+        let fams = self.fm.families.clone();
+        let combo = egui::ComboBox::from_id_salt("font_family")
+            .icon(fluent::combo_chevron)
+            .selected_text(self.s.text.family.clone())
+            .width(width)
+            .height(420.0)
+            .show_ui(ui, |ui| {
+                // Open scrolled to the current font, as a Windows combo box does.
+                let scrolled = egui::Id::new("font_list_scrolled");
+                let first = !ui.data(|d| d.get_temp::<bool>(scrolled).unwrap_or(false));
+                for f in &fams {
+                    let r = ui.selectable_value(&mut self.s.text.family, f.clone(), f);
+                    if first && *f == self.s.text.family {
+                        r.scroll_to_me(Some(egui::Align::Center));
+                    }
+                }
+                ui.data_mut(|d| d.insert_temp(scrolled, true));
+            });
+        if combo.inner.is_none() {
+            ui.data_mut(|d| d.remove::<bool>(egui::Id::new("font_list_scrolled")));
+        }
+        combo.response.on_hover_text("Font");
+    }
+
+    /// Font size: a number box with a list of common sizes (an editable combo box).
+    pub fn font_size_box(&mut self, ui: &mut Ui) {
+        fluent::number_entry(ui, "font_size", &mut self.s.text.size_pt, 1.0..=999.0, 0, "", 48.0).on_hover_text("Font size");
+        let (r, chev) = ui.allocate_exact_size(vec2(22.0, 26.0), Sense::click());
+        self.pal.paint_button(ui.painter(), r, chev.hovered(), chev.is_pointer_button_down_on(), false);
+        self.paint_chevron(ui, r.center());
+        egui::Popup::menu(&chev).width(90.0).show(|ui| {
+            egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                for sz in [8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 36.0, 48.0, 72.0] {
+                    if ui.add(egui::Button::selectable(self.s.text.size_pt == sz, format!("{sz}"))).clicked() {
+                        self.s.text.size_pt = sz;
+                    }
+                }
+            });
         });
     }
 }

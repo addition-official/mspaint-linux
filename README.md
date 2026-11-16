@@ -9,6 +9,11 @@ Save, Undo and Redo buttons, the toolbar (Clipboard, Image, Tools, Brushes, Shap
 centered canvas with resize handles, and the status bar with a zoom slider. Light and dark themes are
 included.
 
+Prefer the older Paint? **Settings → Style** switches to the classic ribbon of Paint in **Windows 10**
+(flat title bar, blue File tab) or **Windows 7** (glassy title bar, blue Paint button, orange highlights),
+with Home and View tabs, a Text tab while typing, and the picture in the top-left corner. In those
+styles, Settings is under the **?** button.
+
 | Light | Dark |
 | --- | --- |
 | ![Paintbox in light mode, with a drawing of a house on a hill](docs/screenshot.png) | ![Paintbox in dark mode, with the same drawing](docs/screenshot-dark.png) |

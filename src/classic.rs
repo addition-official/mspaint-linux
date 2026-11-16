@@ -1,0 +1,1001 @@
+//! The classic looks: Paint's ribbon as it was in Windows 7 (glassy title bar, blue
+//! application button, soft blue gradients, orange highlights) and in Windows 10 (flat
+//! white title bar, blue File tab, light blue highlights). Same tools and actions as
+//! the Windows 11 look; only the window chrome, ribbon, status bar and icons change.
+
+use crate::app::{Action, Drag, PaintApp, ZOOM_MAX, ZOOM_MIN, app_icon, human_size};
+use crate::classic_icons::{self, CIcon};
+use crate::document::Overlay;
+use crate::ribbon::{PALETTE, PALETTE_NAMES};
+use crate::theme::{Palette, Style};
+use crate::tools::{BrushKind, SelectMode, ShapeKind, ShapeStyle, Tool, size_presets};
+use egui::{Align2, Color32, FontId, PopupCloseBehavior, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, ViewportCommand, pos2, vec2};
+
+pub const TITLE_H: f32 = 30.0;
+const TABS_H: f32 = 24.0;
+/// Ribbon body: buttons (CONTENT_H) and the group names under them.
+const CONTENT_H: f32 = 68.0;
+const LABEL_H: f32 = 18.0;
+pub const RIBBON_H: f32 = TABS_H + CONTENT_H + LABEL_H + 6.0;
+pub const STATUS_H: f32 = 25.0;
+/// Space between the workspace corner and the picture, as in classic Paint.
+pub const CANVAS_PAD: f32 = 5.0;
+
+fn rgb(r: u8, g: u8, b: u8) -> Color32 {
+    Color32::from_rgb(r, g, b)
+}
+
+fn r(x: f32, y: f32, w: f32, h: f32) -> Rect {
+    Rect::from_min_size(pos2(x, y), vec2(w, h))
+}
+
+/// Colors of one classic look.
+#[derive(Clone, Copy)]
+pub struct Skin {
+    pub win7: bool,
+    title: [Color32; 2],
+    title_text: Color32,
+    tabs_bg: [Color32; 2],
+    ribbon: [Color32; 2],
+    ribbon_border: Color32,
+    label: Color32,
+    sep: Color32,
+    text: Color32,
+    hover: [Color32; 2],
+    hover_border: Color32,
+    press: [Color32; 2],
+    press_border: Color32,
+    sel: [Color32; 2],
+    sel_border: Color32,
+    app_btn: [Color32; 2],
+    app_btn_hover: [Color32; 2],
+    tab_border: Color32,
+    status: [Color32; 2],
+    status_sep: Color32,
+    workspace: Color32,
+    box_border: Color32,
+}
+
+impl Skin {
+    pub fn of(style: Style) -> Skin {
+        if style == Style::Win7 {
+            Skin {
+                win7: true,
+                title: [rgb(0xDB, 0xE7, 0xF4), rgb(0xBE, 0xD2, 0xE9)],
+                title_text: rgb(0x1E, 0x1E, 0x1E),
+                tabs_bg: [rgb(0xD9, 0xE5, 0xF3), rgb(0xDF, 0xE9, 0xF5)],
+                ribbon: [rgb(0xFA, 0xFC, 0xFE), rgb(0xDC, 0xE7, 0xF5)],
+                ribbon_border: rgb(0x9B, 0xB0, 0xCB),
+                label: rgb(0x3E, 0x58, 0x7C),
+                sep: rgb(0xB9, 0xC9, 0xDE),
+                text: rgb(0x1E, 0x39, 0x5B),
+                hover: [rgb(0xFF, 0xFC, 0xE8), rgb(0xFF, 0xE7, 0x9E)],
+                hover_border: rgb(0xDB, 0xC2, 0x79),
+                press: [rgb(0xFB, 0xDB, 0x9A), rgb(0xFE, 0xC2, 0x5A)],
+                press_border: rgb(0xC2, 0x96, 0x4A),
+                sel: [rgb(0xFF, 0xE9, 0xA9), rgb(0xFF, 0xD2, 0x6B)],
+                sel_border: rgb(0xC2, 0x96, 0x4A),
+                app_btn: [rgb(0x4C, 0x86, 0xD2), rgb(0x1D, 0x52, 0xA3)],
+                app_btn_hover: [rgb(0x6A, 0xA0, 0xE6), rgb(0x2A, 0x66, 0xBC)],
+                tab_border: rgb(0x9B, 0xB0, 0xCB),
+                status: [rgb(0xEE, 0xF3, 0xFA), rgb(0xD5, 0xE0, 0xEF)],
+                status_sep: rgb(0xA9, 0xBC, 0xD5),
+                workspace: rgb(0xC8, 0xD3, 0xE4),
+                box_border: rgb(0x9B, 0xB0, 0xCB),
+            }
+        } else {
+            Skin {
+                win7: false,
+                title: [rgb(0xFF, 0xFF, 0xFF), rgb(0xFF, 0xFF, 0xFF)],
+                title_text: rgb(0x00, 0x00, 0x00),
+                tabs_bg: [rgb(0xFF, 0xFF, 0xFF), rgb(0xFF, 0xFF, 0xFF)],
+                ribbon: [rgb(0xF5, 0xF6, 0xF7), rgb(0xF5, 0xF6, 0xF7)],
+                ribbon_border: rgb(0xDA, 0xDB, 0xDC),
+                label: rgb(0x60, 0x60, 0x60),
+                sep: rgb(0xE2, 0xE3, 0xE4),
+                text: rgb(0x26, 0x26, 0x26),
+                hover: [rgb(0xE8, 0xEF, 0xF7), rgb(0xE8, 0xEF, 0xF7)],
+                hover_border: rgb(0xA4, 0xCE, 0xF9),
+                press: [rgb(0xC9, 0xE0, 0xF7), rgb(0xC9, 0xE0, 0xF7)],
+                press_border: rgb(0x62, 0xA2, 0xE4),
+                sel: [rgb(0xCC, 0xE4, 0xF7), rgb(0xCC, 0xE4, 0xF7)],
+                sel_border: rgb(0x99, 0xC9, 0xEF),
+                app_btn: [rgb(0x19, 0x79, 0xCA), rgb(0x19, 0x79, 0xCA)],
+                app_btn_hover: [rgb(0x29, 0x8B, 0xDA), rgb(0x29, 0x8B, 0xDA)],
+                tab_border: rgb(0xDA, 0xDB, 0xDC),
+                status: [rgb(0xF0, 0xF0, 0xF0), rgb(0xF0, 0xF0, 0xF0)],
+                status_sep: rgb(0xD0, 0xD0, 0xD0),
+                workspace: rgb(0xC8, 0xD1, 0xE1),
+                box_border: rgb(0xC6, 0xC6, 0xC6),
+            }
+        }
+    }
+
+    /// The parts of the shared palette the classic looks change (dialogs and menus
+    /// keep the rest).
+    pub fn adjust(&self, pal: &mut Palette) {
+        pal.workspace = self.workspace;
+        pal.ribbon = self.ribbon[1];
+        pal.status = self.status[1];
+        pal.canvas_shadow = Color32::TRANSPARENT;
+        // Menus and lists light up like the ribbon buttons.
+        pal.hover = self.hover[1];
+        pal.pressed = self.press[1];
+        pal.selected = self.sel[1];
+        pal.selected_border = self.sel_border;
+    }
+
+    /// Square-ish menus and windows, as in Windows 7 and 10.
+    pub fn adjust_visuals(&self, ctx: &egui::Context) {
+        let radius = egui::CornerRadius::same(if self.win7 { 3 } else { 0 });
+        ctx.all_styles_mut(|s| {
+            s.visuals.menu_corner_radius = radius;
+            s.visuals.window_corner_radius = radius;
+        });
+    }
+
+    fn btn_bg(&self, p: &egui::Painter, rect: Rect, hovered: bool, pressed: bool, selected: bool) {
+        let (fill, border) = if pressed {
+            (self.press, self.press_border)
+        } else if selected {
+            (if hovered { self.press } else { self.sel }, self.sel_border)
+        } else if hovered {
+            (self.hover, self.hover_border)
+        } else {
+            return;
+        };
+        let radius = if self.win7 { 2.5 } else { 0.0 };
+        gradient(p, rect, fill[0], fill[1], radius);
+        p.rect_stroke(rect, radius, Stroke::new(1.0, border), StrokeKind::Inside);
+    }
+}
+
+/// A vertical gradient rectangle (rounded corners are approximated by the outline).
+fn gradient(p: &egui::Painter, rect: Rect, top: Color32, bottom: Color32, radius: f32) {
+    if top == bottom {
+        p.rect_filled(rect, radius, top);
+        return;
+    }
+    let inset = rect.shrink2(vec2(radius.min(2.0) * 0.5, 0.0));
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(inset.left_top(), top);
+    mesh.colored_vertex(inset.right_top(), top);
+    mesh.colored_vertex(inset.right_bottom(), bottom);
+    mesh.colored_vertex(inset.left_bottom(), bottom);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    p.add(egui::Shape::mesh(mesh));
+}
+
+/// The small down arrow of drop-down buttons.
+fn arrow(p: &egui::Painter, c: Pos2, color: Color32) {
+    p.add(egui::Shape::convex_polygon(vec![c + vec2(-3.0, -1.5), c + vec2(3.0, -1.5), c + vec2(0.0, 1.5)], color, Stroke::NONE));
+}
+
+impl PaintApp {
+    pub fn skin(&self) -> Skin {
+        Skin::of(self.style)
+    }
+
+    fn font(&self) -> FontId {
+        FontId::proportional(12.0)
+    }
+
+    // ---------------------------------------------------------------------
+    // Buttons
+
+    /// Large button: 32px icon on top, the label (one or two lines) underneath, and a
+    /// drop-down arrow under the label when `dropdown`.
+    #[allow(clippy::too_many_arguments)]
+    fn big_button(&self, ui: &mut Ui, rect: Rect, key: &str, icon: CIcon, label: &str, dropdown: bool, selected: bool, enabled: bool) -> Response {
+        let sense = if enabled { self.click_sense(ui) } else { Sense::hover() };
+        let resp = ui.interact(rect, ui.id().with(key), sense);
+        let skin = self.skin();
+        skin.btn_bg(ui.painter(), rect, enabled && resp.hovered(), enabled && resp.is_pointer_button_down_on(), selected);
+        self.big_button_face(ui, rect, icon, label, dropdown, enabled);
+        resp
+    }
+
+    fn big_button_face(&self, ui: &Ui, rect: Rect, icon: CIcon, label: &str, dropdown: bool, enabled: bool) {
+        let skin = self.skin();
+        classic_icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.center().x, rect.min.y + 20.0), vec2(32.0, 32.0)), icon, enabled);
+        let color = if enabled { skin.text } else { skin.text.gamma_multiply(0.45) };
+        let lines: Vec<&str> = label.split('\n').collect();
+        for (i, line) in lines.iter().enumerate() {
+            ui.painter().text(pos2(rect.center().x, rect.min.y + 44.0 + i as f32 * 13.0), Align2::CENTER_CENTER, *line, self.font(), color);
+        }
+        if dropdown {
+            arrow(ui.painter(), pos2(rect.center().x, rect.min.y + 44.0 + lines.len() as f32 * 13.0 - 1.0), color);
+        }
+    }
+
+    /// Large split button: the icon part does the action, the label part (with the
+    /// arrow) opens the menu. Returns (main, menu).
+    fn big_split(&self, ui: &mut Ui, rect: Rect, key: &str, icon: CIcon, label: &str, selected: bool) -> (Response, Response) {
+        let top = Rect::from_min_max(rect.min, pos2(rect.max.x, rect.min.y + 37.0));
+        let bottom = Rect::from_min_max(pos2(rect.min.x, top.max.y), rect.max);
+        let main = ui.interact(top, ui.id().with((key, "main")), self.click_sense(ui));
+        let menu = ui.interact(bottom, ui.id().with((key, "menu")), self.click_sense(ui));
+        let skin = self.skin();
+        let p = ui.painter();
+        if main.hovered() || menu.hovered() || selected {
+            // The whole button lights up; the part under the pointer more.
+            skin.btn_bg(p, rect, true, false, selected);
+            let (hot, resp) = if main.hovered() { (top, &main) } else { (bottom, &menu) };
+            if resp.hovered() {
+                skin.btn_bg(p, hot, true, resp.is_pointer_button_down_on(), selected);
+            }
+        }
+        self.big_button_face(ui, rect, icon, label, true, true);
+        (main, menu)
+    }
+
+    /// Small button: 16px icon and a label to its right (and an arrow for drop-downs).
+    #[allow(clippy::too_many_arguments)]
+    fn small_button(&self, ui: &mut Ui, rect: Rect, key: &str, icon: Option<CIcon>, label: &str, dropdown: bool, selected: bool, enabled: bool) -> Response {
+        let sense = if enabled { self.click_sense(ui) } else { Sense::hover() };
+        let resp = ui.interact(rect, ui.id().with(key), sense);
+        let skin = self.skin();
+        skin.btn_bg(ui.painter(), rect, enabled && resp.hovered(), enabled && resp.is_pointer_button_down_on(), selected);
+        let mut x = rect.min.x + 3.0;
+        if let Some(icon) = icon {
+            classic_icons::paint(ui.painter(), Rect::from_min_size(pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)), icon, enabled);
+            x += 20.0;
+        }
+        let color = if enabled { skin.text } else { skin.text.gamma_multiply(0.45) };
+        let g = ui.painter().layout_no_wrap(label.to_string(), self.font(), color);
+        let w = g.size().x;
+        ui.painter().galley(pos2(x, rect.center().y - g.size().y / 2.0), g, color);
+        if dropdown {
+            arrow(ui.painter(), pos2(x + w + 7.0, rect.center().y + 0.5), color);
+        }
+        resp
+    }
+
+    /// Icon-only square button (the Tools grid, the quick access toolbar).
+    fn icon_btn(&self, ui: &mut Ui, rect: Rect, key: &str, icon: CIcon, selected: bool, enabled: bool) -> Response {
+        let sense = if enabled { self.click_sense(ui) } else { Sense::hover() };
+        let resp = ui.interact(rect, ui.id().with(key), sense);
+        self.skin().btn_bg(ui.painter(), rect, enabled && resp.hovered(), enabled && resp.is_pointer_button_down_on(), selected);
+        classic_icons::paint(ui.painter(), Rect::from_center_size(rect.center(), vec2(16.0, 16.0)), icon, enabled);
+        resp
+    }
+
+    /// Reserve a ribbon group: `add` gets the content rect; the name goes underneath
+    /// and a separator after it.
+    fn cgroup(&mut self, ui: &mut Ui, label: &str, width: f32, add: impl FnOnce(&mut Self, &mut Ui, Rect)) {
+        let (rect, _) = ui.allocate_exact_size(vec2(width, CONTENT_H + LABEL_H), Sense::hover());
+        add(self, ui, Rect::from_min_size(rect.min, vec2(width, CONTENT_H)));
+        let skin = self.skin();
+        ui.painter().text(pos2(rect.center().x, rect.max.y - LABEL_H / 2.0), Align2::CENTER_CENTER, label, self.font(), skin.label);
+        let (sep, _) = ui.allocate_exact_size(vec2(9.0, CONTENT_H + LABEL_H), Sense::hover());
+        let x = sep.center().x;
+        ui.painter().line_segment([pos2(x, sep.min.y + 2.0), pos2(x, sep.max.y - 2.0)], Stroke::new(1.0, skin.sep));
+        if skin.win7 {
+            ui.painter().line_segment([pos2(x + 1.0, sep.min.y + 2.0), pos2(x + 1.0, sep.max.y - 2.0)], Stroke::new(1.0, Color32::from_white_alpha(160)));
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Title bar
+
+    pub fn classic_title_bar(&mut self, ui: &mut Ui) {
+        let skin = self.skin();
+        let ctx = ui.ctx().clone();
+        let rect = ui.max_rect();
+        let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        gradient(ui.painter(), rect, skin.title[0], skin.title[1], 0.0);
+        if !skin.win7 {
+            ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, rgb(0xE6, 0xE6, 0xE6)));
+        }
+        let bar = ui.interact(rect, ui.id().with("titlebar"), Sense::click_and_drag());
+        if bar.double_clicked() {
+            ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+        } else if bar.drag_started_by(egui::PointerButton::Primary) {
+            ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+        }
+        app_icon(ui.painter(), Rect::from_center_size(pos2(rect.min.x + 16.0, rect.center().y), vec2(16.0, 16.0)));
+        // Quick access toolbar: Save, Undo, Redo.
+        let mut x = rect.min.x + 30.0;
+        if !skin.win7 {
+            ui.painter().line_segment([pos2(x - 2.0, rect.min.y + 8.0), pos2(x - 2.0, rect.max.y - 8.0)], Stroke::new(1.0, rgb(0xC8, 0xC8, 0xC8)));
+            x += 2.0;
+        }
+        for (icon, tip, action, enabled) in [
+            (CIcon::Save, "Save (Ctrl+S)", Action::Save, true),
+            (CIcon::Undo, "Undo (Ctrl+Z)", Action::Undo, self.doc.can_undo()),
+            (CIcon::Redo, "Redo (Ctrl+Y)", Action::Redo, self.doc.can_redo()),
+        ] {
+            let b = r(x, rect.center().y - 11.0, 22.0, 22.0);
+            if self.icon_btn(ui, b, tip, icon, false, enabled).on_hover_text(tip).clicked() {
+                self.push(action);
+            }
+            x += 23.0;
+        }
+        if !skin.win7 {
+            ui.painter().line_segment([pos2(x + 3.0, rect.min.y + 8.0), pos2(x + 3.0, rect.max.y - 8.0)], Stroke::new(1.0, rgb(0xC8, 0xC8, 0xC8)));
+        }
+        let title = self.title();
+        if skin.win7 {
+            // Aero: dark text with a soft light glow behind it.
+            let g = ui.painter().layout_no_wrap(title.clone(), FontId::proportional(12.5), skin.title_text);
+            // Several faint, growing layers fake a blur.
+            for i in 0..6 {
+                let grow = 4.0 + i as f32 * 3.0;
+                let tr = Rect::from_center_size(rect.center(), g.size() + vec2(grow * 2.0, grow));
+                ui.painter().rect_filled(tr, grow, Color32::from_white_alpha(14));
+            }
+        }
+        ui.painter().text(rect.center(), Align2::CENTER_CENTER, title, FontId::proportional(12.5), skin.title_text);
+        if skin.win7 {
+            self.win7_captions(ui, rect, maximized);
+        } else {
+            self.win10_captions(ui, rect, maximized);
+        }
+    }
+
+    fn caption_action(&self, ctx: &egui::Context, i: usize, maximized: bool) {
+        match i {
+            0 => ctx.send_viewport_cmd(ViewportCommand::Close),
+            1 => ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized)),
+            _ => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+        }
+    }
+
+    /// Windows 10: flat 46 px buttons with thin glyphs; Close turns red on hover.
+    fn win10_captions(&self, ui: &mut Ui, rect: Rect, maximized: bool) {
+        let ctx = ui.ctx().clone();
+        let bw = 46.0;
+        for i in 0..3 {
+            let br = r(rect.max.x - bw * (i + 1) as f32, rect.min.y, bw, rect.height() - 1.0);
+            let resp = ui.interact(br, ui.id().with(("ccap", i)), Sense::click());
+            let (hover, press) = (resp.hovered(), resp.is_pointer_button_down_on());
+            if hover {
+                let fill = match (i, press) {
+                    (0, false) => rgb(0xE8, 0x11, 0x23),
+                    (0, true) => rgb(0xF1, 0x70, 0x7A),
+                    (_, false) => rgb(0xE5, 0xE5, 0xE5),
+                    (_, true) => rgb(0xCC, 0xCC, 0xCC),
+                };
+                ui.painter().rect_filled(br, 0.0, fill);
+            }
+            let fg = if i == 0 && hover { Color32::WHITE } else { Color32::BLACK };
+            let c = br.center();
+            let s = Stroke::new(1.0, fg);
+            let p = ui.painter();
+            match i {
+                0 => {
+                    p.line_segment([c + vec2(-5.0, -5.0), c + vec2(5.0, 5.0)], s);
+                    p.line_segment([c + vec2(5.0, -5.0), c + vec2(-5.0, 5.0)], s);
+                }
+                1 if maximized => {
+                    p.rect_stroke(Rect::from_min_size(c + vec2(-5.0, -3.0), vec2(8.0, 8.0)), 0.0, s, StrokeKind::Inside);
+                    p.line_segment([c + vec2(-3.0, -3.0), c + vec2(-3.0, -5.0)], s);
+                    p.line_segment([c + vec2(-3.0, -5.0), c + vec2(5.0, -5.0)], s);
+                    p.line_segment([c + vec2(5.0, -5.0), c + vec2(5.0, 3.0)], s);
+                    p.line_segment([c + vec2(5.0, 3.0), c + vec2(3.0, 3.0)], s);
+                }
+                1 => {
+                    p.rect_stroke(Rect::from_center_size(c, vec2(10.0, 10.0)), 0.0, s, StrokeKind::Inside);
+                }
+                _ => {
+                    p.line_segment([c + vec2(-5.0, 0.0), c + vec2(5.0, 0.0)], s);
+                }
+            }
+            let tip = ["Close", if maximized { "Restore Down" } else { "Maximize" }, "Minimize"][i];
+            if resp.on_hover_text(tip).clicked() {
+                self.caption_action(&ctx, i, maximized);
+            }
+        }
+    }
+
+    /// Windows 7: glassy rounded buttons hanging from the top edge; Close is red.
+    fn win7_captions(&self, ui: &mut Ui, rect: Rect, maximized: bool) {
+        let ctx = ui.ctx().clone();
+        let h = 19.0;
+        let widths = [44.0, 26.0, 27.0];
+        let mut right = rect.max.x - 6.0;
+        for i in 0..3 {
+            let br = r(right - widths[i], rect.min.y, widths[i], h);
+            right -= widths[i];
+            let resp = ui.interact(br, ui.id().with(("ccap7", i)), Sense::click());
+            let (hover, press) = (resp.hovered(), resp.is_pointer_button_down_on());
+            let (top, bottom, border) = match (i == 0, hover, press) {
+                (true, _, true) => (rgb(0xC8, 0x6A, 0x58), rgb(0x8E, 0x22, 0x10), rgb(0x52, 0x18, 0x10)),
+                (true, true, _) => (rgb(0xF2, 0x9A, 0x86), rgb(0xD4, 0x38, 0x1C), rgb(0x6A, 0x1C, 0x10)),
+                (true, false, _) => (rgb(0xE4, 0x8C, 0x7A), rgb(0xC1, 0x3A, 0x22), rgb(0x6A, 0x2C, 0x22)),
+                (false, _, true) => (rgb(0x9E, 0xC0, 0xE4), rgb(0x3E, 0x6E, 0xA8), rgb(0x2A, 0x3A, 0x55)),
+                (false, true, _) => (rgb(0xC6, 0xE2, 0xFF), rgb(0x6A, 0x9C, 0xD6), rgb(0x3A, 0x4A, 0x66)),
+                (false, false, _) => (rgb(0xE6, 0xEE, 0xF8), rgb(0xB4, 0xC8, 0xE0), rgb(0x6C, 0x7C, 0x96)),
+            };
+            let p = ui.painter();
+            let shape = egui::CornerRadius { nw: 0, ne: 0, sw: if i == 2 { 4 } else { 0 }, se: if i == 0 { 4 } else { 0 } };
+            p.rect_filled(br, shape, bottom);
+            gradient(p, Rect::from_min_max(br.min, pos2(br.max.x, br.center().y)), top, top.lerp_to_gamma(bottom, 0.5), 0.0);
+            p.rect_stroke(br, shape, Stroke::new(1.0, border), StrokeKind::Inside);
+            // White glyphs with a dark edge, as on Aero buttons.
+            let c = br.center();
+            let glyph = |w: f32, color: Color32| {
+                let s = Stroke::new(w, color);
+                match i {
+                    0 => {
+                        p.line_segment([c + vec2(-4.0, -3.5), c + vec2(4.0, 3.5)], s);
+                        p.line_segment([c + vec2(4.0, -3.5), c + vec2(-4.0, 3.5)], s);
+                    }
+                    1 if maximized => {
+                        p.rect_stroke(Rect::from_min_size(c + vec2(-5.0, -2.0), vec2(7.0, 6.0)), 0.0, s, StrokeKind::Middle);
+                        p.rect_stroke(Rect::from_min_size(c + vec2(-2.0, -5.0), vec2(7.0, 6.0)), 0.0, s, StrokeKind::Middle);
+                    }
+                    1 => {
+                        p.rect_stroke(Rect::from_center_size(c, vec2(10.0, 7.0)), 0.0, s, StrokeKind::Middle);
+                    }
+                    _ => {
+                        p.line_segment([c + vec2(-4.0, 3.0), c + vec2(4.0, 3.0)], s);
+                    }
+                }
+            };
+            glyph(3.2, rgb(0x2A, 0x2A, 0x3A).gamma_multiply(0.7));
+            glyph(1.7, Color32::WHITE);
+            let tip = ["Close", if maximized { "Restore Down" } else { "Maximize" }, "Minimize"][i];
+            if resp.on_hover_text(tip).clicked() {
+                self.caption_action(&ctx, i, maximized);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Ribbon
+
+    pub fn classic_ribbon(&mut self, ui: &mut Ui) {
+        let skin = self.skin();
+        let full = ui.max_rect();
+        let text_active = matches!(self.doc.overlay, Overlay::Text(_));
+        // The Text tab appears (and opens) while a text box is being edited, and goes
+        // away with it, as in Paint.
+        if text_active && self.classic_tab != 2 && !self.classic_text_seen {
+            self.classic_tab = 2;
+        }
+        self.classic_text_seen = text_active;
+        if !text_active && self.classic_tab == 2 {
+            self.classic_tab = 0;
+        }
+
+        // Tab row.
+        let tabs = Rect::from_min_size(full.min, vec2(full.width(), TABS_H));
+        gradient(ui.painter(), tabs, skin.tabs_bg[0], skin.tabs_bg[1], 0.0);
+        let body = Rect::from_min_max(pos2(full.min.x, tabs.max.y), full.max);
+        let p = ui.painter();
+        gradient(p, body, skin.ribbon[0], skin.ribbon[1], 0.0);
+        p.line_segment([body.left_bottom() - vec2(0.0, 0.5), body.right_bottom() - vec2(0.0, 0.5)], Stroke::new(1.0, skin.ribbon_border));
+
+        // Application menu button (Windows 7) / File tab (Windows 10).
+        let app_rect = if skin.win7 { r(tabs.min.x + 2.0, tabs.min.y + 1.0, 54.0, TABS_H - 1.0) } else { r(tabs.min.x, tabs.min.y, 56.0, TABS_H) };
+        let app_resp = ui.interact(app_rect, ui.id().with("app_menu_btn"), self.click_sense(ui));
+        let fill = if app_resp.hovered() { skin.app_btn_hover } else { skin.app_btn };
+        let radius = if skin.win7 { egui::CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 } } else { egui::CornerRadius::ZERO };
+        ui.painter().rect_filled(app_rect, radius, fill[1]);
+        gradient(ui.painter(), Rect::from_min_max(app_rect.min + vec2(1.0, 1.0), pos2(app_rect.max.x - 1.0, app_rect.center().y)), fill[0], fill[0].lerp_to_gamma(fill[1], 0.6), 0.0);
+        if skin.win7 {
+            classic_icons::paint(ui.painter(), Rect::from_center_size(app_rect.center() - vec2(7.0, 0.0), vec2(16.0, 16.0)), CIcon::AppMenu, true);
+            arrow(ui.painter(), app_rect.center() + vec2(11.0, 0.5), Color32::WHITE);
+        } else {
+            ui.painter().text(app_rect.center(), Align2::CENTER_CENTER, "File", self.font(), Color32::WHITE);
+        }
+        egui::Popup::menu(&app_resp).width(280.0).show(|ui| {
+            self.file_menu(ui);
+            ui.separator();
+            if self.menu_item(ui, crate::icons::Icon::Gear, "Settings and About", "", false, true) {
+                self.drag = None;
+                self.doc.commit_overlay(&self.s);
+                self.show_settings = true;
+            }
+        });
+
+        // Home, View (and Text while typing).
+        let mut x = app_rect.max.x + 4.0;
+        let names: &[&str] = if text_active { &["Home", "View", "Text"] } else { &["Home", "View"] };
+        for (i, name) in names.iter().enumerate() {
+            let g = ui.painter().layout_no_wrap(name.to_string(), self.font(), skin.text);
+            let tab = r(x, tabs.min.y + 2.0, g.size().x + 26.0, TABS_H - 1.0);
+            let resp = ui.interact(tab, ui.id().with(("ctab", i)), self.click_sense(ui));
+            let selected = self.classic_tab as usize == i;
+            let p = ui.painter();
+            if selected {
+                let top = if skin.win7 { skin.ribbon[0] } else { Color32::WHITE };
+                p.rect_filled(tab.expand2(vec2(0.0, 1.0)), egui::CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 }, top);
+                let s = Stroke::new(1.0, skin.tab_border);
+                p.line_segment([tab.left_bottom() + vec2(0.0, 1.0), tab.left_top() + vec2(0.0, 2.0)], s);
+                p.line_segment([tab.left_top() + vec2(2.0, 0.0), tab.right_top() - vec2(2.0, 0.0)], s);
+                p.line_segment([tab.right_top() + vec2(0.0, 2.0), tab.right_bottom() + vec2(0.0, 1.0)], s);
+            } else if resp.hovered() {
+                p.rect_filled(tab, 3.0, Color32::from_white_alpha(if skin.win7 { 120 } else { 0 }));
+                p.rect_stroke(tab, 3.0, Stroke::new(1.0, skin.tab_border.gamma_multiply(0.6)), StrokeKind::Inside);
+            }
+            let color = if *name == "Text" && skin.win7 { rgb(0x8A, 0x5A, 0x00) } else { skin.text };
+            p.galley(tab.center() - g.size() / 2.0 + vec2(0.0, 1.0), g, color);
+            if resp.clicked() {
+                self.classic_tab = i as u8;
+            }
+            x = tab.max.x + 2.0;
+        }
+        // Settings, where Windows had its help button.
+        let help = r(tabs.max.x - 26.0, tabs.min.y + 3.0, 20.0, 18.0);
+        let hr = ui.interact(help, ui.id().with("chelp"), self.click_sense(ui));
+        self.skin().btn_bg(ui.painter(), help, hr.hovered(), hr.is_pointer_button_down_on(), false);
+        ui.painter().circle(help.center(), 7.0, rgb(0x2B, 0x6C, 0xC4), Stroke::new(1.0, rgb(0x1F, 0x4E, 0x96)));
+        ui.painter().text(help.center() + vec2(0.0, 0.5), Align2::CENTER_CENTER, "?", FontId::proportional(11.0), Color32::WHITE);
+        if hr.on_hover_text("Settings and About").clicked() {
+            self.drag = None;
+            self.doc.commit_overlay(&self.s);
+            self.show_settings = true;
+        }
+
+        // The groups of the open tab.
+        let content = Rect::from_min_max(body.min + vec2(4.0, 3.0), body.max - vec2(4.0, 3.0));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content).layout(egui::Layout::left_to_right(egui::Align::Min)));
+        egui::ScrollArea::horizontal()
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(&mut child, |ui| {
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                    match self.classic_tab {
+                        1 => self.view_tab(ui),
+                        2 => self.text_tab(ui),
+                        _ => self.home_tab(ui),
+                    }
+                });
+            });
+        ui.allocate_rect(full, Sense::hover());
+    }
+
+    fn home_tab(&mut self, ui: &mut Ui) {
+        self.clipboard_cgroup(ui);
+        self.cgroup(ui, "Image", 118.0, |app, ui, c| {
+            let select = app.s.tool == Tool::Select;
+            let (main, menu) = app.big_split(ui, r(c.min.x + 1.0, c.min.y, 46.0, CONTENT_H), "cselect", CIcon::Select, "Select", select);
+            if main.on_hover_text("Select (S)").clicked() {
+                app.set_tool(Tool::Select);
+            }
+            egui::Popup::menu(&menu).width(230.0).show(|ui| app.select_menu(ui));
+            let has_sel = app.doc.floating().is_some();
+            let x = c.min.x + 50.0;
+            if app.small_button(ui, r(x, c.min.y + 1.0, 66.0, 22.0), "ccrop", Some(CIcon::Crop), "Crop", false, false, has_sel).on_hover_text("Crop (Ctrl+Shift+X)").clicked() {
+                app.push(Action::Crop);
+            }
+            if app.small_button(ui, r(x, c.min.y + 23.0, 66.0, 22.0), "cresize", Some(CIcon::Resize), "Resize", false, false, true).on_hover_text("Resize and skew (Ctrl+W)").clicked() {
+                app.push(Action::ResizeDialog);
+            }
+            let rot = app.small_button(ui, r(x, c.min.y + 45.0, 66.0, 22.0), "crotate", Some(CIcon::Rotate), "Rotate", true, false, true);
+            egui::Popup::menu(&rot).width(210.0).show(|ui| {
+                use crate::icons::Icon;
+                for (icon, label, a) in [
+                    (Icon::RotateRight, "Rotate right 90°", Action::RotateRight),
+                    (Icon::RotateLeft, "Rotate left 90°", Action::RotateLeft),
+                    (Icon::Rotate180, "Rotate 180°", Action::Rotate180),
+                    (Icon::Rotate, "Custom rotate…", Action::CustomRotate),
+                    (Icon::FlipV, "Flip vertical", Action::FlipVertical),
+                    (Icon::FlipH, "Flip horizontal", Action::FlipHorizontal),
+                ] {
+                    if app.menu_item_icon(ui, icon, label, false) {
+                        app.push(a);
+                    }
+                }
+            });
+        });
+        self.cgroup(ui, "Tools", 72.0, |app, ui, c| {
+            let tools = [
+                (Tool::Pencil, CIcon::Pencil, "Pencil (P)"),
+                (Tool::Fill, CIcon::Fill, "Fill with color (B)"),
+                (Tool::Text, CIcon::Text, "Text (T)"),
+                (Tool::Eraser, CIcon::Eraser, "Eraser (E)"),
+                (Tool::Picker, CIcon::Picker, "Color picker (I)"),
+                (Tool::Magnifier, CIcon::Magnifier, "Magnifier (Z)"),
+            ];
+            for (i, (t, icon, tip)) in tools.into_iter().enumerate() {
+                let (col, row) = ((i % 3) as f32, (i / 3) as f32);
+                let b = r(c.min.x + 2.0 + col * 23.0, c.min.y + 8.0 + row * 25.0, 22.0, 22.0);
+                if app.icon_btn(ui, b, tip, icon, app.s.tool == t, true).on_hover_text(tip).clicked() {
+                    app.set_tool(t);
+                }
+            }
+        });
+        self.cgroup(ui, "Brushes", 54.0, |app, ui, c| {
+            let (main, menu) = app.big_split(ui, r(c.min.x + 2.0, c.min.y, 50.0, CONTENT_H), "cbrush", CIcon::Brushes, "Brushes", app.s.tool == Tool::Brush);
+            if main.on_hover_text(app.s.brush.name()).clicked() {
+                app.set_tool(Tool::Brush);
+            }
+            let previews = app.brush_previews(ui.ctx());
+            egui::Popup::menu(&menu).width(300.0).show(|ui| {
+                for (i, k) in BrushKind::ALL.into_iter().enumerate() {
+                    let (row, resp) = ui.allocate_exact_size(vec2(290.0, 36.0), Sense::click());
+                    let sel = app.s.tool == Tool::Brush && app.s.brush == k;
+                    app.skin().btn_bg(ui.painter(), row, resp.hovered(), resp.is_pointer_button_down_on(), sel);
+                    ui.painter().text(pos2(row.min.x + 10.0, row.center().y), Align2::LEFT_CENTER, k.name(), app.font(), app.skin().text);
+                    if let Some(t) = previews.get(i) {
+                        let pr = Rect::from_min_size(pos2(row.max.x - 140.0, row.center().y - 13.0), vec2(130.0, 26.0));
+                        ui.painter().image(t.id(), pr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    }
+                    if resp.clicked() {
+                        app.s.brush = k;
+                        app.set_tool(Tool::Brush);
+                        ui.close();
+                    }
+                }
+            });
+        });
+        self.cgroup(ui, "Shapes", 8.0 * 21.0 + 6.0 + 74.0, |app, ui, c| {
+            // Gallery: 3 rows of shapes in a white box.
+            let frame = r(c.min.x + 2.0, c.min.y + 2.0, 8.0 * 21.0 + 2.0, 3.0 * 21.0 + 2.0);
+            ui.painter().rect_filled(frame, 0.0, Color32::WHITE);
+            ui.painter().rect_stroke(frame, 0.0, Stroke::new(1.0, app.skin().box_border), StrokeKind::Inside);
+            for (i, k) in ShapeKind::ALL.into_iter().enumerate() {
+                let (col, row) = ((i % 8) as f32, (i / 8) as f32);
+                let b = r(frame.min.x + 1.0 + col * 21.0, frame.min.y + 1.0 + row * 21.0, 21.0, 21.0);
+                let resp = ui.interact(b, ui.id().with(("cshape", i)), app.click_sense(ui));
+                let sel = app.s.tool == Tool::Shape && app.s.shape == k;
+                app.skin().btn_bg(ui.painter(), b, resp.hovered(), resp.is_pointer_button_down_on(), sel);
+                crate::icons::paint(ui.painter(), b.shrink(3.0), crate::icons::Icon::Shape(k), rgb(0x1E, 0x3A, 0x6A), rgb(0x2B, 0x6C, 0xC4));
+                if resp.on_hover_text(k.name()).clicked() {
+                    app.doc.commit_overlay(&app.s);
+                    app.s.shape = k;
+                    app.set_tool(Tool::Shape);
+                }
+            }
+            let x = frame.max.x + 4.0;
+            for (i, outline) in [true, false].into_iter().enumerate() {
+                let (icon, label, key) = if outline { (CIcon::Outline, "Outline", "coutline") } else { (CIcon::FillStyle, "Fill", "cfill") };
+                let resp = app.small_button(ui, r(x, c.min.y + 3.0 + i as f32 * 24.0, 72.0, 22.0), key, Some(icon), label, true, false, true);
+                let cur = if outline { app.s.outline } else { app.s.fill };
+                egui::Popup::menu(&resp).width(190.0).show(|ui| {
+                    for st in ShapeStyle::ALL {
+                        let name = if outline { st.outline_name() } else { st.fill_name() };
+                        if app.menu_item(ui, crate::icons::Icon::Blank, name, "", cur == st, true) {
+                            if outline {
+                                app.s.outline = st;
+                            } else {
+                                app.s.fill = st;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        self.cgroup(ui, "", 46.0, |app, ui, c| {
+            let resp = app.big_button(ui, r(c.min.x + 1.0, c.min.y, 44.0, CONTENT_H + LABEL_H - 2.0), "csize", CIcon::Size, "Size", true, false, true);
+            egui::Popup::menu(&resp).width(170.0).close_behavior(PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+                let tool = match app.s.tool {
+                    Tool::Select | Tool::Fill | Tool::Picker | Tool::Magnifier | Tool::Text => Tool::Brush,
+                    t => t,
+                };
+                for &sz in size_presets(tool) {
+                    let cur = app.size_for(tool);
+                    let (row, resp) = ui.allocate_exact_size(vec2(160.0, 26.0), Sense::click());
+                    app.skin().btn_bg(ui.painter(), row, resp.hovered(), resp.is_pointer_button_down_on(), (cur - sz).abs() < 0.01);
+                    ui.painter().text(row.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER, format!("{sz}px"), app.font(), app.skin().label);
+                    let y = row.center().y;
+                    ui.painter().line_segment([pos2(row.min.x + 48.0, y), pos2(row.max.x - 10.0, y)], Stroke::new(sz.min(18.0), Color32::BLACK));
+                    if resp.clicked() {
+                        *app.size_mut_for(tool) = sz;
+                        ui.close();
+                    }
+                }
+            });
+        });
+        self.colors_cgroup(ui);
+    }
+
+    fn select_menu(&mut self, ui: &mut Ui) {
+        use crate::icons::Icon;
+        ui.label(egui::RichText::new("Selection shapes").strong().color(self.skin().label));
+        for (mode, icon, label) in [(SelectMode::Rectangle, Icon::SelectRect, "Rectangular selection"), (SelectMode::FreeForm, Icon::SelectFree, "Free-form selection")] {
+            if self.menu_item_icon(ui, icon, label, self.s.select_mode == mode) {
+                self.s.select_mode = mode;
+                self.set_tool(Tool::Select);
+            }
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("Selection options").strong().color(self.skin().label));
+        let has_sel = self.doc.floating().is_some();
+        for (icon, label, sc, a, enabled) in [
+            (Icon::SelectAll, "Select all", "Ctrl+A", Action::SelectAll, true),
+            (Icon::Invert, "Invert selection", "", Action::InvertSelection, true),
+            (Icon::Delete, "Delete", "Delete", Action::DeleteSelection, has_sel),
+        ] {
+            if self.menu_item(ui, icon, label, sc, false, enabled) {
+                self.push(a);
+            }
+        }
+        if self.menu_item_icon(ui, Icon::Transparent, "Transparent selection", self.s.transparent_selection) {
+            self.s.transparent_selection = !self.s.transparent_selection;
+        }
+        ui.separator();
+        if self.menu_item(ui, Icon::RemoveBg, "Remove background", "", false, true) {
+            self.push(Action::RemoveBackground);
+        }
+    }
+
+    fn clipboard_cgroup(&mut self, ui: &mut Ui) {
+        self.cgroup(ui, "Clipboard", 96.0, |app, ui, c| {
+            let (main, menu) = app.big_split(ui, r(c.min.x + 1.0, c.min.y, 44.0, CONTENT_H), "cpaste", CIcon::Paste, "Paste", false);
+            if main.on_hover_text("Paste (Ctrl+V)").clicked() {
+                app.push(Action::Paste);
+            }
+            egui::Popup::menu(&menu).width(180.0).show(|ui| {
+                use crate::icons::Icon;
+                if app.menu_item(ui, Icon::Paste, "Paste", "Ctrl+V", false, true) {
+                    app.push(Action::Paste);
+                }
+                if app.menu_item(ui, Icon::Import, "Paste from", "", false, true) {
+                    app.push(Action::Import);
+                }
+            });
+            let has_sel = app.doc.floating().is_some();
+            if app.small_button(ui, r(c.min.x + 48.0, c.min.y + 1.0, 46.0, 22.0), "ccut", Some(CIcon::Cut), "Cut", false, false, has_sel).on_hover_text("Cut (Ctrl+X)").clicked() {
+                app.push(Action::Cut);
+            }
+            if app.small_button(ui, r(c.min.x + 48.0, c.min.y + 23.0, 46.0, 22.0), "ccopy", Some(CIcon::Copy), "Copy", false, false, has_sel).on_hover_text("Copy (Ctrl+C)").clicked() {
+                app.push(Action::Copy);
+            }
+        });
+    }
+
+    fn colors_cgroup(&mut self, ui: &mut Ui) {
+        let cell = 21.0;
+        self.cgroup(ui, "Colors", 44.0 * 2.0 + 4.0 + cell * 10.0 + 6.0 + 48.0, |app, ui, c| {
+            let skin = app.skin();
+            for slot in [1u8, 2] {
+                let b = r(c.min.x + 1.0 + (slot - 1) as f32 * 45.0, c.min.y, 44.0, CONTENT_H);
+                let resp = ui.interact(b, ui.id().with(("cslot", slot)), app.click_sense(ui));
+                skin.btn_bg(ui.painter(), b, resp.hovered(), resp.is_pointer_button_down_on(), app.active_slot == slot);
+                let color = if slot == 1 { app.s.color1 } else { app.s.color2 };
+                let sw = Rect::from_center_size(pos2(b.center().x, b.min.y + 19.0), vec2(26.0, 26.0));
+                ui.painter().rect_filled(sw.expand(1.0), 0.0, Color32::WHITE);
+                ui.painter().rect_stroke(sw.expand(2.0), 0.0, Stroke::new(1.0, skin.box_border), StrokeKind::Inside);
+                ui.painter().rect_filled(sw.shrink(1.0), 0.0, color);
+                for (i, line) in ["Color", if slot == 1 { "1" } else { "2" }].into_iter().enumerate() {
+                    ui.painter().text(pos2(b.center().x, b.min.y + 43.0 + i as f32 * 13.0), Align2::CENTER_CENTER, line, app.font(), skin.text);
+                }
+                let tip = if slot == 1 { "Color 1 (foreground color)" } else { "Color 2 (background color)" };
+                if resp.on_hover_text(tip).clicked() {
+                    app.active_slot = slot;
+                }
+            }
+            // Palette: two rows of standard colors, one row of custom colors.
+            let x0 = c.min.x + 92.0;
+            let y0 = c.min.y + (CONTENT_H - 3.0 * cell) / 2.0;
+            for i in 0..30 {
+                let (col, row) = ((i % 10) as f32, (i / 10) as f32);
+                let b = r(x0 + col * cell, y0 + row * cell, cell, cell);
+                let color = if let Some(rgb) = PALETTE.get(i) {
+                    Color32::from_rgb(rgb[0], rgb[1], rgb[2])
+                } else {
+                    app.s.custom_colors.get(i - 20).copied().unwrap_or(Color32::TRANSPARENT)
+                };
+                let resp = ui.interact(b, ui.id().with(("cpal", i)), app.click_sense(ui));
+                let sw = b.shrink(2.0);
+                if resp.hovered() {
+                    ui.painter().rect_stroke(b.shrink(0.5), 0.0, Stroke::new(1.0, skin.hover_border), StrokeKind::Inside);
+                }
+                if color == Color32::TRANSPARENT {
+                    ui.painter().rect_filled(sw, 0.0, Color32::WHITE.gamma_multiply(0.6));
+                    ui.painter().rect_stroke(sw, 0.0, Stroke::new(1.0, skin.box_border.gamma_multiply(0.6)), StrokeKind::Inside);
+                    if resp.clicked() {
+                        app.push(Action::EditColors);
+                    }
+                    continue;
+                }
+                ui.painter().rect_filled(sw, 0.0, color);
+                ui.painter().rect_stroke(sw, 0.0, Stroke::new(1.0, rgb(0x80, 0x80, 0x80)), StrokeKind::Inside);
+                let resp = match PALETTE_NAMES.get(i) {
+                    Some(name) => resp.on_hover_text(*name),
+                    None => resp.on_hover_text("Custom color"),
+                };
+                if resp.clicked() && ui.input(|i| i.modifiers.shift) || resp.secondary_clicked() {
+                    app.s.color2 = color;
+                } else if resp.clicked() {
+                    app.set_active_color(color);
+                }
+            }
+            let b = r(x0 + cell * 10.0 + 4.0, c.min.y, 48.0, CONTENT_H);
+            if app.big_button(ui, b, "cedit", CIcon::EditColors, "Edit\ncolors", false, false, true).on_hover_text("Edit colors").clicked() {
+                app.push(Action::EditColors);
+            }
+        });
+    }
+
+    fn view_tab(&mut self, ui: &mut Ui) {
+        self.cgroup(ui, "Zoom", 3.0 * 46.0 + 4.0, |app, ui, c| {
+            for (i, (icon, label, a, enabled)) in [
+                (CIcon::ZoomIn, "Zoom\nin", Action::ZoomIn, app.zoom < ZOOM_MAX),
+                (CIcon::ZoomOut, "Zoom\nout", Action::ZoomOut, app.zoom > ZOOM_MIN),
+                (CIcon::Zoom100, "100\n%", Action::Zoom100, true),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let b = r(c.min.x + 2.0 + i as f32 * 46.0, c.min.y, 45.0, CONTENT_H);
+                if app.big_button(ui, b, label, icon, label, false, false, enabled).clicked() {
+                    app.push(a);
+                }
+            }
+        });
+        self.cgroup(ui, "Show or hide", 190.0, |app, ui, c| {
+            let mut items = vec![
+                ("Rulers", app.show_rulers, Action::ToggleRulers),
+                ("Gridlines", app.show_grid, Action::ToggleGrid),
+                ("Status bar", app.show_status, Action::ToggleStatus),
+            ];
+            items.push(("Layers", app.show_layers, Action::ToggleStatus));
+            for (i, (label, on, a)) in items.into_iter().enumerate() {
+                let (col, row) = ((i / 3) as f32, (i % 3) as f32);
+                let b = r(c.min.x + 4.0 + col * 96.0, c.min.y + 3.0 + row * 21.0, 92.0, 20.0);
+                if app.check_row(ui, b, label, on) {
+                    if label == "Layers" {
+                        app.show_layers = !app.show_layers;
+                    } else {
+                        app.push(a);
+                    }
+                }
+            }
+        });
+        self.cgroup(ui, "Display", 2.0 * 54.0 + 4.0, |app, ui, c| {
+            if app.big_button(ui, r(c.min.x + 2.0, c.min.y, 52.0, CONTENT_H), "cfull", CIcon::FullScreen, "Full\nscreen", false, false, true).on_hover_text("Full screen (F11)").clicked() {
+                app.push(Action::Fullscreen);
+            }
+            if app.big_button(ui, r(c.min.x + 56.0, c.min.y, 52.0, CONTENT_H), "cthumb", CIcon::Thumbnail, "Thumbnail", false, app.show_thumbnail, true).clicked() {
+                app.push(Action::ToggleThumbnail);
+            }
+        });
+    }
+
+    /// A check box row in the ribbon; true when clicked.
+    fn check_row(&self, ui: &mut Ui, rect: Rect, label: &str, on: bool) -> bool {
+        let resp = ui.interact(rect, ui.id().with(("ccheck", label)), self.click_sense(ui));
+        let skin = self.skin();
+        let bx = Rect::from_center_size(pos2(rect.min.x + 8.0, rect.center().y), vec2(13.0, 13.0));
+        let p = ui.painter();
+        p.rect_filled(bx, 0.0, if resp.hovered() { rgb(0xE8, 0xF4, 0xFF) } else { Color32::WHITE });
+        p.rect_stroke(bx, 0.0, Stroke::new(1.0, if resp.hovered() { rgb(0x33, 0x99, 0xFF) } else { rgb(0x8E, 0x8F, 0x8F) }), StrokeKind::Inside);
+        if on {
+            let c = bx.center();
+            p.add(egui::Shape::line(vec![c + vec2(-3.5, 0.0), c + vec2(-1.0, 3.0), c + vec2(4.0, -3.5)], Stroke::new(1.6, rgb(0x20, 0x20, 0x20))));
+        }
+        p.text(pos2(rect.min.x + 20.0, rect.center().y), Align2::LEFT_CENTER, label, self.font(), skin.text);
+        resp.clicked()
+    }
+
+    fn text_tab(&mut self, ui: &mut Ui) {
+        self.clipboard_cgroup(ui);
+        self.cgroup(ui, "Font", 250.0, |app, ui, c| {
+            let mut row = ui.new_child(egui::UiBuilder::new().max_rect(r(c.min.x + 4.0, c.min.y + 4.0, 242.0, 28.0)).layout(egui::Layout::left_to_right(egui::Align::Center)));
+            row.spacing_mut().item_spacing = vec2(4.0, 0.0);
+            app.font_family_combo(&mut row, 150.0);
+            row.spacing_mut().item_spacing.x = 0.0;
+            app.font_size_box(&mut row);
+            let t = app.s.text.clone();
+            let mut new = t.clone();
+            for (i, (label, on, tip)) in [("B", t.bold, "Bold (Ctrl+B)"), ("I", t.italic, "Italic (Ctrl+I)"), ("U", t.underline, "Underline (Ctrl+U)"), ("abc", t.strikethrough, "Strikethrough")].into_iter().enumerate() {
+                let b = r(c.min.x + 4.0 + i as f32 * 25.0, c.min.y + 38.0, 24.0, 22.0);
+                let resp = ui.interact(b, ui.id().with(("cfmt", i)), app.click_sense(ui));
+                app.skin().btn_bg(ui.painter(), b, resp.hovered(), resp.is_pointer_button_down_on(), on);
+                let rt = egui::RichText::new(label).size(13.0).color(rgb(0x1C, 0x2A, 0x48));
+                let rt = match i {
+                    0 => rt.strong(),
+                    1 => rt.italics(),
+                    2 => rt.underline(),
+                    _ => rt.strikethrough().size(11.0),
+                };
+                let g = egui::WidgetText::from(rt).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body);
+                ui.painter().galley(b.center() - g.size() / 2.0, g, rgb(0x1C, 0x2A, 0x48));
+                if resp.on_hover_text(tip).clicked() {
+                    match i {
+                        0 => new.bold = !t.bold,
+                        1 => new.italic = !t.italic,
+                        2 => new.underline = !t.underline,
+                        _ => new.strikethrough = !t.strikethrough,
+                    }
+                }
+            }
+            for (i, (align, icon, tip)) in [(0u8, crate::icons::Icon::AlignLeft, "Align left"), (1, crate::icons::Icon::AlignCenter, "Center"), (2, crate::icons::Icon::AlignRight, "Align right")].into_iter().enumerate() {
+                let b = r(c.min.x + 112.0 + i as f32 * 25.0, c.min.y + 38.0, 24.0, 22.0);
+                let resp = ui.interact(b, ui.id().with(("calign", i)), app.click_sense(ui));
+                app.skin().btn_bg(ui.painter(), b, resp.hovered(), resp.is_pointer_button_down_on(), t.align == align);
+                crate::icons::paint(ui.painter(), b.shrink(4.0), icon, rgb(0x1C, 0x2A, 0x48), rgb(0x2B, 0x6C, 0xC4));
+                if resp.on_hover_text(tip).clicked() {
+                    new.align = align;
+                }
+            }
+            app.s.text = new;
+        });
+        self.cgroup(ui, "Background", 104.0, |app, ui, c| {
+            let opaque = app.s.text.opaque;
+            if app.small_button(ui, r(c.min.x + 2.0, c.min.y + 6.0, 100.0, 22.0), "copaque", Some(CIcon::Opaque), "Opaque", false, opaque, true).clicked() {
+                app.s.text.opaque = true;
+            }
+            if app.small_button(ui, r(c.min.x + 2.0, c.min.y + 30.0, 100.0, 22.0), "ctransp", Some(CIcon::Transparent), "Transparent", false, !opaque, true).clicked() {
+                app.s.text.opaque = false;
+            }
+        });
+        self.colors_cgroup(ui);
+    }
+
+    // ---------------------------------------------------------------------
+    // Status bar
+
+    pub fn classic_status_bar(&mut self, ui: &mut Ui) {
+        let skin = self.skin();
+        let rect = ui.max_rect();
+        gradient(ui.painter(), rect, skin.status[0], skin.status[1], 0.0);
+        ui.painter().line_segment([rect.left_top(), rect.right_top()], Stroke::new(1.0, skin.ribbon_border));
+        let text = |ui: &Ui, x: f32, icon: crate::icons::Icon, s: String| {
+            crate::icons::paint(ui.painter(), Rect::from_center_size(pos2(x + 8.0, rect.center().y), vec2(14.0, 14.0)), icon, rgb(0x40, 0x40, 0x40), rgb(0x2B, 0x6C, 0xC4));
+            ui.painter().text(pos2(x + 22.0, rect.center().y), Align2::LEFT_CENTER, s, FontId::proportional(12.0), rgb(0x20, 0x20, 0x20));
+        };
+        let sep = |ui: &Ui, x: f32| {
+            ui.painter().line_segment([pos2(x, rect.min.y + 3.0), pos2(x, rect.max.y - 3.0)], Stroke::new(1.0, skin.status_sep));
+        };
+        let pos = self
+            .cursor_img
+            .filter(|p| p.x >= 0.0 && p.y >= 0.0 && p.x < self.doc.width() as f32 && p.y < self.doc.height() as f32)
+            .map(|p| format!("{}, {}px", p.x.floor(), p.y.floor()))
+            .unwrap_or_default();
+        let mut x = rect.min.x + 6.0;
+        text(ui, x, crate::icons::Icon::Cursor, pos);
+        x += 150.0;
+        sep(ui, x - 6.0);
+        let sel = match (&self.drag, self.doc.floating()) {
+            (Some(Drag::Marquee { start, cur }), _) => format!("{} × {}px", (cur.x - start.x).abs().round(), (cur.y - start.y).abs().round()),
+            (_, Some(f)) => format!("{} × {}px", f.rect.width().round(), f.rect.height().round()),
+            _ => String::new(),
+        };
+        text(ui, x, crate::icons::Icon::SelectionSize, sel);
+        x += 150.0;
+        sep(ui, x - 6.0);
+        let canvas = match &self.drag {
+            Some(Drag::CanvasResize { size, .. }) => *size,
+            _ => vec2(self.doc.width() as f32, self.doc.height() as f32),
+        };
+        text(ui, x, crate::icons::Icon::CanvasSize, format!("{} × {}px", canvas.x, canvas.y));
+        x += 160.0;
+        sep(ui, x - 6.0);
+        if let Some(size) = self.doc.file_size.filter(|_| rect.width() > 900.0) {
+            text(ui, x, crate::icons::Icon::Disk, format!("Size: {}", human_size(size)));
+            sep(ui, x + 144.0);
+        }
+
+        // Zoom: percentage, minus, slider, plus.
+        let right = rect.max.x - 12.0;
+        let slider = r(right - 18.0 - 110.0, rect.center().y - 8.0, 110.0, 16.0);
+        let plus = r(right - 16.0, rect.center().y - 8.0, 16.0, 16.0);
+        let minus = r(slider.min.x - 20.0, rect.center().y - 8.0, 16.0, 16.0);
+        ui.painter().text(pos2(minus.min.x - 8.0, rect.center().y), Align2::RIGHT_CENTER, format!("{}%", (self.zoom * 100.0).round()), FontId::proportional(12.0), rgb(0x20, 0x20, 0x20));
+        for (b, sign, dir) in [(minus, "−", -1), (plus, "+", 1)] {
+            let resp = ui.interact(b, ui.id().with(("czoom", dir)), Sense::click());
+            skin.btn_bg(ui.painter(), b, resp.hovered(), resp.is_pointer_button_down_on(), false);
+            ui.painter().text(b.center(), Align2::CENTER_CENTER, sign, FontId::proportional(14.0), rgb(0x30, 0x30, 0x30));
+            if resp.clicked() {
+                self.zoom_step(dir, None);
+            }
+        }
+        let resp = ui.interact(slider, ui.id().with("czoomslider"), Sense::click_and_drag());
+        let (lo, hi) = (ZOOM_MIN.ln(), ZOOM_MAX.ln());
+        if let Some(p) = resp.interact_pointer_pos().filter(|_| resp.dragged() || resp.clicked()) {
+            let t = ((p.x - slider.min.x) / slider.width()).clamp(0.0, 1.0);
+            let z = (lo + t * (hi - lo)).exp();
+            self.set_zoom(if (z - 1.0).abs() < 0.05 { 1.0 } else { z }, None);
+        }
+        let y = slider.center().y;
+        ui.painter().line_segment([pos2(slider.min.x, y), pos2(slider.max.x, y)], Stroke::new(1.0, rgb(0x80, 0x80, 0x80)));
+        ui.painter().line_segment([pos2(slider.min.x, y + 1.0), pos2(slider.max.x, y + 1.0)], Stroke::new(1.0, Color32::WHITE));
+        // A tick at 100%.
+        let t100 = (0.0 - lo) / (hi - lo);
+        let x100 = slider.min.x + t100 * slider.width();
+        ui.painter().line_segment([pos2(x100, y - 4.0), pos2(x100, y + 4.0)], Stroke::new(1.0, rgb(0x80, 0x80, 0x80)));
+        let t = (self.zoom.ln() - lo) / (hi - lo);
+        let thumb = Rect::from_center_size(pos2(slider.min.x + t * slider.width(), y), vec2(7.0, 14.0));
+        let thumb_fill = if resp.hovered() || resp.dragged() { skin.hover[1] } else if skin.win7 { rgb(0xE6, 0xEE, 0xF8) } else { rgb(0x00, 0x7A, 0xD9) };
+        ui.painter().rect_filled(thumb, 1.5, thumb_fill);
+        ui.painter().rect_stroke(thumb, 1.5, Stroke::new(1.0, if skin.win7 { rgb(0x6C, 0x7C, 0x96) } else { rgb(0x00, 0x5A, 0xA8) }), StrokeKind::Inside);
+        ui.allocate_rect(rect, Sense::hover());
+    }
+}

@@ -173,11 +173,15 @@ impl PaintApp {
         let ruler = if self.show_rulers { 20.0 } else { 0.0 };
         let area = Rect::from_min_max(full.min + vec2(ruler, ruler), full.max);
         let img_size = vec2(self.doc.width() as f32, self.doc.height() as f32) * self.view_scale();
-        let content = vec2(
-            area.width().max(img_size.x + 2.0 * MARGIN),
-            area.height().max(img_size.y + 2.0 * MARGIN),
-        );
-        let offset = (content - img_size) / 2.0;
+        // Classic Paint keeps the picture in the top-left corner; Windows 11 centers it.
+        let classic = self.style.classic();
+        let pad = if classic { crate::classic::CANVAS_PAD } else { MARGIN };
+        let content = if classic {
+            vec2(area.width().max(img_size.x + pad + MARGIN), area.height().max(img_size.y + pad + MARGIN))
+        } else {
+            vec2(area.width().max(img_size.x + 2.0 * MARGIN), area.height().max(img_size.y + 2.0 * MARGIN))
+        };
+        let offset = if classic { vec2(pad, pad) } else { (content - img_size) / 2.0 };
 
         let mut sa = egui::ScrollArea::both().id_salt("canvas_scroll").auto_shrink(false);
         if let Some((img_pt, anchor)) = self.pending_zoom_anchor.take() {

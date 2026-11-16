@@ -10,6 +10,22 @@ pub enum ThemePref {
     Dark,
 }
 
+/// The look of the window: Windows 11 (Fluent), or the classic ribbon of Paint in
+/// Windows 10 or Windows 7.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Style {
+    #[default]
+    Win11,
+    Win10,
+    Win7,
+}
+
+impl Style {
+    pub fn classic(self) -> bool {
+        self != Style::Win11
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub dark: bool,

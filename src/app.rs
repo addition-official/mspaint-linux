@@ -8,7 +8,7 @@ use crate::fluent;
 use crate::icons::{self, Icon};
 use crate::pixels;
 use crate::text::FontManager;
-use crate::theme::{self, Palette, ThemePref};
+use crate::theme::{self, Palette, Style, ThemePref};
 use crate::tiles::TiledTexture;
 use crate::tools::{SelectMode, Tool};
 use egui::{
@@ -118,6 +118,8 @@ struct Persisted {
     rulers: bool,
     system_titlebar: bool,
     layers: bool,
+    #[serde(default)]
+    style: Style,
 }
 
 /// Mouse interaction in progress on the canvas.
@@ -155,7 +157,13 @@ pub struct PaintApp {
     pub fm: FontManager,
     pub pal: Palette,
     pub theme_pref: ThemePref,
-    applied_dark: Option<bool>,
+    /// Windows 11, 10 or 7 look.
+    pub style: Style,
+    /// The classic ribbon's open tab: 0 Home, 1 View, 2 Text.
+    pub classic_tab: u8,
+    /// A text box was being edited last frame (the Text tab opens when one starts).
+    pub classic_text_seen: bool,
+    applied_dark: Option<(bool, Style)>,
     pub tex: Option<TiledTexture>,
     pub float_tex: Option<TiledTexture>,
     pub float_tex_key: String,
@@ -259,6 +267,9 @@ impl PaintApp {
             fm,
             pal: Palette::new(false),
             theme_pref: p.theme.unwrap_or(ThemePref::System),
+            style: p.style,
+            classic_tab: 0,
+            classic_text_seen: false,
             applied_dark: None,
             tex: None,
             float_tex: None,
@@ -323,7 +334,7 @@ impl PaintApp {
         app
     }
 
-    fn title(&self) -> String {
+    pub fn title(&self) -> String {
         format!("{}{} - Paintbox", if self.doc.has_unsaved_work() { "*" } else { "" }, self.doc.name())
     }
 
@@ -1364,7 +1375,7 @@ impl PaintApp {
     }
 
     /// Flat icon button in the Win11 style (subtle hover and pressed fills).
-    fn quick_button(&self, ui: &mut egui::Ui, icon: Icon, tip: &str, enabled: bool) -> bool {
+    pub fn quick_button(&self, ui: &mut egui::Ui, icon: Icon, tip: &str, enabled: bool) -> bool {
         let resp = self.icon_button(ui, icon, enabled);
         enabled && resp.on_hover_text(tip).clicked()
     }
@@ -1391,7 +1402,7 @@ impl PaintApp {
         });
     }
 
-    fn file_menu(&mut self, ui: &mut egui::Ui) {
+    pub fn file_menu(&mut self, ui: &mut egui::Ui) {
         ui.set_min_width(250.0);
         for (icon, label, sc, a) in [(Icon::New, "New", "Ctrl+N", Action::New), (Icon::Open, "Open", "Ctrl+O", Action::Open)] {
             if self.menu_item(ui, icon, label, sc, false, true) {
@@ -1980,7 +1991,11 @@ impl PaintApp {
     }
 
     fn apply_theme(&mut self, ctx: &egui::Context) {
-        let dark = match self.theme_pref {
+        // The classic Windows 10 and 7 looks had no dark mode.
+        let dark = if self.style.classic() {
+            false
+        } else {
+            match self.theme_pref {
             ThemePref::Light => false,
             ThemePref::Dark => true,
             ThemePref::System => {
@@ -1992,12 +2007,19 @@ impl PaintApp {
                     _ => ctx.system_theme() == Some(egui::Theme::Dark),
                 }
             }
+        }
         };
-        if self.applied_dark != Some(dark) {
-            self.applied_dark = Some(dark);
+        if self.applied_dark != Some((dark, self.style)) {
+            self.applied_dark = Some((dark, self.style));
             ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
             self.pal = Palette::new(dark);
+            if self.style.classic() {
+                crate::classic::Skin::of(self.style).adjust(&mut self.pal);
+            }
             theme::apply(ctx, &self.pal);
+            if self.style.classic() {
+                crate::classic::Skin::of(self.style).adjust_visuals(ctx);
+            }
         }
     }
 }
@@ -2005,6 +2027,10 @@ impl PaintApp {
 impl PaintApp {
     /// Menu row, ribbon, canvas, layers panel and status bar.
     fn main_view(&mut self, ui: &mut egui::Ui) {
+        if self.style.classic() {
+            self.classic_view(ui);
+            return;
+        }
         let pal = self.pal;
         let ctx = ui.ctx().clone();
         egui::Panel::top("menubar")
@@ -2074,6 +2100,38 @@ impl PaintApp {
     }
 }
 
+impl PaintApp {
+    /// The Windows 10 / 7 layout: tabs and ribbon, canvas, layers panel, status bar.
+    fn classic_view(&mut self, ui: &mut egui::Ui) {
+        let pal = self.pal;
+        egui::Panel::top("classic_ribbon")
+            .exact_size(crate::classic::RIBBON_H)
+            .frame(egui::Frame::new())
+            .show(ui, |ui| self.classic_ribbon(ui));
+        if self.show_status {
+            egui::Panel::bottom("classic_status")
+                .exact_size(crate::classic::STATUS_H)
+                .frame(egui::Frame::new())
+                .show(ui, |ui| self.classic_status_bar(ui));
+        }
+        self.ensure_checker(ui.ctx());
+        if self.show_layers {
+            egui::Panel::right("layers")
+                .exact_size(250.0)
+                .frame(
+                    egui::Frame::new()
+                        .fill(pal.ribbon)
+                        .inner_margin(egui::Margin::symmetric(8, 4))
+                        .stroke(egui::Stroke::new(1.0, pal.separator)),
+                )
+                .show(ui, |ui| self.layers_panel(ui));
+        }
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(pal.workspace))
+            .show(ui, |ui| self.canvas(ui));
+    }
+}
+
 impl eframe::App for PaintApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -2126,9 +2184,15 @@ impl eframe::App for PaintApp {
             self.compositor = Some((desktop::has_compositor(), now));
         }
         let composited = self.compositor.is_some_and(|(c, _)| c);
-        self.corner = if self.system_titlebar || maximized || fullscreen || !composited { 0 } else { WINDOW_RADIUS };
+        // Windows 10 windows are square; Windows 7 kept them square at the bottom too.
+        self.corner = if self.style.classic() || self.system_titlebar || maximized || fullscreen || !composited { 0 } else { WINDOW_RADIUS };
         self.on_window_edge = self.window_edges(&ctx);
-        if !self.system_titlebar {
+        if !self.system_titlebar && self.style.classic() {
+            egui::Panel::top("titlebar")
+                .exact_size(crate::classic::TITLE_H)
+                .frame(egui::Frame::new())
+                .show(ui, |ui| self.classic_title_bar(ui));
+        } else if !self.system_titlebar {
             let r = self.corner;
             egui::Panel::top("titlebar")
                 .exact_size(32.0)
@@ -2199,6 +2263,7 @@ impl eframe::App for PaintApp {
             rulers: self.show_rulers,
             system_titlebar: self.system_titlebar,
             layers: self.show_layers,
+            style: self.style,
         };
         eframe::set_value(storage, eframe::APP_KEY, &p);
     }

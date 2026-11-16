@@ -4,7 +4,7 @@
 use crate::app::{PaintApp, app_icon};
 use crate::fluent;
 use crate::icons::{self, Icon};
-use crate::theme::ThemePref;
+use crate::theme::{Style, ThemePref};
 use egui::{Color32, RichText, Sense, Stroke, Ui, vec2};
 
 impl PaintApp {
@@ -52,8 +52,21 @@ impl PaintApp {
                     });
                     ui.add_space(4.0);
                     card(ui, &pal, |ui| {
+                        card_header(ui, &pal, Icon::Picture, "Style", "Look like Paint in Windows 11, Windows 10 or Windows 7 (the classic styles are always light)");
+                        ui.add_space(10.0);
                         ui.horizontal(|ui| {
-                            card_header(ui, &pal, Icon::Desktop, "Use system title bar", "Use your desktop's window title bar instead of the Windows 11 style one");
+                            ui.add_space(44.0);
+                            ui.vertical(|ui| {
+                                for (st, n) in [(Style::Win11, "Windows 11"), (Style::Win10, "Windows 10"), (Style::Win7, "Windows 7")] {
+                                    fluent::radio_value(ui, &pal, &mut self.style, st, n);
+                                }
+                            });
+                        });
+                    });
+                    ui.add_space(4.0);
+                    card(ui, &pal, |ui| {
+                        ui.horizontal(|ui| {
+                            card_header(ui, &pal, Icon::Desktop, "Use system title bar", "Use your desktop's window title bar instead of Paintbox's own");
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 fluent::toggle(ui, &pal, &mut self.system_titlebar);
                                 ui.label(if self.system_titlebar { "On" } else { "Off" });
