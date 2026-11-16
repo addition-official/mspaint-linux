@@ -539,15 +539,10 @@ impl PaintApp {
         } else {
             ui.painter().text(app_rect.center(), Align2::CENTER_CENTER, "File", self.font(), Color32::WHITE);
         }
-        egui::Popup::menu(&app_resp).width(280.0).show(|ui| {
-            self.file_menu(ui);
-            ui.separator();
-            if self.menu_item(ui, crate::icons::Icon::Gear, "Settings and About", "", false, true) {
-                self.drag = None;
-                self.doc.commit_overlay(&self.s);
-                self.show_settings = true;
-            }
-        });
+        if app_resp.clicked() {
+            self.app_menu_pane = 0;
+        }
+        egui::Popup::menu(&app_resp).width(480.0).show(|ui| self.classic_app_menu(ui));
 
         // Home, View (and Text while typing).
         let mut x = app_rect.max.x + 4.0;
@@ -606,6 +601,135 @@ impl PaintApp {
                 });
             });
         ui.allocate_rect(full, Sense::hover());
+    }
+
+    /// The classic File menu: big commands on the left; on the right the recent
+    /// pictures, or the choices of the command under the mouse (Save as, Set as
+    /// desktop background).
+    fn classic_app_menu(&mut self, ui: &mut Ui) {
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(240.0);
+                let items: [(CIcon, &str, u8); 10] = [
+                    (CIcon::New, "New", 0),
+                    (CIcon::Open, "Open", 0),
+                    (CIcon::Save, "Save", 0),
+                    (CIcon::SaveAs, "Save as", 1),
+                    (CIcon::Print, "Print", 0),
+                    (CIcon::Import, "Import to canvas", 0),
+                    (CIcon::Wallpaper, "Set as desktop background", 2),
+                    (CIcon::Properties, "Properties", 0),
+                    (CIcon::Settings, "Settings and About", 0),
+                    (CIcon::Exit, "Exit", 0),
+                ];
+                for (i, (icon, label, pane)) in items.into_iter().enumerate() {
+                    if i == 7 || i == 9 {
+                        let (sep, _) = ui.allocate_exact_size(vec2(240.0, 7.0), Sense::hover());
+                        ui.painter().line_segment([pos2(sep.min.x + 44.0, sep.center().y), pos2(sep.max.x - 4.0, sep.center().y)], Stroke::new(1.0, rgb(0xD5, 0xD5, 0xD5)));
+                    }
+                    let (row, resp) = ui.allocate_exact_size(vec2(240.0, 40.0), Sense::click());
+                    let open = pane != 0 && self.app_menu_pane == pane;
+                    self.skin().btn_bg(ui.painter(), row, resp.hovered() || open, resp.is_pointer_button_down_on(), false);
+                    classic_icons::paint(ui.painter(), Rect::from_center_size(pos2(row.min.x + 22.0, row.center().y), vec2(32.0, 32.0)), icon, true);
+                    ui.painter().text(pos2(row.min.x + 46.0, row.center().y), Align2::LEFT_CENTER, label, FontId::proportional(12.5), rgb(0x1E, 0x1E, 0x1E));
+                    if pane != 0 {
+                        let c = pos2(row.max.x - 10.0, row.center().y);
+                        ui.painter().add(egui::Shape::convex_polygon(vec![c + vec2(-2.0, -4.0), c + vec2(2.0, 0.0), c + vec2(-2.0, 4.0)], rgb(0x40, 0x40, 0x40), Stroke::NONE));
+                    }
+                    if resp.hovered() {
+                        self.app_menu_pane = pane;
+                    }
+                    if resp.clicked() {
+                        let action = match i {
+                            0 => Some(Action::New),
+                            1 => Some(Action::Open),
+                            2 => Some(Action::Save),
+                            3 => Some(Action::SaveAs(None)),
+                            4 => Some(Action::Print),
+                            5 => Some(Action::Import),
+                            7 => Some(Action::Properties),
+                            9 => Some(Action::Exit),
+                            _ => None,
+                        };
+                        if i == 8 {
+                            self.drag = None;
+                            self.doc.commit_overlay(&self.s);
+                            self.show_settings = true;
+                        }
+                        if let Some(a) = action {
+                            self.push(a);
+                        }
+                        if i != 6 {
+                            ui.close();
+                        }
+                    }
+                }
+            });
+            // The right side, on a lighter background with a line between.
+            let (line, _) = ui.allocate_exact_size(vec2(1.0, 420.0), Sense::hover());
+            ui.painter().line_segment([line.center_top(), line.center_bottom()], Stroke::new(1.0, rgb(0xD5, 0xD5, 0xD5)));
+            ui.vertical(|ui| {
+                ui.set_width(236.0);
+                let header = |ui: &mut Ui, text: &str| {
+                    let (h, _) = ui.allocate_exact_size(vec2(236.0, 30.0), Sense::hover());
+                    ui.painter().text(pos2(h.min.x + 10.0, h.center().y), Align2::LEFT_CENTER, text, FontId::proportional(13.0), rgb(0x1E, 0x39, 0x5B));
+                    ui.painter().line_segment([pos2(h.min.x + 8.0, h.max.y - 3.0), pos2(h.max.x - 8.0, h.max.y - 3.0)], Stroke::new(1.0, rgb(0xC5, 0xD2, 0xE3)));
+                };
+                match self.app_menu_pane {
+                    1 => {
+                        header(ui, "Save a copy as");
+                        for (label, ext) in [("PNG picture", "png"), ("JPEG picture", "jpg"), ("BMP picture", "bmp"), ("GIF picture", "gif"), ("TIFF picture", "tiff"), ("WEBP picture", "webp"), ("ICO picture", "ico")] {
+                            if self.pane_row(ui, Some(CIcon::Thumbnail), label) {
+                                self.push(Action::SaveAs(Some(ext)));
+                                ui.close();
+                            }
+                        }
+                    }
+                    2 => {
+                        header(ui, "Set as desktop background");
+                        for (label, mode) in [("Fill", "fill"), ("Tile", "tile"), ("Center", "center")] {
+                            if self.pane_row(ui, Some(CIcon::Wallpaper), label) {
+                                self.push(Action::Wallpaper(mode));
+                                ui.close();
+                            }
+                        }
+                    }
+                    _ => {
+                        header(ui, "Recent pictures");
+                        let recent = self.recent.clone();
+                        if recent.is_empty() {
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(10.0);
+                                ui.label(egui::RichText::new("No recent pictures").size(12.0).color(rgb(0x80, 0x80, 0x80)));
+                            });
+                        }
+                        for (i, path) in recent.iter().take(9).enumerate() {
+                            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                            if self.pane_row(ui, None, &format!("{}   {name}", i + 1)) {
+                                self.push(Action::OpenPath(path.clone()));
+                                ui.close();
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    /// A row on the right side of the classic File menu; true when clicked.
+    fn pane_row(&self, ui: &mut Ui, icon: Option<CIcon>, label: &str) -> bool {
+        let (row, resp) = ui.allocate_exact_size(vec2(236.0, 28.0), Sense::click());
+        self.skin().btn_bg(ui.painter(), row.shrink2(vec2(4.0, 1.0)), resp.hovered(), resp.is_pointer_button_down_on(), false);
+        let mut x = row.min.x + 10.0;
+        if let Some(icon) = icon {
+            classic_icons::paint(ui.painter(), Rect::from_center_size(pos2(x + 8.0, row.center().y), vec2(16.0, 16.0)), icon, true);
+            x += 24.0;
+        }
+        let g = ui.painter().layout(label.to_string(), FontId::proportional(12.5), rgb(0x1E, 0x1E, 0x1E), 236.0 - (x - row.min.x) - 8.0);
+        ui.painter().galley(pos2(x, row.center().y - g.size().y / 2.0), g, rgb(0x1E, 0x1E, 0x1E));
+        resp.clicked()
     }
 
     fn home_tab(&mut self, ui: &mut Ui) {

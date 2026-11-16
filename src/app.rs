@@ -161,6 +161,9 @@ pub struct PaintApp {
     pub style: Style,
     /// The classic ribbon's open tab: 0 Home, 1 View, 2 Text.
     pub classic_tab: u8,
+    /// What the right side of the classic File menu shows: 0 recent pictures,
+    /// 1 Save as formats, 2 desktop background modes.
+    pub app_menu_pane: u8,
     /// A text box was being edited last frame (the Text tab opens when one starts).
     pub classic_text_seen: bool,
     applied_dark: Option<(bool, Style)>,
@@ -275,6 +278,7 @@ impl PaintApp {
             theme_pref: p.theme.unwrap_or(ThemePref::System),
             style: p.style,
             classic_tab: 0,
+            app_menu_pane: 0,
             classic_text_seen: false,
             applied_dark: None,
             tex: None,

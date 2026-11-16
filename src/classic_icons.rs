@@ -40,6 +40,15 @@ pub enum CIcon {
     StatusSelection,
     StatusCanvas,
     StatusDisk,
+    New,
+    Open,
+    SaveAs,
+    Print,
+    Import,
+    Wallpaper,
+    Properties,
+    Settings,
+    Exit,
 }
 
 fn rgb(r: u8, g: u8, b: u8) -> Color32 {
@@ -96,7 +105,7 @@ impl Pen<'_> {
 }
 
 impl CIcon {
-    pub const ALL: [CIcon; 33] = [
+    pub const ALL: [CIcon; 42] = [
         CIcon::Paste,
         CIcon::Cut,
         CIcon::Copy,
@@ -130,6 +139,15 @@ impl CIcon {
         CIcon::StatusSelection,
         CIcon::StatusCanvas,
         CIcon::StatusDisk,
+        CIcon::New,
+        CIcon::Open,
+        CIcon::SaveAs,
+        CIcon::Print,
+        CIcon::Import,
+        CIcon::Wallpaper,
+        CIcon::Properties,
+        CIcon::Settings,
+        CIcon::Exit,
     ];
 
     /// The file name (without extension) a custom icon for this button uses.
@@ -168,6 +186,15 @@ impl CIcon {
             CIcon::StatusSelection => "status-selection",
             CIcon::StatusCanvas => "status-canvas",
             CIcon::StatusDisk => "status-file-size",
+            CIcon::New => "new",
+            CIcon::Open => "open",
+            CIcon::SaveAs => "save-as",
+            CIcon::Print => "print",
+            CIcon::Import => "import",
+            CIcon::Wallpaper => "set-as-background",
+            CIcon::Properties => "properties",
+            CIcon::Settings => "settings",
+            CIcon::Exit => "exit",
         }
     }
 }
@@ -515,6 +542,56 @@ fn draw(d: &Pen, icon: CIcon) {
             d.boxed(2.0, 2.0, 12.0, 12.0, rgb(0x3E, 0x7B, 0xD0), rgb(0x1F, 0x4E, 0x96), 1.0);
             d.boxed(4.5, 2.0, 7.0, 4.5, rgb(0xF4, 0xF6, 0xF9), rgb(0x1F, 0x4E, 0x96), 0.0);
             d.boxed(4.0, 9.0, 8.0, 5.0, Color32::WHITE, rgb(0x1F, 0x4E, 0x96), 0.0);
+        }
+        CIcon::New => {
+            d.poly(&[(3.0, 1.5), (10.0, 1.5), (13.0, 4.5), (13.0, 14.5), (3.0, 14.5)], Color32::WHITE, rgb(0x6E, 0x78, 0x84));
+            d.poly(&[(10.0, 1.5), (10.0, 4.5), (13.0, 4.5)], rgb(0xDD, 0xE4, 0xEE), rgb(0x6E, 0x78, 0x84));
+            d.circle(12.5, 3.0, 2.2, rgb(0xFF, 0xD8, 0x4A), rgb(0xC8, 0x96, 0x10));
+        }
+        CIcon::Open => {
+            d.poly(&[(1.0, 3.0), (6.0, 3.0), (7.5, 4.5), (14.0, 4.5), (14.0, 13.5), (1.0, 13.5)], rgb(0xE8, 0xC0, 0x5A), rgb(0xA0, 0x78, 0x20));
+            d.poly(&[(2.5, 7.0), (15.5, 7.0), (14.0, 13.5), (1.0, 13.5)], rgb(0xF8, 0xD8, 0x78), rgb(0xA0, 0x78, 0x20));
+        }
+        CIcon::SaveAs => {
+            d.boxed(1.0, 2.5, 11.5, 11.5, rgb(0x3E, 0x7B, 0xD0), rgb(0x1F, 0x4E, 0x96), 1.0);
+            d.boxed(3.5, 2.5, 6.5, 4.0, rgb(0xF4, 0xF6, 0xF9), rgb(0x1F, 0x4E, 0x96), 0.0);
+            d.boxed(3.0, 9.0, 7.5, 5.0, Color32::WHITE, rgb(0x1F, 0x4E, 0x96), 0.0);
+            d.poly(&[(9.0, 13.0), (14.0, 8.0), (15.5, 9.5), (10.5, 14.5), (8.8, 14.8)], rgb(0xF5, 0xC8, 0x2A), rgb(0x9A, 0x74, 0x10));
+        }
+        CIcon::Print => {
+            d.boxed(4.0, 1.5, 8.0, 5.0, Color32::WHITE, rgb(0x6E, 0x78, 0x84), 0.0);
+            d.boxed(1.0, 6.0, 14.0, 6.5, rgb(0xC9, 0xCF, 0xD6), rgb(0x5E, 0x68, 0x74), 1.0);
+            d.boxed(4.0, 10.5, 8.0, 4.5, Color32::WHITE, rgb(0x6E, 0x78, 0x84), 0.0);
+            d.circle(12.5, 8.0, 0.8, rgb(0x2E, 0x8B, 0x3A), rgb(0x2E, 0x8B, 0x3A));
+        }
+        CIcon::Import => {
+            d.boxed(4.5, 3.0, 10.5, 10.0, rgb(0xEE, 0xF3, 0xFA), rgb(0x6E, 0x78, 0x84), 0.0);
+            d.poly(&[(5.5, 12.0), (8.5, 8.0), (11.0, 10.5), (12.5, 9.0), (14.0, 12.0)], rgb(0x4C, 0xA8, 0x4C), rgb(0x2E, 0x7A, 0x2E));
+            d.line(&[(0.5, 8.0), (5.5, 8.0)], 1.6, rgb(0x2B, 0x6C, 0xC4));
+            d.poly(&[(4.0, 5.5), (7.0, 8.0), (4.0, 10.5)], rgb(0x2B, 0x6C, 0xC4), rgb(0x2B, 0x6C, 0xC4));
+        }
+        CIcon::Wallpaper => {
+            d.boxed(1.0, 2.0, 14.0, 10.0, rgb(0x2A, 0x3A, 0x50), rgb(0x2A, 0x3A, 0x50), 0.8);
+            d.grad(2.0, 3.0, 12.0, 8.0, rgb(0x9C, 0xD4, 0xF8), rgb(0x5A, 0x92, 0xD8));
+            d.poly(&[(2.0, 11.0), (6.0, 7.0), (9.0, 9.5), (11.0, 8.0), (14.0, 11.0)], rgb(0x4C, 0xA8, 0x4C), rgb(0x2E, 0x7A, 0x2E));
+            d.boxed(4.5, 12.5, 7.0, 2.0, rgb(0xB0, 0xB8, 0xC2), rgb(0x5E, 0x68, 0x74), 0.5);
+        }
+        CIcon::Properties => {
+            d.poly(&[(3.0, 1.5), (13.0, 1.5), (13.0, 14.5), (3.0, 14.5)], Color32::WHITE, rgb(0x6E, 0x78, 0x84));
+            for y in [5.0, 8.0, 11.0] {
+                d.p.rect_filled(d.r(5.0, y - 0.8, 1.6, 1.6), 0.0, rgb(0x2B, 0x6C, 0xC4));
+                d.line(&[(7.5, y), (11.5, y)], 0.8, rgb(0x8A, 0x94, 0xA3));
+            }
+        }
+        CIcon::Settings => {
+            d.circle(8.0, 8.0, 6.5, rgb(0x3E, 0x7B, 0xD0), rgb(0x1F, 0x4E, 0x96));
+            d.text(8.0, 8.4, 10.0, "?", Color32::WHITE);
+        }
+        CIcon::Exit => {
+            d.boxed(2.0, 1.5, 8.0, 13.0, rgb(0xC8, 0x8C, 0x48), rgb(0x8A, 0x5A, 0x24), 0.5);
+            d.circle(8.0, 8.0, 0.8, rgb(0xF5, 0xC8, 0x2A), rgb(0x9A, 0x74, 0x10));
+            d.line(&[(9.0, 8.0), (15.0, 8.0)], 1.6, rgb(0xC0, 0x30, 0x30));
+            d.poly(&[(12.5, 5.5), (15.5, 8.0), (12.5, 10.5)], rgb(0xC0, 0x30, 0x30), rgb(0xC0, 0x30, 0x30));
         }
     }
 }
