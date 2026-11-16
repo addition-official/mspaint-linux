@@ -248,8 +248,17 @@ impl PaintApp {
     }
 
     fn big_button_face(&self, ui: &Ui, rect: Rect, icon: CIcon, label: &str, dropdown: bool, enabled: bool) {
+        self.big_button_face_custom(ui, rect, icon, None, label, dropdown, enabled);
+    }
+
+    /// `custom`: a custom icon file to prefer over `icon` (the current brush's).
+    #[allow(clippy::too_many_arguments)]
+    fn big_button_face_custom(&self, ui: &Ui, rect: Rect, icon: CIcon, custom: Option<&'static str>, label: &str, dropdown: bool, enabled: bool) {
         let skin = self.skin();
-        classic_icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.center().x, rect.min.y + 20.0), vec2(32.0, 32.0)), icon, enabled);
+        let r32 = Rect::from_center_size(pos2(rect.center().x, rect.min.y + 20.0), vec2(32.0, 32.0));
+        if !custom.is_some_and(|name| classic_icons::paint_custom(ui.painter(), r32, name, enabled)) {
+            classic_icons::paint(ui.painter(), r32, icon, enabled);
+        }
         let color = if enabled { skin.text } else { skin.text.gamma_multiply(0.45) };
         let lines: Vec<&str> = label.split('\n').collect();
         for (i, line) in lines.iter().enumerate() {
@@ -263,6 +272,11 @@ impl PaintApp {
     /// Large split button: the icon part does the action, the label part (with the
     /// arrow) opens the menu. Returns (main, menu).
     fn big_split(&self, ui: &mut Ui, rect: Rect, key: &str, icon: CIcon, label: &str, selected: bool) -> (Response, Response) {
+        self.big_split_custom(ui, rect, key, icon, None, label, selected)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn big_split_custom(&self, ui: &mut Ui, rect: Rect, key: &str, icon: CIcon, custom: Option<&'static str>, label: &str, selected: bool) -> (Response, Response) {
         let top = Rect::from_min_max(rect.min, pos2(rect.max.x, rect.min.y + 37.0));
         let bottom = Rect::from_min_max(pos2(rect.min.x, top.max.y), rect.max);
         let main = ui.interact(top, ui.id().with((key, "main")), self.click_sense(ui));
@@ -277,7 +291,7 @@ impl PaintApp {
                 skin.btn_bg(p, hot, true, resp.is_pointer_button_down_on(), selected);
             }
         }
-        self.big_button_face(ui, rect, icon, label, true, true);
+        self.big_button_face_custom(ui, rect, icon, custom, label, true, true);
         (main, menu)
     }
 
@@ -341,7 +355,10 @@ impl PaintApp {
         }
         let bar = ui.interact(rect, ui.id().with("titlebar"), Sense::click_and_drag());
         self.window_grab(&ctx, &bar, maximized);
-        app_icon(ui.painter(), Rect::from_center_size(pos2(rect.min.x + 16.0, rect.center().y), vec2(16.0, 16.0)));
+        let icon_rect = Rect::from_center_size(pos2(rect.min.x + 16.0, rect.center().y), vec2(16.0, 16.0));
+        if !classic_icons::paint_custom(ui.painter(), icon_rect, "app-icon", true) {
+            app_icon(ui.painter(), icon_rect);
+        }
         // Quick access toolbar: Save, Undo, Redo.
         let mut x = rect.min.x + 30.0;
         if !skin.win7 {
@@ -784,7 +801,9 @@ impl PaintApp {
             }
         });
         self.cgroup(ui, "Brushes", 54.0, |app, ui, c| {
-            let (main, menu) = app.big_split(ui, r(c.min.x + 2.0, c.min.y, 50.0, CONTENT_H), "cbrush", CIcon::Brushes, "Brushes", app.s.tool == Tool::Brush);
+            // Shows the chosen brush's custom icon when there is one, as Paint did.
+            let current = Some(app.s.brush.file_name());
+            let (main, menu) = app.big_split_custom(ui, r(c.min.x + 2.0, c.min.y, 50.0, CONTENT_H), "cbrush", CIcon::Brushes, current, "Brushes", app.s.tool == Tool::Brush);
             if main.on_hover_text(app.s.brush.name()).clicked() {
                 app.set_tool(Tool::Brush);
             }
@@ -794,7 +813,11 @@ impl PaintApp {
                     let (row, resp) = ui.allocate_exact_size(vec2(290.0, 36.0), Sense::click());
                     let sel = app.s.tool == Tool::Brush && app.s.brush == k;
                     app.skin().btn_bg(ui.painter(), row, resp.hovered(), resp.is_pointer_button_down_on(), sel);
-                    ui.painter().text(pos2(row.min.x + 10.0, row.center().y), Align2::LEFT_CENTER, k.name(), app.font(), app.skin().text);
+                    let icon = Rect::from_center_size(pos2(row.min.x + 20.0, row.center().y), vec2(24.0, 24.0));
+                    if !classic_icons::paint_custom(ui.painter(), icon, k.file_name(), true) {
+                        classic_icons::paint(ui.painter(), icon, CIcon::Brushes, true);
+                    }
+                    ui.painter().text(pos2(row.min.x + 40.0, row.center().y), Align2::LEFT_CENTER, k.name(), app.font(), app.skin().text);
                     if let Some(t) = previews.get(i) {
                         let pr = Rect::from_min_size(pos2(row.max.x - 140.0, row.center().y - 13.0), vec2(130.0, 26.0));
                         ui.painter().image(t.id(), pr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);

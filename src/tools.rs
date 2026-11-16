@@ -20,6 +20,21 @@ pub enum BrushKind {
 }
 
 impl BrushKind {
+    /// The file name (without extension) of a custom icon for this brush.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            BrushKind::Brush => "brush-brush",
+            BrushKind::CalligraphyLeft => "brush-calligraphy-brush",
+            BrushKind::CalligraphyRight => "brush-calligraphy-pen",
+            BrushKind::Airbrush => "brush-airbrush",
+            BrushKind::Oil => "brush-oil",
+            BrushKind::Crayon => "brush-crayon",
+            BrushKind::Marker => "brush-marker",
+            BrushKind::NaturalPencil => "brush-natural-pencil",
+            BrushKind::Watercolor => "brush-watercolor",
+        }
+    }
+
     pub const ALL: [BrushKind; 9] = [
         BrushKind::Brush,
         BrushKind::CalligraphyLeft,

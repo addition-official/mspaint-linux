@@ -158,6 +158,23 @@ impl PaintApp {
                             }
                         }
                         ui.end_row();
+                        for (i, k) in crate::tools::BrushKind::ALL.iter().enumerate() {
+                            let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                            if !ci::paint_custom(ui.painter(), r, k.file_name(), true) {
+                                ci::paint(ui.painter(), r, CIcon::Brushes, true);
+                            }
+                            ui.label(RichText::new(format!("{}.png", k.file_name())).monospace().size(12.0));
+                            if i % 2 == 1 {
+                                ui.end_row();
+                            }
+                        }
+                        ui.end_row();
+                        let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                        if !ci::paint_custom(ui.painter(), r, "app-icon", true) {
+                            app_icon(ui.painter(), r);
+                        }
+                        ui.label(RichText::new("app-icon.png  (title bar)").monospace().size(12.0));
+                        ui.end_row();
                         for (i, k) in crate::tools::ShapeKind::ALL.iter().enumerate() {
                             let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
                             if !ci::paint_custom(ui.painter(), r, k.file_name(), true) {

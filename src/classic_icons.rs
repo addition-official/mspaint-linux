@@ -245,7 +245,12 @@ pub fn reload_custom() {
 /// How many buttons currently have a custom icon file.
 pub fn custom_count() -> usize {
     let Some(dir) = custom_dir() else { return 0 };
-    let names = CIcon::ALL.iter().map(|i| i.file_name()).chain(crate::tools::ShapeKind::ALL.iter().map(|k| k.file_name()));
+    let names = CIcon::ALL
+        .iter()
+        .map(|i| i.file_name())
+        .chain(crate::tools::ShapeKind::ALL.iter().map(|k| k.file_name()))
+        .chain(crate::tools::BrushKind::ALL.iter().map(|k| k.file_name()))
+        .chain(["app-icon"]);
     names.filter(|n| find_file(&dir, n, 16).is_some() || find_file(&dir, n, 32).is_some()).count()
 }
 
