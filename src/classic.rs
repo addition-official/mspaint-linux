@@ -354,6 +354,7 @@ impl PaintApp {
             (CIcon::Redo, "Redo (Ctrl+Y)", Action::Redo, self.doc.can_redo()),
         ] {
             let b = r(x, rect.center().y - 11.0, 22.0, 22.0);
+            self.no_drag.push(b);
             if self.icon_btn(ui, b, tip, icon, false, enabled).on_hover_text(tip).clicked() {
                 self.push(action);
             }
@@ -390,11 +391,12 @@ impl PaintApp {
     }
 
     /// Windows 10: flat 46 px buttons with thin glyphs; Close turns red on hover.
-    fn win10_captions(&self, ui: &mut Ui, rect: Rect, maximized: bool) {
+    fn win10_captions(&mut self, ui: &mut Ui, rect: Rect, maximized: bool) {
         let ctx = ui.ctx().clone();
         let bw = 46.0;
         for i in 0..3 {
             let br = r(rect.max.x - bw * (i + 1) as f32, rect.min.y, bw, rect.height() - 1.0);
+            self.no_drag.push(br);
             let resp = ui.interact(br, ui.id().with(("ccap", i)), Sense::click());
             let (hover, press) = (resp.hovered(), resp.is_pointer_button_down_on());
             if hover {
@@ -437,13 +439,14 @@ impl PaintApp {
     }
 
     /// Windows 7: glassy rounded buttons hanging from the top edge; Close is red.
-    fn win7_captions(&self, ui: &mut Ui, rect: Rect, maximized: bool) {
+    fn win7_captions(&mut self, ui: &mut Ui, rect: Rect, maximized: bool) {
         let ctx = ui.ctx().clone();
         let h = 19.0;
         let widths = [44.0, 26.0, 27.0];
         let mut right = rect.max.x - 6.0;
         for i in 0..3 {
             let br = r(right - widths[i], rect.min.y, widths[i], h);
+            self.no_drag.push(br);
             right -= widths[i];
             let resp = ui.interact(br, ui.id().with(("ccap7", i)), Sense::click());
             let (hover, press) = (resp.hovered(), resp.is_pointer_button_down_on());
@@ -524,6 +527,7 @@ impl PaintApp {
 
         // Application menu button (Windows 7) / File tab (Windows 10).
         let app_rect = if skin.win7 { r(tabs.min.x + 2.0, tabs.min.y + 1.0, 54.0, TABS_H - 1.0) } else { r(tabs.min.x, tabs.min.y, 56.0, TABS_H) };
+        self.no_drag.push(app_rect);
         let app_resp = ui.interact(app_rect, ui.id().with("app_menu_btn"), self.click_sense(ui));
         let fill = if app_resp.hovered() { skin.app_btn_hover } else { skin.app_btn };
         let radius = if skin.win7 { egui::CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 } } else { egui::CornerRadius::ZERO };
@@ -551,6 +555,7 @@ impl PaintApp {
         for (i, name) in names.iter().enumerate() {
             let g = ui.painter().layout_no_wrap(name.to_string(), self.font(), skin.text);
             let tab = r(x, tabs.min.y + 2.0, g.size().x + 26.0, TABS_H - 1.0);
+            self.no_drag.push(tab);
             let resp = ui.interact(tab, ui.id().with(("ctab", i)), self.click_sense(ui));
             let selected = self.classic_tab as usize == i;
             let p = ui.painter();
@@ -574,6 +579,7 @@ impl PaintApp {
         }
         // Settings, where Windows had its help button.
         let help = r(tabs.max.x - 26.0, tabs.min.y + 3.0, 20.0, 18.0);
+        self.no_drag.push(help);
         let hr = ui.interact(help, ui.id().with("chelp"), self.click_sense(ui));
         self.skin().btn_bg(ui.painter(), help, hr.hovered(), hr.is_pointer_button_down_on(), false);
         ui.painter().circle(help.center(), 7.0, rgb(0x2B, 0x6C, 0xC4), Stroke::new(1.0, rgb(0x1F, 0x4E, 0x96)));

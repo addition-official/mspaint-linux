@@ -201,6 +201,10 @@ pub struct PaintApp {
     pub on_window_edge: bool,
     /// The window was asked to move for the current title bar press.
     title_press_moved: bool,
+    /// Buttons on the title bar and tab row (this frame, and last frame's): a press
+    /// that starts on one of them is a click, never a window move.
+    pub no_drag: Vec<Rect>,
+    no_drag_prev: Vec<Rect>,
     /// Window corner radius we currently draw (0 when maximized or using system decorations).
     pub corner: u8,
     /// Window title last sent to the window manager.
@@ -304,6 +308,8 @@ impl PaintApp {
             decorations_applied: None,
             on_window_edge: false,
             title_press_moved: false,
+            no_drag: Vec::new(),
+            no_drag_prev: Vec::new(),
             corner: WINDOW_RADIUS,
             last_title: String::new(),
             drag_button: egui::PointerButton::Primary,
@@ -1224,6 +1230,7 @@ impl PaintApp {
         ];
         for (i, (icon, tip)) in buttons.into_iter().enumerate() {
             let br = Rect::from_min_size(egui::pos2(rect.max.x - bw * (i + 1) as f32, rect.min.y), vec2(bw, rect.height()));
+            self.no_drag.push(br);
             let resp = ui.interact(br, ui.id().with(("caption", i)), Sense::click());
             let close = icon == Icon::Close;
             let pressed = resp.is_pointer_button_down_on();
@@ -1383,13 +1390,23 @@ impl PaintApp {
             ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
             return;
         }
-        let (pressed, down, moved) = ctx.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_down(), i.pointer.delta() != Vec2::ZERO));
+        let (pressed, down, moved) = ctx.input(|i| {
+            // A maximized window is restored by moving it: only for a real drag.
+            let need = if maximized { 6.0 } else { 0.5 };
+            let travel = match (i.pointer.press_origin(), i.pointer.interact_pos()) {
+                (Some(a), Some(b)) => (b - a).length(),
+                _ => 0.0,
+            };
+            (i.pointer.primary_pressed(), i.pointer.primary_down(), travel >= need)
+        });
         if pressed {
             // A new press: allow one move request for it. (Once the desktop moves the
             // window, egui never sees this button's release.)
             self.title_press_moved = false;
         }
-        if !self.on_window_edge && !self.title_press_moved && down && moved && bar.is_pointer_button_down_on() {
+        // Presses on the buttons drawn over the bar are theirs.
+        let on_button = ctx.input(|i| i.pointer.press_origin()).is_some_and(|o| self.no_drag_prev.iter().chain(&self.no_drag).any(|r| r.contains(o)));
+        if !on_button && !self.on_window_edge && !self.title_press_moved && down && moved && bar.is_pointer_button_down_on() {
             self.title_press_moved = true;
             ctx.send_viewport_cmd(ViewportCommand::StartDrag);
         }
@@ -2173,6 +2190,7 @@ impl eframe::App for PaintApp {
                 ctx.send_viewport_cmd(ViewportCommand::InnerSize(fit));
             }
         }
+        self.no_drag_prev = std::mem::take(&mut self.no_drag);
         self.menu_arrow_keys(&ctx);
 
         // Closing with unsaved changes asks first.
