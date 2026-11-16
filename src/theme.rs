@@ -49,6 +49,9 @@ pub struct Palette {
     pub selected_border: Color32,
     pub status: Color32,
     pub canvas_shadow: Color32,
+    /// 0 for the Windows 11 look; 10 or 7 for a classic style (controls, menus and
+    /// dialogs are then drawn the classic way).
+    pub classic: u8,
 }
 
 impl Palette {
@@ -70,6 +73,7 @@ impl Palette {
                 selected_border: Color32::from_rgba_unmultiplied(0x60, 0xCD, 0xFF, 170),
                 status: Color32::from_rgb(0x1C, 0x1C, 0x1C),
                 canvas_shadow: Color32::from_black_alpha(140),
+                classic: 0,
             }
         } else {
             Self {
@@ -88,6 +92,7 @@ impl Palette {
                 selected_border: Color32::from_rgba_unmultiplied(0x00, 0x5F, 0xB8, 150),
                 status: Color32::from_rgb(0xF3, 0xF3, 0xF3),
                 canvas_shadow: Color32::from_black_alpha(40),
+                classic: 0,
             }
         }
     }
@@ -98,6 +103,10 @@ impl Palette {
     /// a lighter fill while pressed (the content dims, see `icon_fg`), and for the
     /// selected tool a tinted fill with an accent border.
     pub fn paint_button(&self, p: &egui::Painter, rect: egui::Rect, hovered: bool, pressed: bool, selected: bool) {
+        if self.classic != 0 {
+            crate::classic::Skin::from_code(self.classic).btn_bg(p, rect, hovered, pressed, selected);
+            return;
+        }
         let r = 4.0;
         if selected {
             p.rect_filled(rect, r, self.selected);

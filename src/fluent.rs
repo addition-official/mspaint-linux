@@ -13,7 +13,8 @@ fn on_accent(pal: &Palette) -> Color32 {
 
 /// A 20px control followed by its label, as one clickable widget.
 fn with_label(ui: &mut Ui, pal: &Palette, text: &str, sense: Sense) -> (Rect, Response, Rect) {
-    let galley = ui.painter().layout_no_wrap(text.to_string(), FontId::proportional(14.0), pal.text);
+    let size = if pal.classic != 0 { 12.5 } else { 14.0 };
+    let galley = ui.painter().layout_no_wrap(text.to_string(), FontId::proportional(size), pal.text);
     let gap = if text.is_empty() { 0.0 } else { 8.0 };
     // Trailing room so options in a row don't run into each other.
     let size = vec2(20.0 + gap + galley.size().x + gap * 1.5, 26.0);
@@ -35,6 +36,10 @@ pub fn radio(ui: &mut Ui, pal: &Palette, selected: bool, text: &str) -> Response
     let sense = if focusable { Sense::click() } else { Sense::CLICK };
     let (_, mut resp, b) = with_label(ui, pal, text, sense);
     radio_group_keys(ui, &mut resp);
+    if pal.classic != 0 {
+        classic_radio(ui, pal, b.center(), &resp, selected);
+        return resp;
+    }
     let (c, p) = (b.center(), ui.painter());
     let pressed = resp.is_pointer_button_down_on();
     if selected {
@@ -123,6 +128,10 @@ pub fn checkbox(ui: &mut Ui, pal: &Palette, checked: &mut bool, text: &str) -> R
         *checked = !*checked;
         resp.mark_changed();
     }
+    if pal.classic != 0 {
+        classic_check(ui, pal, b, &resp, *checked);
+        return resp;
+    }
     let p = ui.painter();
     if *checked {
         let fill = if resp.is_pointer_button_down_on() { pal.accent.gamma_multiply(0.8) } else { pal.accent };
@@ -140,6 +149,10 @@ pub fn checkbox(ui: &mut Ui, pal: &Palette, checked: &mut bool, text: &str) -> R
 
 /// On/off switch (Windows settings style).
 pub fn toggle(ui: &mut Ui, pal: &Palette, on: &mut bool) -> Response {
+    if pal.classic != 0 {
+        // Classic Windows used a check box for this.
+        return checkbox(ui, pal, on, "");
+    }
     let (rect, mut resp) = ui.allocate_exact_size(vec2(40.0, 20.0), Sense::click());
     if resp.clicked() {
         *on = !*on;
@@ -202,6 +215,10 @@ pub fn slider(ui: &mut Ui, pal: &Palette, value: &mut f32, range: RangeInclusive
     }
     let t = if hi > lo { ((*value - lo) / (hi - lo)).clamp(0.0, 1.0) } else { 0.0 };
     let at = a + (b - a) * t;
+    if pal.classic != 0 {
+        classic_slider(ui, pal, a, b, at, &resp, vertical);
+        return resp;
+    }
     let p = ui.painter();
     let rail = if pal.dark { Color32::from_white_alpha(140) } else { Color32::from_black_alpha(110) };
     for (from, to, c) in [(at, b, rail), (a, at, pal.accent)] {
@@ -215,6 +232,62 @@ pub fn slider(ui: &mut Ui, pal: &Palette, value: &mut f32, range: RangeInclusive
     let inner = if resp.is_pointer_button_down_on() || resp.dragged() { 5.0 } else if resp.hovered() { 7.0 } else { 6.0 };
     p.circle_filled(at, inner, pal.accent);
     resp
+}
+
+/// Classic radio button: a white circle with a gray rim, and a dot when selected.
+fn classic_radio(ui: &Ui, pal: &Palette, c: egui::Pos2, resp: &Response, selected: bool) {
+    let win7 = pal.classic == 7;
+    let p = ui.painter();
+    let hot = resp.hovered() || resp.is_pointer_button_down_on();
+    let rim = if hot { if win7 { Color32::from_rgb(0x3C, 0x7F, 0xB1) } else { Color32::from_rgb(0x00, 0x78, 0xD7) } } else { Color32::from_rgb(0x8E, 0x8F, 0x8F) };
+    let fill = if resp.is_pointer_button_down_on() { Color32::from_rgb(0xD9, 0xEC, 0xFF) } else if hot { Color32::from_rgb(0xEA, 0xF6, 0xFD) } else { Color32::WHITE };
+    p.circle(c, 6.5, fill, Stroke::new(1.0, rim));
+    if selected {
+        let dot = if win7 { Color32::from_rgb(0x1E, 0x5A, 0x96) } else { Color32::from_rgb(0x33, 0x33, 0x33) };
+        p.circle_filled(c, 3.2, dot);
+        if win7 {
+            p.circle_filled(c + vec2(-1.0, -1.0), 1.1, Color32::from_rgb(0x9C, 0xCB, 0xEE));
+        }
+    }
+}
+
+/// Classic check box: a 13 px white square with a gray rim and a check mark.
+fn classic_check(ui: &Ui, pal: &Palette, b: Rect, resp: &Response, checked: bool) {
+    let win7 = pal.classic == 7;
+    let p = ui.painter();
+    let bx = Rect::from_center_size(b.center(), vec2(13.0, 13.0));
+    let hot = resp.hovered() || resp.is_pointer_button_down_on();
+    let rim = if hot { if win7 { Color32::from_rgb(0x3C, 0x7F, 0xB1) } else { Color32::from_rgb(0x00, 0x78, 0xD7) } } else if win7 { Color32::from_rgb(0x8E, 0x8F, 0x8F) } else { Color32::from_rgb(0x33, 0x33, 0x33) };
+    let fill = if resp.is_pointer_button_down_on() { Color32::from_rgb(0xD9, 0xEC, 0xFF) } else if hot { Color32::from_rgb(0xEA, 0xF6, 0xFD) } else { Color32::WHITE };
+    p.rect_filled(bx, 0.0, fill);
+    p.rect_stroke(bx, 0.0, Stroke::new(1.0, rim), egui::StrokeKind::Inside);
+    if checked {
+        let c = bx.center();
+        let ink = if win7 { Color32::from_rgb(0x1E, 0x3A, 0x6A) } else { Color32::from_rgb(0x20, 0x20, 0x20) };
+        p.add(egui::Shape::line(vec![c + vec2(-3.5, 0.0), c + vec2(-1.0, 3.0), c + vec2(4.0, -3.5)], Stroke::new(1.7, ink)));
+    }
+}
+
+/// Classic slider: a thin sunken groove and a small rectangular thumb.
+fn classic_slider(ui: &Ui, pal: &Palette, a: egui::Pos2, b: egui::Pos2, at: egui::Pos2, resp: &Response, vertical: bool) {
+    let win7 = pal.classic == 7;
+    let p = ui.painter();
+    let n = if vertical { vec2(1.0, 0.0) } else { vec2(0.0, 1.0) };
+    p.line_segment([a - n, b - n], Stroke::new(1.0, Color32::from_rgb(0xA0, 0xA0, 0xA0)));
+    p.line_segment([a + n * 0.0, b + n * 0.0], Stroke::new(1.0, Color32::from_rgb(0xE6, 0xE6, 0xE6)));
+    p.line_segment([a + n, b + n], Stroke::new(1.0, Color32::WHITE));
+    let size = if vertical { vec2(16.0, 8.0) } else { vec2(8.0, 16.0) };
+    let thumb = Rect::from_center_size(at, size);
+    let hot = resp.hovered() || resp.dragged();
+    let (fill, rim) = if win7 {
+        (if hot { Color32::from_rgb(0xDC, 0xEE, 0xFB) } else { Color32::from_rgb(0xEC, 0xEC, 0xEC) }, if hot { Color32::from_rgb(0x3C, 0x7F, 0xB1) } else { Color32::from_rgb(0x70, 0x70, 0x70) })
+    } else {
+        (if hot { Color32::from_rgb(0x17, 0x17, 0x17) } else { Color32::from_rgb(0x00, 0x7A, 0xD9) }, Color32::TRANSPARENT)
+    };
+    p.rect_filled(thumb, if win7 { 2.0 } else { 0.0 }, fill);
+    if rim != Color32::TRANSPARENT {
+        p.rect_stroke(thumb, 2.0, Stroke::new(1.0, rim), egui::StrokeKind::Inside);
+    }
 }
 
 /// Fluent chevron for `ComboBox::icon`.

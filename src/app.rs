@@ -2311,6 +2311,9 @@ pub fn content_dialog(
     buttons: &[&str],
     f: &mut dyn FnMut(&mut egui::Ui),
 ) -> Option<usize> {
+    if pal.classic != 0 {
+        return crate::classic::dialog(ctx, pal, id, width, title, buttons, f);
+    }
     let mut clicked = None;
     let visuals = ctx.global_style().visuals.clone();
     let frame = egui::Frame::new()
@@ -2404,7 +2407,7 @@ fn vertical_caret(lay: &crate::text::Layout, caret: usize, up: bool, n: usize) -
 
 /// Button text with a Windows access key: "Do&n't save" shows "Don't save" with the
 /// n underlined, and pressing N picks it.
-fn access_label(label: &str, color: Color32, underline: bool) -> (egui::text::LayoutJob, Option<Key>) {
+pub fn access_label(label: &str, color: Color32, underline: bool) -> (egui::text::LayoutJob, Option<Key>) {
     let mut job = egui::text::LayoutJob::default();
     let font = egui::FontId::proportional(14.0);
     let plain = egui::TextFormat { font_id: font.clone(), color, ..Default::default() };

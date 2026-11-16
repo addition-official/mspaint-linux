@@ -454,13 +454,24 @@ impl PaintApp {
         let open = egui::Popup::is_id_open(ui.ctx(), egui::containers::menu::SubMenu::id_from_widget_id(resp.id));
         self.pal.paint_button(ui.painter(), rect, resp.hovered() || open || resp.has_focus(), false, false);
         let fg = self.pal.text;
-        self.paint_icon_fg(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), 16.0, icon, fg);
-        ui.painter().text(egui::pos2(rect.min.x + 34.0, rect.center().y), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(13.5), fg);
+        let font = egui::FontId::proportional(if self.pal.classic != 0 { 12.5 } else { 13.5 });
+        self.menu_row_icon(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), icon, true);
+        ui.painter().text(egui::pos2(rect.min.x + 34.0, rect.center().y), egui::Align2::LEFT_CENTER, label, font, fg);
         let c = egui::pos2(rect.max.x - 12.0, rect.center().y);
         let s = Stroke::new(1.2, self.pal.text_dim);
         ui.painter().line_segment([c + vec2(-2.0, -4.0), c + vec2(2.0, 0.0)], s);
         ui.painter().line_segment([c + vec2(2.0, 0.0), c + vec2(-2.0, 4.0)], s);
         resp
+    }
+
+    /// A menu row's icon: the Windows 11 line icon, or in the classic styles the
+    /// colorful one (or none, where classic menus had none).
+    fn menu_row_icon(&self, ui: &Ui, center: egui::Pos2, icon: Icon, enabled: bool) {
+        if self.pal.classic == 0 {
+            self.paint_icon_fg(ui, center, 16.0, icon, self.pal.icon_fg(enabled, false));
+        } else if let Some(ci) = crate::classic::menu_icon(icon) {
+            crate::classic_icons::paint(ui.painter(), Rect::from_center_size(center, vec2(16.0, 16.0)), ci, enabled);
+        }
     }
 
     /// Menu entry: icon gutter, label, optional shortcut on the right, check mark,
@@ -476,14 +487,9 @@ impl PaintApp {
         let focused = resp.has_focus();
         self.pal.paint_button(ui.painter(), rect, resp.hovered() || focused, enabled && resp.is_pointer_button_down_on(), false);
         let fg = self.pal.icon_fg(enabled, false);
-        self.paint_icon_fg(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), 16.0, icon, fg);
-        ui.painter().text(
-            egui::pos2(rect.min.x + 34.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            label,
-            egui::FontId::proportional(13.5),
-            fg,
-        );
+        let font = egui::FontId::proportional(if self.pal.classic != 0 { 12.5 } else { 13.5 });
+        self.menu_row_icon(ui, egui::pos2(rect.min.x + 16.0, rect.center().y), icon, enabled);
+        ui.painter().text(egui::pos2(rect.min.x + 34.0, rect.center().y), egui::Align2::LEFT_CENTER, label, font, fg);
         if !shortcut.is_empty() {
             ui.painter().text(
                 egui::pos2(rect.max.x - 10.0, rect.center().y),

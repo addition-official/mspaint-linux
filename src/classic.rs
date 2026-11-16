@@ -111,6 +111,11 @@ impl Skin {
         }
     }
 
+    /// The skin for a `Palette::classic` code (7, else 10).
+    pub fn from_code(code: u8) -> Skin {
+        Skin::of(if code == 7 { Style::Win7 } else { Style::Win10 })
+    }
+
     /// The parts of the shared palette the classic looks change (dialogs and menus
     /// keep the rest).
     pub fn adjust(&self, pal: &mut Palette) {
@@ -118,6 +123,13 @@ impl Skin {
         pal.ribbon = self.ribbon[1];
         pal.status = self.status[1];
         pal.canvas_shadow = Color32::TRANSPARENT;
+        pal.classic = if self.win7 { 7 } else { 10 };
+        // Dialogs, menus and the Settings page sit on the classic light gray.
+        pal.chrome = rgb(0xF0, 0xF0, 0xF0);
+        pal.text = rgb(0x1E, 0x1E, 0x1E);
+        pal.text_dim = rgb(0x5A, 0x5A, 0x5A);
+        pal.separator = rgb(0xD5, 0xD5, 0xD5);
+        pal.accent = if self.win7 { rgb(0x33, 0x99, 0xFF) } else { rgb(0x00, 0x78, 0xD7) };
         // Menus and lists light up like the ribbon buttons.
         pal.hover = self.hover[1];
         pal.pressed = self.press[1];
@@ -125,16 +137,55 @@ impl Skin {
         pal.selected_border = self.sel_border;
     }
 
-    /// Square-ish menus and windows, as in Windows 7 and 10.
+    /// Classic menus, tooltips, text boxes, combo boxes, push buttons and scroll bars.
     pub fn adjust_visuals(&self, ctx: &egui::Context) {
-        let radius = egui::CornerRadius::same(if self.win7 { 3 } else { 0 });
+        let win7 = self.win7;
+        let radius = egui::CornerRadius::same(if win7 { 2 } else { 0 });
         ctx.all_styles_mut(|s| {
-            s.visuals.menu_corner_radius = radius;
-            s.visuals.window_corner_radius = radius;
+            let v = &mut s.visuals;
+            v.menu_corner_radius = radius;
+            v.window_corner_radius = radius;
+            v.window_fill = if win7 { rgb(0xF5, 0xF6, 0xF7) } else { rgb(0xF2, 0xF2, 0xF2) };
+            v.panel_fill = rgb(0xF0, 0xF0, 0xF0);
+            v.window_stroke = Stroke::new(1.0, if win7 { rgb(0x97, 0x97, 0x97) } else { rgb(0xA0, 0xA0, 0xA0) });
+            let shadow = egui::Shadow { offset: [2, 2], blur: 4, spread: 0, color: Color32::from_black_alpha(45) };
+            v.popup_shadow = shadow;
+            v.window_shadow = egui::Shadow { offset: [3, 3], blur: 10, spread: 0, color: Color32::from_black_alpha(60) };
+            v.extreme_bg_color = Color32::WHITE;
+            v.selection.bg_fill = if win7 { rgb(0x33, 0x99, 0xFF) } else { rgb(0x00, 0x78, 0xD7) };
+            v.selection.stroke = Stroke::new(1.0, Color32::WHITE);
+            v.override_text_color = Some(rgb(0x1E, 0x1E, 0x1E));
+            // Push buttons, text boxes and combo boxes: gray with a darker border; blue
+            // on hover and while pressed.
+            let (rest, rest_border, hover, hover_border, press, press_border) = if win7 {
+                (rgb(0xEC, 0xEC, 0xEC), rgb(0x70, 0x70, 0x70), rgb(0xDC, 0xEE, 0xFB), rgb(0x3C, 0x7F, 0xB1), rgb(0xC4, 0xE5, 0xF6), rgb(0x2C, 0x62, 0x8B))
+            } else {
+                (rgb(0xE1, 0xE1, 0xE1), rgb(0xAD, 0xAD, 0xAD), rgb(0xE5, 0xF1, 0xFB), rgb(0x00, 0x78, 0xD7), rgb(0xCC, 0xE4, 0xF7), rgb(0x00, 0x54, 0x99))
+            };
+            let w = &mut v.widgets;
+            for (state, fill, border) in [
+                (&mut w.inactive, rest, rest_border),
+                (&mut w.hovered, hover, hover_border),
+                (&mut w.active, press, press_border),
+                (&mut w.open, press, press_border),
+            ] {
+                state.weak_bg_fill = fill;
+                state.bg_fill = fill;
+                state.bg_stroke = Stroke::new(1.0, border);
+                state.corner_radius = radius;
+                state.fg_stroke.color = rgb(0x1E, 0x1E, 0x1E);
+                state.expansion = 0.0;
+            }
+            w.noninteractive.corner_radius = radius;
+            w.noninteractive.bg_stroke = Stroke::new(1.0, rgb(0xD5, 0xD5, 0xD5));
+            // Solid scroll bars, like Windows 7 and 10 (not the overlay ones).
+            s.spacing.scroll = egui::style::ScrollStyle::solid();
+            s.spacing.scroll.bar_width = 12.0;
+            s.spacing.scroll.foreground_color = false;
         });
     }
 
-    fn btn_bg(&self, p: &egui::Painter, rect: Rect, hovered: bool, pressed: bool, selected: bool) {
+    pub fn btn_bg(&self, p: &egui::Painter, rect: Rect, hovered: bool, pressed: bool, selected: bool) {
         let (fill, border) = if pressed {
             (self.press, self.press_border)
         } else if selected {
@@ -1011,4 +1062,130 @@ impl PaintApp {
         ui.painter().rect_stroke(thumb, 1.5, Stroke::new(1.0, if skin.win7 { rgb(0x6C, 0x7C, 0x96) } else { rgb(0x00, 0x5A, 0xA8) }), StrokeKind::Inside);
         ui.allocate_rect(rect, Sense::hover());
     }
+}
+
+/// A dialog in the classic style: a title strip, the light gray body, and push buttons
+/// on the right with the first one as the default (blue border). Returns the index of
+/// the clicked button.
+pub fn dialog(
+    ctx: &egui::Context,
+    pal: Palette,
+    id: &str,
+    width: f32,
+    title: &str,
+    buttons: &[&str],
+    f: &mut dyn FnMut(&mut Ui),
+) -> Option<usize> {
+    let skin = Skin::from_code(pal.classic);
+    let mut clicked = None;
+    let visuals = ctx.global_style().visuals.clone();
+    let frame = egui::Frame::new()
+        .fill(rgb(0xF0, 0xF0, 0xF0))
+        .corner_radius(if skin.win7 { 4 } else { 0 })
+        .stroke(Stroke::new(1.0, if skin.win7 { rgb(0x6C, 0x7C, 0x96) } else { rgb(0x00, 0x78, 0xD7) }))
+        .shadow(visuals.window_shadow);
+    egui::Modal::new(egui::Id::new(id)).frame(frame).show(ctx, |ui| {
+        let spacing = ui.spacing().item_spacing;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.style_mut().override_font_id = Some(FontId::proportional(12.5));
+        let inner = width - 32.0;
+        // Title strip.
+        let (strip, _) = ui.allocate_exact_size(vec2(width, 28.0), Sense::hover());
+        let radius = if skin.win7 { egui::CornerRadius { nw: 4, ne: 4, sw: 0, se: 0 } } else { egui::CornerRadius::ZERO };
+        ui.painter().rect_filled(strip, radius, skin.title[1]);
+        gradient(ui.painter(), Rect::from_min_max(strip.min + vec2(1.0, 1.0), pos2(strip.max.x - 1.0, strip.center().y)), skin.title[0], skin.title[0].lerp_to_gamma(skin.title[1], 0.5), 0.0);
+        ui.painter().text(strip.left_center() + vec2(12.0, 0.0), Align2::LEFT_CENTER, title, FontId::proportional(12.5), skin.title_text);
+        if !skin.win7 {
+            ui.painter().line_segment([strip.left_bottom(), strip.right_bottom()], Stroke::new(1.0, rgb(0xE6, 0xE6, 0xE6)));
+        }
+        egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 14, bottom: 12 }).show(ui, |ui| {
+            ui.spacing_mut().item_spacing = spacing;
+            ui.set_width(inner);
+            f(ui);
+        });
+        // Buttons, right-aligned on a slightly darker band.
+        let band = egui::Frame::new().fill(rgb(0xF0, 0xF0, 0xF0)).inner_margin(egui::Margin { left: 16, right: 16, top: 6, bottom: 12 }).show(ui, |ui| {
+            ui.set_width(inner);
+            let alt = ui.input(|i| i.modifiers.alt);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                for (i, label) in buttons.iter().enumerate().rev() {
+                    let (job, key) = crate::app::access_label(label, rgb(0x1E, 0x1E, 0x1E), alt);
+                    let galley = ui.painter().layout_job(job);
+                    let w = (galley.size().x + 24.0).max(75.0);
+                    let (rect, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());
+                    push_button(ui, skin, rect, &resp, i == 0);
+                    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, rgb(0x1E, 0x1E, 0x1E));
+                    let pressed = key.is_some_and(|k| ui.input(|inp| inp.key_pressed(k) && inp.modifiers.is_none()));
+                    if resp.clicked() || pressed {
+                        clicked = Some(i);
+                    }
+                }
+            });
+        });
+        let _ = band;
+    });
+    clicked
+}
+
+/// A classic push button background; `default` draws the default button's blue rim.
+fn push_button(ui: &Ui, skin: Skin, rect: Rect, resp: &Response, default: bool) {
+    let p = ui.painter();
+    let (hover, press) = (resp.hovered(), resp.is_pointer_button_down_on());
+    if skin.win7 {
+        let (top, bottom, border) = if press {
+            (rgb(0xE5, 0xF4, 0xFC), rgb(0x98, 0xD1, 0xEF), rgb(0x2C, 0x62, 0x8B))
+        } else if hover {
+            (rgb(0xEA, 0xF6, 0xFD), rgb(0xBE, 0xE6, 0xFD), rgb(0x3C, 0x7F, 0xB1))
+        } else {
+            (rgb(0xF2, 0xF2, 0xF2), rgb(0xD0, 0xD0, 0xD0), if default { rgb(0x3C, 0x7F, 0xB1) } else { rgb(0x70, 0x70, 0x70) })
+        };
+        p.rect_filled(rect, 3.0, bottom);
+        gradient(p, Rect::from_min_max(rect.min + vec2(1.0, 1.0), pos2(rect.max.x - 1.0, rect.center().y)), top, top.lerp_to_gamma(bottom, 0.4), 0.0);
+        p.rect_stroke(rect, 3.0, Stroke::new(1.0, border), StrokeKind::Inside);
+        if default && !hover && !press {
+            p.rect_stroke(rect.shrink(1.0), 2.0, Stroke::new(1.0, rgb(0x9C, 0xCB, 0xEE)), StrokeKind::Inside);
+        }
+    } else {
+        let (fill, border) = if press {
+            (rgb(0xCC, 0xE4, 0xF7), rgb(0x00, 0x54, 0x99))
+        } else if hover {
+            (rgb(0xE5, 0xF1, 0xFB), rgb(0x00, 0x78, 0xD7))
+        } else {
+            (rgb(0xE1, 0xE1, 0xE1), if default { rgb(0x00, 0x78, 0xD7) } else { rgb(0xAD, 0xAD, 0xAD) })
+        };
+        p.rect_filled(rect, 0.0, fill);
+        p.rect_stroke(rect, 0.0, Stroke::new(if default { 2.0 } else { 1.0 }, border), StrokeKind::Inside);
+    }
+}
+
+/// The classic icon to show for a Windows 11 icon in menus (None: no icon, as many
+/// classic menu items had).
+pub fn menu_icon(icon: crate::icons::Icon) -> Option<CIcon> {
+    use crate::icons::Icon as I;
+    Some(match icon {
+        I::Paste => CIcon::Paste,
+        I::Cut => CIcon::Cut,
+        I::Copy => CIcon::Copy,
+        I::Save => CIcon::Save,
+        I::Undo => CIcon::Undo,
+        I::Redo => CIcon::Redo,
+        I::Crop => CIcon::Crop,
+        I::Resize => CIcon::Resize,
+        I::Rotate | I::RotateRight | I::RotateLeft | I::Rotate180 => CIcon::Rotate,
+        I::SelectRect | I::SelectAll => CIcon::Select,
+        I::Pencil => CIcon::Pencil,
+        I::Fill => CIcon::Fill,
+        I::Text => CIcon::Text,
+        I::Eraser => CIcon::Eraser,
+        I::Picker => CIcon::Picker,
+        I::Magnifier => CIcon::Magnifier,
+        I::ZoomIn => CIcon::ZoomIn,
+        I::ZoomOut => CIcon::ZoomOut,
+        I::FullScreen => CIcon::FullScreen,
+        I::Brush(_) => CIcon::Brushes,
+        I::Transparent => CIcon::Transparent,
+        I::Palette => CIcon::EditColors,
+        _ => return None,
+    })
 }

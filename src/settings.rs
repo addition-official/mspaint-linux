@@ -32,7 +32,7 @@ impl PaintApp {
                             self.show_settings = false;
                         }
                         ui.add_space(8.0);
-                        ui.label(RichText::new("Settings").size(28.0).strong());
+                        ui.label(RichText::new("Settings").size(if pal.classic != 0 { 20.0 } else { 28.0 }).strong());
                     });
                     ui.add_space(24.0);
 
@@ -177,11 +177,13 @@ impl PaintApp {
 
 /// Settings card: a rounded, slightly raised panel spanning the column.
 fn card(ui: &mut Ui, pal: &crate::theme::Palette, add: impl FnOnce(&mut Ui)) {
-    let fill = if pal.dark { Color32::from_rgb(0x2B, 0x2B, 0x2B) } else { Color32::from_rgb(0xFB, 0xFB, 0xFB) };
+    let fill = if pal.dark { Color32::from_rgb(0x2B, 0x2B, 0x2B) } else if pal.classic != 0 { Color32::WHITE } else { Color32::from_rgb(0xFB, 0xFB, 0xFB) };
+    // The classic styles get square group boxes.
+    let radius = if pal.classic != 0 { 0 } else { 6 };
     egui::Frame::new()
         .fill(fill)
         .stroke(Stroke::new(1.0, pal.separator))
-        .corner_radius(6)
+        .corner_radius(radius)
         .inner_margin(egui::Margin::symmetric(16, 14))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
