@@ -74,6 +74,9 @@ impl PaintApp {
                         });
                     });
 
+                    ui.add_space(4.0);
+                    card(ui, &pal, |ui| self.custom_icons_card(ui));
+
                     ui.add_space(24.0);
                     ui.label(RichText::new("About").size(14.0).strong());
                     ui.add_space(6.0);
@@ -92,6 +95,69 @@ impl PaintApp {
                         ui.label(RichText::new("Not affiliated with or endorsed by Microsoft.").size(12.0).color(pal.text_dim));
                     });
                     ui.add_space(24.0);
+                });
+            });
+        });
+    }
+}
+
+impl PaintApp {
+    /// Custom icons for the Windows 10 and 7 styles: where they go, and their names.
+    fn custom_icons_card(&mut self, ui: &mut Ui) {
+        use crate::classic_icons::{self as ci, CIcon};
+        let pal = self.pal;
+        card_header(
+            ui,
+            &pal,
+            Icon::Picture,
+            "Custom icons",
+            "Replace the icons of the Windows 10 and Windows 7 styles with your own PNG, ICO or BMP files",
+        );
+        ui.add_space(8.0);
+        let Some(dir) = ci::custom_dir() else { return };
+        ui.horizontal(|ui| {
+            ui.add_space(44.0);
+            ui.vertical(|ui| {
+                ui.label(RichText::new(dir.display().to_string()).monospace().size(12.0));
+                let n = ci::custom_count();
+                ui.label(RichText::new(match n {
+                    0 => "No custom icons yet.".to_string(),
+                    1 => "1 button uses a custom icon.".to_string(),
+                    n => format!("{n} buttons use a custom icon."),
+                }).size(12.0).color(pal.text_dim));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Open folder").clicked() {
+                        let _ = std::fs::create_dir_all(&dir);
+                        if let Err(e) = crate::desktop::open_folder(&dir) {
+                            self.dialog = Some(crate::app::Dialog::Message(format!("Could not open the folder.\n\n{e}")));
+                        }
+                    }
+                    if ui.button("Reload icons").clicked() {
+                        ci::reload_custom();
+                    }
+                });
+                ui.add_space(6.0);
+                egui::CollapsingHeader::new("File names").id_salt("custom_icon_names").show(ui, |ui| {
+                    ui.label(
+                        RichText::new(
+                            "Name each file after its button. Add -16 or -32 to the name (paste-32.png) for an icon made \
+                             for the small or big buttons; otherwise one file is used for both.",
+                        )
+                        .size(12.0)
+                        .color(pal.text_dim),
+                    );
+                    ui.add_space(4.0);
+                    egui::Grid::new("custom_icon_grid").num_columns(4).spacing([18.0, 4.0]).show(ui, |ui| {
+                        for (i, icon) in CIcon::ALL.iter().enumerate() {
+                            let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                            ci::paint(ui.painter(), r, *icon, true);
+                            ui.label(RichText::new(format!("{}.png", icon.file_name())).monospace().size(12.0));
+                            if i % 2 == 1 {
+                                ui.end_row();
+                            }
+                        }
+                    });
                 });
             });
         });

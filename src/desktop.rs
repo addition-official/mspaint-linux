@@ -164,6 +164,14 @@ pub fn file_dialog_available() -> bool {
     })
 }
 
+/// Show `dir` in the file manager.
+pub fn open_folder(dir: &Path) -> Result<(), String> {
+    if portal::in_flatpak() {
+        return portal::open_directory(dir);
+    }
+    run("xdg-open", &[&dir.to_string_lossy()])
+}
+
 /// Whether Paint knows how to set the wallpaper on this desktop.
 pub fn can_set_wallpaper() -> bool {
     portal::in_flatpak() || current() != Desktop::Other

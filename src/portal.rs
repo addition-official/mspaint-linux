@@ -77,6 +77,16 @@ pub fn set_wallpaper(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("The desktop could not set the wallpaper.\n\n{e}"))
 }
 
+/// Show a folder in the file manager.
+pub fn open_directory(dir: &Path) -> Result<(), String> {
+    let bus = bus().ok_or("Could not reach the desktop (no D-Bus session).")?;
+    let folder = std::fs::File::open(dir).map_err(|e| e.to_string())?;
+    let options: HashMap<&str, Value> = HashMap::new();
+    bus.call_method(Some(DEST), PATH, Some("org.freedesktop.portal.OpenURI"), "OpenDirectory", &("", Fd::from(&folder), options))
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 const PRINT: &str = "org.freedesktop.portal.Print";
 
 /// Show the desktop's print dialog, then print the picture (RGB pixels on white) on the

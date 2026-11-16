@@ -91,9 +91,161 @@ impl Pen<'_> {
     }
 }
 
-/// Paint `icon` into `rect` (square). `enabled` false draws it faded.
+impl CIcon {
+    pub const ALL: [CIcon; 29] = [
+        CIcon::Paste,
+        CIcon::Cut,
+        CIcon::Copy,
+        CIcon::Select,
+        CIcon::Crop,
+        CIcon::Resize,
+        CIcon::Rotate,
+        CIcon::Pencil,
+        CIcon::Fill,
+        CIcon::Text,
+        CIcon::Eraser,
+        CIcon::Picker,
+        CIcon::Magnifier,
+        CIcon::Brushes,
+        CIcon::Outline,
+        CIcon::FillStyle,
+        CIcon::Size,
+        CIcon::EditColors,
+        CIcon::ZoomIn,
+        CIcon::ZoomOut,
+        CIcon::Zoom100,
+        CIcon::FullScreen,
+        CIcon::Thumbnail,
+        CIcon::Save,
+        CIcon::Undo,
+        CIcon::Redo,
+        CIcon::AppMenu,
+        CIcon::Opaque,
+        CIcon::Transparent,
+    ];
+
+    /// The file name (without extension) a custom icon for this button uses.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            CIcon::Paste => "paste",
+            CIcon::Cut => "cut",
+            CIcon::Copy => "copy",
+            CIcon::Select => "select",
+            CIcon::Crop => "crop",
+            CIcon::Resize => "resize",
+            CIcon::Rotate => "rotate",
+            CIcon::Pencil => "pencil",
+            CIcon::Fill => "fill",
+            CIcon::Text => "text",
+            CIcon::Eraser => "eraser",
+            CIcon::Picker => "color-picker",
+            CIcon::Magnifier => "magnifier",
+            CIcon::Brushes => "brushes",
+            CIcon::Outline => "shape-outline",
+            CIcon::FillStyle => "shape-fill",
+            CIcon::Size => "size",
+            CIcon::EditColors => "edit-colors",
+            CIcon::ZoomIn => "zoom-in",
+            CIcon::ZoomOut => "zoom-out",
+            CIcon::Zoom100 => "zoom-100",
+            CIcon::FullScreen => "full-screen",
+            CIcon::Thumbnail => "thumbnail",
+            CIcon::Save => "save",
+            CIcon::Undo => "undo",
+            CIcon::Redo => "redo",
+            CIcon::AppMenu => "app-menu",
+            CIcon::Opaque => "text-opaque",
+            CIcon::Transparent => "text-transparent",
+        }
+    }
+}
+
+/// Icons the user put in the custom icons folder (see `custom_dir`), loaded when
+/// first drawn. Cleared by `reload_custom`.
+mod custom {
+    use egui::TextureHandle;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// (file name, size) -> the loaded texture, or None when there is no file.
+    pub static CACHE: Mutex<Option<HashMap<(&'static str, u32), Option<TextureHandle>>>> = Mutex::new(None);
+}
+
+/// The folder custom icons are read from: `~/.local/share/paintbox/icons` (inside
+/// Flatpak, the app's own data folder).
+pub fn custom_dir() -> Option<std::path::PathBuf> {
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))?;
+    Some(data.join("paintbox").join("icons"))
+}
+
+/// Forget the loaded custom icons, so changed files are read again.
+pub fn reload_custom() {
+    if let Ok(mut c) = custom::CACHE.lock() {
+        *c = None;
+    }
+}
+
+/// How many buttons currently have a custom icon file.
+pub fn custom_count() -> usize {
+    let Some(dir) = custom_dir() else { return 0 };
+    CIcon::ALL.iter().filter(|i| find_file(&dir, i.file_name(), 16).is_some() || find_file(&dir, i.file_name(), 32).is_some()).count()
+}
+
+/// `name-SIZE.ext` first (made for that size), then `name.ext`.
+fn find_file(dir: &std::path::Path, name: &str, size: u32) -> Option<std::path::PathBuf> {
+    for stem in [format!("{name}-{size}"), name.to_string()] {
+        for ext in ["png", "ico", "bmp"] {
+            let p = dir.join(format!("{stem}.{ext}"));
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// The custom icon for `icon` at `size` points, loading it the first time.
+fn custom_texture(ctx: &egui::Context, icon: CIcon, size: u32) -> Option<egui::TextureHandle> {
+    let mut guard = custom::CACHE.lock().ok()?;
+    let cache = guard.get_or_insert_with(Default::default);
+    let key = (icon.file_name(), size);
+    if let Some(t) = cache.get(&key) {
+        return t.clone();
+    }
+    let tex = custom_dir().and_then(|dir| find_file(&dir, icon.file_name(), size)).and_then(|path| {
+        // Icons are small: refuse anything big rather than decode it.
+        if std::fs::metadata(&path).ok()?.len() > 4 << 20 {
+            return None;
+        }
+        let img = image::open(&path).ok()?;
+        if img.width() > 512 || img.height() > 512 {
+            return None;
+        }
+        let rgba = img.to_rgba8();
+        let ci = egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
+        Some(ctx.load_texture(format!("custom-icon-{}-{size}", icon.file_name()), ci, egui::TextureOptions::LINEAR))
+    });
+    cache.insert(key, tex.clone());
+    tex
+}
+
+/// Paint `icon` into `rect` (square). `enabled` false draws it faded. A custom icon
+/// from the icons folder is used when there is one.
 pub fn paint(p: &Painter, rect: Rect, icon: CIcon, enabled: bool) {
     let side = rect.width().min(rect.height());
+    let size = if side > 24.0 { 32 } else { 16 };
+    if let Some(tex) = custom_texture(p.ctx(), icon, size) {
+        // Keep the picture's shape inside the square.
+        let [w, h] = tex.size();
+        let scale = side / w.max(h) as f32;
+        let r = Rect::from_center_size(rect.center(), vec2(w as f32, h as f32) * scale);
+        let tint = if enabled { Color32::WHITE } else { Color32::from_white_alpha(110) };
+        p.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
+        return;
+    }
     let pen = Pen { p, o: rect.center() - vec2(side, side) / 2.0, k: side / 16.0 };
     if !enabled {
         // Draw into a faded layer: paint normally, then veil it.
