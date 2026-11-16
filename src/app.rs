@@ -199,6 +199,8 @@ pub struct PaintApp {
     pub system_titlebar: bool,
     decorations_applied: Option<bool>,
     pub on_window_edge: bool,
+    /// The window was asked to move for the current title bar press.
+    title_press_moved: bool,
     /// Window corner radius we currently draw (0 when maximized or using system decorations).
     pub corner: u8,
     /// Window title last sent to the window manager.
@@ -301,6 +303,7 @@ impl PaintApp {
             system_titlebar: p.system_titlebar,
             decorations_applied: None,
             on_window_edge: false,
+            title_press_moved: false,
             corner: WINDOW_RADIUS,
             last_title: String::new(),
             drag_button: egui::PointerButton::Primary,
@@ -1201,11 +1204,7 @@ impl PaintApp {
 
         // The whole bar drags the window; caption buttons are registered later so they win.
         let bar = ui.interact(rect, ui.id().with("titlebar"), Sense::click_and_drag());
-        if bar.double_clicked() {
-            ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
-        } else if bar.drag_started_by(egui::PointerButton::Primary) {
-            ctx.send_viewport_cmd(ViewportCommand::StartDrag);
-        }
+        self.window_grab(&ctx, &bar, maximized);
 
         let p = ui.painter();
         app_icon(p, Rect::from_center_size(egui::pos2(rect.min.x + 24.0, rect.center().y), vec2(18.0, 18.0)));
@@ -1372,6 +1371,28 @@ impl PaintApp {
             ctx.send_viewport_cmd(ViewportCommand::BeginResize(dir));
         }
         true
+    }
+
+    /// Title bar (or classic tab row) mouse handling. The window starts moving at the
+    /// first pixel the mouse moves with the button held on the bar: egui's own drag
+    /// start waits for several pixels, and KDE on Wayland sometimes ignored a move
+    /// requested that late. A press without movement stays a click, so double-click
+    /// maximizes. Pressing at the window edge resizes instead (see `window_edges`).
+    pub fn window_grab(&mut self, ctx: &egui::Context, bar: &egui::Response, maximized: bool) {
+        if bar.double_clicked() {
+            ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+            return;
+        }
+        let (pressed, down, moved) = ctx.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_down(), i.pointer.delta() != Vec2::ZERO));
+        if pressed {
+            // A new press: allow one move request for it. (Once the desktop moves the
+            // window, egui never sees this button's release.)
+            self.title_press_moved = false;
+        }
+        if !self.on_window_edge && !self.title_press_moved && down && moved && bar.is_pointer_button_down_on() {
+            self.title_press_moved = true;
+            ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+        }
     }
 
     /// Flat icon button in the Win11 style (subtle hover and pressed fills).

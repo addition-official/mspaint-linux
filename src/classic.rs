@@ -340,11 +340,7 @@ impl PaintApp {
             ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, rgb(0xE6, 0xE6, 0xE6)));
         }
         let bar = ui.interact(rect, ui.id().with("titlebar"), Sense::click_and_drag());
-        if bar.double_clicked() {
-            ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
-        } else if bar.drag_started_by(egui::PointerButton::Primary) {
-            ctx.send_viewport_cmd(ViewportCommand::StartDrag);
-        }
+        self.window_grab(&ctx, &bar, maximized);
         app_icon(ui.painter(), Rect::from_center_size(pos2(rect.min.x + 16.0, rect.center().y), vec2(16.0, 16.0)));
         // Quick access toolbar: Save, Undo, Redo.
         let mut x = rect.min.x + 30.0;
@@ -517,12 +513,8 @@ impl PaintApp {
         if !self.system_titlebar {
             let ctx = ui.ctx().clone();
             let grab = ui.interact(tabs, ui.id().with("tabrow_drag"), Sense::click_and_drag());
-            if grab.double_clicked() {
-                let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
-            } else if grab.drag_started_by(egui::PointerButton::Primary) {
-                ctx.send_viewport_cmd(ViewportCommand::StartDrag);
-            }
+            let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+            self.window_grab(&ctx, &grab, maximized);
         }
         gradient(ui.painter(), tabs, skin.tabs_bg[0], skin.tabs_bg[1], 0.0);
         let body = Rect::from_min_max(pos2(full.min.x, tabs.max.y), full.max);
