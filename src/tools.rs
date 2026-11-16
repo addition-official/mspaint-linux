@@ -83,6 +83,35 @@ pub enum ShapeKind {
 }
 
 impl ShapeKind {
+    /// The file name (without extension) of a custom icon for this shape.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            ShapeKind::Line => "shape-line",
+            ShapeKind::Curve => "shape-curve",
+            ShapeKind::Oval => "shape-oval",
+            ShapeKind::Rectangle => "shape-rectangle",
+            ShapeKind::RoundedRectangle => "shape-rounded-rectangle",
+            ShapeKind::Polygon => "shape-polygon",
+            ShapeKind::Triangle => "shape-triangle",
+            ShapeKind::RightTriangle => "shape-right-triangle",
+            ShapeKind::Diamond => "shape-diamond",
+            ShapeKind::Pentagon => "shape-pentagon",
+            ShapeKind::Hexagon => "shape-hexagon",
+            ShapeKind::RightArrow => "shape-right-arrow",
+            ShapeKind::LeftArrow => "shape-left-arrow",
+            ShapeKind::UpArrow => "shape-up-arrow",
+            ShapeKind::DownArrow => "shape-down-arrow",
+            ShapeKind::Star4 => "shape-star4",
+            ShapeKind::Star5 => "shape-star5",
+            ShapeKind::Star6 => "shape-star6",
+            ShapeKind::RoundedCallout => "shape-rounded-callout",
+            ShapeKind::OvalCallout => "shape-oval-callout",
+            ShapeKind::CloudCallout => "shape-cloud-callout",
+            ShapeKind::Heart => "shape-heart",
+            ShapeKind::Lightning => "shape-lightning",
+        }
+    }
+
     pub const ALL: [ShapeKind; 23] = [
         ShapeKind::Line,
         ShapeKind::Curve,

@@ -645,7 +645,9 @@ impl PaintApp {
                 let resp = ui.interact(b, ui.id().with(("cshape", i)), app.click_sense(ui));
                 let sel = app.s.tool == Tool::Shape && app.s.shape == k;
                 app.skin().btn_bg(ui.painter(), b, resp.hovered(), resp.is_pointer_button_down_on(), sel);
-                crate::icons::paint(ui.painter(), b.shrink(3.0), crate::icons::Icon::Shape(k), rgb(0x1E, 0x3A, 0x6A), rgb(0x2B, 0x6C, 0xC4));
+                if !classic_icons::paint_custom(ui.painter(), b.shrink(2.5), k.file_name(), true) {
+                    crate::icons::paint(ui.painter(), b.shrink(3.0), crate::icons::Icon::Shape(k), rgb(0x1E, 0x3A, 0x6A), rgb(0x2B, 0x6C, 0xC4));
+                }
                 if resp.on_hover_text(k.name()).clicked() {
                     app.doc.commit_overlay(&app.s);
                     app.s.shape = k;

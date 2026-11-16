@@ -182,6 +182,20 @@ pub fn custom_dir() -> Option<std::path::PathBuf> {
     Some(data.join("paintbox").join("icons"))
 }
 
+/// Draw the custom icon file `name` into `rect` if the user has one; false if not.
+pub fn paint_custom(p: &Painter, rect: Rect, name: &'static str, enabled: bool) -> bool {
+    let side = rect.width().min(rect.height());
+    let size = if side > 24.0 { 32 } else { 16 };
+    let Some(tex) = custom_texture(p.ctx(), name, size) else { return false };
+    // Keep the picture's shape inside the square.
+    let [w, h] = tex.size();
+    let scale = side / w.max(h) as f32;
+    let r = Rect::from_center_size(rect.center(), vec2(w as f32, h as f32) * scale);
+    let tint = if enabled { Color32::WHITE } else { Color32::from_white_alpha(110) };
+    p.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
+    true
+}
+
 /// Forget the loaded custom icons, so changed files are read again.
 pub fn reload_custom() {
     if let Ok(mut c) = custom::CACHE.lock() {
@@ -192,7 +206,8 @@ pub fn reload_custom() {
 /// How many buttons currently have a custom icon file.
 pub fn custom_count() -> usize {
     let Some(dir) = custom_dir() else { return 0 };
-    CIcon::ALL.iter().filter(|i| find_file(&dir, i.file_name(), 16).is_some() || find_file(&dir, i.file_name(), 32).is_some()).count()
+    let names = CIcon::ALL.iter().map(|i| i.file_name()).chain(crate::tools::ShapeKind::ALL.iter().map(|k| k.file_name()));
+    names.filter(|n| find_file(&dir, n, 16).is_some() || find_file(&dir, n, 32).is_some()).count()
 }
 
 /// `name-SIZE.ext` first (made for that size), then `name.ext`.
@@ -208,15 +223,15 @@ fn find_file(dir: &std::path::Path, name: &str, size: u32) -> Option<std::path::
     None
 }
 
-/// The custom icon for `icon` at `size` points, loading it the first time.
-fn custom_texture(ctx: &egui::Context, icon: CIcon, size: u32) -> Option<egui::TextureHandle> {
+/// The custom icon file `name` at `size` points, loading it the first time.
+fn custom_texture(ctx: &egui::Context, name: &'static str, size: u32) -> Option<egui::TextureHandle> {
     let mut guard = custom::CACHE.lock().ok()?;
     let cache = guard.get_or_insert_with(Default::default);
-    let key = (icon.file_name(), size);
+    let key = (name, size);
     if let Some(t) = cache.get(&key) {
         return t.clone();
     }
-    let tex = custom_dir().and_then(|dir| find_file(&dir, icon.file_name(), size)).and_then(|path| {
+    let tex = custom_dir().and_then(|dir| find_file(&dir, name, size)).and_then(|path| {
         // Icons are small: refuse anything big rather than decode it.
         if std::fs::metadata(&path).ok()?.len() > 4 << 20 {
             return None;
@@ -227,7 +242,7 @@ fn custom_texture(ctx: &egui::Context, icon: CIcon, size: u32) -> Option<egui::T
         }
         let rgba = img.to_rgba8();
         let ci = egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
-        Some(ctx.load_texture(format!("custom-icon-{}-{size}", icon.file_name()), ci, egui::TextureOptions::LINEAR))
+        Some(ctx.load_texture(format!("custom-icon-{name}-{size}"), ci, egui::TextureOptions::LINEAR))
     });
     cache.insert(key, tex.clone());
     tex
@@ -236,17 +251,10 @@ fn custom_texture(ctx: &egui::Context, icon: CIcon, size: u32) -> Option<egui::T
 /// Paint `icon` into `rect` (square). `enabled` false draws it faded. A custom icon
 /// from the icons folder is used when there is one.
 pub fn paint(p: &Painter, rect: Rect, icon: CIcon, enabled: bool) {
-    let side = rect.width().min(rect.height());
-    let size = if side > 24.0 { 32 } else { 16 };
-    if let Some(tex) = custom_texture(p.ctx(), icon, size) {
-        // Keep the picture's shape inside the square.
-        let [w, h] = tex.size();
-        let scale = side / w.max(h) as f32;
-        let r = Rect::from_center_size(rect.center(), vec2(w as f32, h as f32) * scale);
-        let tint = if enabled { Color32::WHITE } else { Color32::from_white_alpha(110) };
-        p.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
+    if paint_custom(p, rect, icon.file_name(), enabled) {
         return;
     }
+    let side = rect.width().min(rect.height());
     let pen = Pen { p, o: rect.center() - vec2(side, side) / 2.0, k: side / 16.0 };
     if !enabled {
         // Draw into a faded layer: paint normally, then veil it.
