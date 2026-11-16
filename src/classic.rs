@@ -460,8 +460,19 @@ impl PaintApp {
             self.classic_tab = 0;
         }
 
-        // Tab row.
+        // Tab row. Its empty part looks like the title bar, so it moves the window
+        // too (the tabs and buttons drawn on top of it take their own clicks).
         let tabs = Rect::from_min_size(full.min, vec2(full.width(), TABS_H));
+        if !self.system_titlebar {
+            let ctx = ui.ctx().clone();
+            let grab = ui.interact(tabs, ui.id().with("tabrow_drag"), Sense::click_and_drag());
+            if grab.double_clicked() {
+                let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+            } else if grab.drag_started_by(egui::PointerButton::Primary) {
+                ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+            }
+        }
         gradient(ui.painter(), tabs, skin.tabs_bg[0], skin.tabs_bg[1], 0.0);
         let body = Rect::from_min_max(pos2(full.min.x, tabs.max.y), full.max);
         let p = ui.painter();

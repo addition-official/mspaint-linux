@@ -168,7 +168,8 @@ mod custom {
     use std::sync::Mutex;
 
     /// (file name, size) -> the loaded texture, or None when there is no file.
-    pub static CACHE: Mutex<Option<HashMap<(&'static str, u32), Option<TextureHandle>>>> = Mutex::new(None);
+    pub type Cache = HashMap<(&'static str, u32), Option<TextureHandle>>;
+    pub static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
 }
 
 /// The folder custom icons are read from: `~/.local/share/paintbox/icons` (inside
