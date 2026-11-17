@@ -662,6 +662,11 @@ impl PaintApp {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(240.0);
+                // Whether the pointer is over the command column: then only the row under
+                // it lights up (the right side may still be waiting to switch back).
+                let column = ui.max_rect().x_range();
+                let layer = ui.layer_id();
+                let in_column = ui.ctx().pointer_hover_pos().is_some_and(|p| column.contains(p.x) && ui.ctx().layer_id_at(p) == Some(layer));
                 let items: [(CIcon, &str, u8); 10] = [
                     (CIcon::New, "New", 0),
                     (CIcon::Open, "Open", 0),
@@ -680,7 +685,7 @@ impl PaintApp {
                         ui.painter().line_segment([pos2(sep.min.x + 44.0, sep.center().y), pos2(sep.max.x - 4.0, sep.center().y)], Stroke::new(1.0, rgb(0xD5, 0xD5, 0xD5)));
                     }
                     let (row, resp) = ui.allocate_exact_size(vec2(240.0, 40.0), Sense::click());
-                    let open = pane != 0 && self.app_menu_pane == pane;
+                    let open = pane != 0 && self.app_menu_pane == pane && !in_column;
                     self.skin().btn_bg(ui.painter(), row, resp.hovered() || open, resp.is_pointer_button_down_on(), false);
                     classic_icons::paint(ui.painter(), Rect::from_center_size(pos2(row.min.x + 22.0, row.center().y), vec2(32.0, 32.0)), icon, true);
                     ui.painter().text(pos2(row.min.x + 46.0, row.center().y), Align2::LEFT_CENTER, label, FontId::proportional(12.5), rgb(0x1E, 0x1E, 0x1E));
