@@ -4,6 +4,8 @@ A simple, familiar paint program for Linux, inspired by **Windows 11 Paint**. It
 openSUSE, Arch, Mint and others) and desktop (KDE Plasma, GNOME, Cinnamon, Xfce and more). It's written
 in Rust with [egui](https://github.com/emilk/egui) and compiles to a single binary.
 
+Formerly known as mspaint-linux.
+
 It follows the Windows 11 Paint layout: the Windows 11 style title bar, the File / View row with quick
 Save, Undo and Redo buttons, the toolbar (Clipboard, Image, Tools, Brushes, Shapes, Size, Colors), the
 centered canvas with resize handles, and the status bar with a zoom slider. Light and dark themes are
