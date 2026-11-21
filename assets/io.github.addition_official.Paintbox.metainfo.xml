@@ -46,12 +46,20 @@
   </branding>
   <screenshots>
     <screenshot type="default">
-      <caption>Light theme</caption>
+      <caption>Windows 11 style</caption>
       <image>https://raw.githubusercontent.com/addition-official/paintbox/main/docs/screenshot.png</image>
     </screenshot>
     <screenshot>
       <caption>Dark theme</caption>
       <image>https://raw.githubusercontent.com/addition-official/paintbox/main/docs/screenshot-dark.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Windows 10 style</caption>
+      <image>https://raw.githubusercontent.com/addition-official/paintbox/main/docs/screenshot-win10.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Windows 7 style</caption>
+      <image>https://raw.githubusercontent.com/addition-official/paintbox/main/docs/screenshot-win7.png</image>
     </screenshot>
   </screenshots>
   <categories>

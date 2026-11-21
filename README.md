@@ -16,9 +16,11 @@ Prefer the older Paint? **Settings → Style** switches to the classic ribbon of
 with Home and View tabs, a Text tab while typing, and the picture in the top-left corner. In those
 styles, Settings is under the **?** button.
 
-| Light | Dark |
+| Windows 11 style | Windows 11 style, dark |
 | --- | --- |
-| ![Paintbox in light mode, with a drawing of a house on a hill](docs/screenshot.png) | ![Paintbox in dark mode, with the same drawing](docs/screenshot-dark.png) |
+| ![Paintbox in the Windows 11 style, with a hand-drawn house, tree and sun](docs/screenshot.png) | ![The same drawing in the dark theme](docs/screenshot-dark.png) |
+| **Windows 10 style** | **Windows 7 style** |
+| ![The same drawing in the Windows 10 style, with the ribbon and blue File tab](docs/screenshot-win10.png) | ![The same drawing in the Windows 7 style, with the glassy title bar and Paint button](docs/screenshot-win7.png) |
 
 ## Features
 
