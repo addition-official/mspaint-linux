@@ -59,6 +59,12 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.1" date="2026-11-21">
+      <description>
+        <p>Fixes a freeze when typing in a number box (Resize, zoom, font size, Edit colors), and the Custom rotate dialog.</p>
+        <p>Full screen shows only the picture, and the Windows 10 and 7 styles look closer to the real thing.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-11-16">
       <description>
         <p>New classic styles: the ribbon of Paint in Windows 10 and Windows 7 (Settings, Style).</p>

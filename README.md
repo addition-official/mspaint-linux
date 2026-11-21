@@ -178,6 +178,17 @@ Source layout:
 | `src/tiles.rs` | Uploads large pictures to the GPU as tiles |
 | `src/desktop.rs` | Wallpaper and light/dark detection for each Linux desktop |
 
+## Contributing
+
+Contributions are very welcome! Bug reports, ideas, fixes, new features, icons (your own, not
+Microsoft's), translations, testing on other distributions, or just telling me what feels different
+from the real Paint: all of it helps.
+
+- Found a bug or have an idea? [Open an issue](https://github.com/addition-official/paintbox/issues).
+- Want to change something? Fork the repo, make your change and open a pull request. Before sending it,
+  please run `cargo clippy --all-targets -- -D warnings` and `cargo test` (see Development above).
+- Not sure where to start? The issues are a good place, or open one to ask.
+
 ## Not included
 
 - Windows 11 Paint's AI and cloud features (Cocreator, Image Creator, generative fill and erase, object
@@ -189,7 +200,7 @@ Source layout:
 
 ## Disclaimer
 
-Paintbox is an independent project inspired by the look and workflow of Windows 11 Paint. It is not
+Paintbox is an independent project inspired by the look and workflow of Paint in Windows 11, 10 and 7. It is not
 affiliated with or endorsed by Microsoft, and it uses no Microsoft code or assets. All icons are
 drawn in code.
 
