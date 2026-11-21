@@ -1,0 +1,18 @@
+# The Paintbox apt repository: Paintbox updates along with the rest of the system
+# (sudo apt upgrade). The Paintbox package installs this file; remove it with
+# `sudo apt purge paintbox`, or delete it to keep Paintbox without updates.
+Types: deb
+URIs: https://addition-official.github.io/paintbox/apt
+Suites: stable
+Components: main
+Architectures: amd64
+Signed-By:
+ -----BEGIN PGP PUBLIC KEY BLOCK-----
+ .
+ mDMEawDirRYJKwYBBAHaRw8BAQdAHtWN4Y5LX3YHuQPb+bgAME51p4S1Au6bA16t
+ G6Que0K0F1BhaW50Ym94IGFwdCByZXBvc2l0b3J5iJAEExYKADgWIQRp2/BZmIRH
+ iVK48xnqiIqhIqUM1wUCawDirQIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAK
+ CRDqiIqhIqUM1zUNAP4u/Kcq3WgGLVjctACx20LRZUBYyha94uLZQsQjQO1TRAD/
+ f2M1yN93Hi1ux2kPRHtOuGM77x7J+0p9qLacE7KjMQQ=
+ =hnWZ
+ -----END PGP PUBLIC KEY BLOCK-----

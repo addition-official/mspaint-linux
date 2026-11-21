@@ -1,6 +1,6 @@
 [package]
 name = "paintbox"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 description = "A simple, familiar paint program for Linux, inspired by Windows 11 Paint"
 license = "MIT"
@@ -61,6 +61,9 @@ assets = [
     ["assets/io.github.addition_official.Paintbox.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
     ["assets/io.github.addition_official.Paintbox.metainfo.xml", "usr/share/metainfo/", "644"],
     ["README.md", "usr/share/doc/paintbox/README.md", "644"],
+    # The Paintbox apt repository, so Paintbox updates with the system (like Chrome's
+    # and VS Code's packages do). A conffile: deleting it turns updates off for good.
+    ["packaging/apt/paintbox.sources", "etc/apt/sources.list.d/", "644"],
 ]
 
 # Fedora / openSUSE package (cargo generate-rpm).

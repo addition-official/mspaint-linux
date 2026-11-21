@@ -58,30 +58,13 @@ styles, Settings is under the **?** button.
 
 ## Install
 
-### Ubuntu, Debian, Linux Mint, Pop!_OS, Kubuntu (apt)
-
-Add the Paintbox apt repository once, and Paintbox updates along with the rest of your system
-(`sudo apt upgrade`):
-
-```sh
-sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://addition-official.github.io/paintbox/apt/paintbox.gpg | sudo tee /etc/apt/keyrings/paintbox.gpg > /dev/null
-echo "deb [signed-by=/etc/apt/keyrings/paintbox.gpg] https://addition-official.github.io/paintbox/apt stable main" | sudo tee /etc/apt/sources.list.d/paintbox.list
-sudo apt update
-sudo apt install paintbox
-```
-
-To stop getting updates from it: `sudo rm /etc/apt/sources.list.d/paintbox.list /etc/apt/keyrings/paintbox.gpg`.
-
-### Download a package
-
-Or download the file for your system from the
+Download the file for your system from the
 [latest release](https://github.com/addition-official/paintbox/releases/latest) (64-bit; any
 distribution from about 2022 on, with glibc 2.35 or newer). No Rust needed.
 
 | System | File | Install |
 | --- | --- | --- |
-| Ubuntu, Debian, Linux Mint, Pop!_OS, Kubuntu | `.deb` | `sudo apt install ./paintbox_*_amd64.deb` |
+| Ubuntu, Debian, Linux Mint, Pop!_OS, Kubuntu | `.deb` | double-click it, or `sudo apt install ./paintbox_*_amd64.deb` |
 | Fedora | `.rpm` | `sudo dnf install ./paintbox-*.x86_64.rpm` |
 | openSUSE Tumbleweed, Leap 15.6 | `.rpm` | `sudo zypper install ./paintbox-*.x86_64.rpm` |
 | Any distribution, with Flatpak (sandboxed) | `.flatpak` | `flatpak install --user ./paintbox-*.flatpak` (needs the [Flathub remote](https://flathub.org/setup) for its runtime) |
@@ -90,6 +73,20 @@ distribution from about 2022 on, with glibc 2.35 or newer). No Rust needed.
 
 Run the commands in the folder you downloaded the file to. The .deb and .rpm add Paintbox to the
 application launcher; remove them with `sudo apt remove paintbox` or `sudo dnf remove paintbox`.
+
+### Updates on Ubuntu, Debian and friends
+
+The .deb (from 0.5.2 on) also adds the Paintbox apt repository, the way the Chrome and VS Code
+packages do, so new versions arrive with your other system updates (`sudo apt upgrade`, or the
+updates in Discover or Software). It's one file, `/etc/apt/sources.list.d/paintbox.sources`,
+which you can read; delete it to turn updates off, or `sudo apt purge paintbox` to remove both.
+
+Rather use apt from the start? Add the repository, then install:
+
+```sh
+sudo curl -fsSL -o /etc/apt/sources.list.d/paintbox.sources https://addition-official.github.io/paintbox/apt/paintbox.sources
+sudo apt update && sudo apt install paintbox
+```
 
 **Coming from "Paint for Linux" (mspaint-linux)?** Paintbox is the same app under a new name. Installing
 it replaces the old package and keeps your settings and recent files. Pin it to your taskbar again,

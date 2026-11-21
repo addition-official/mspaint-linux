@@ -52,7 +52,15 @@ jobs:
           echo "KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')" >> "$GITHUB_ENV"
       - name: Build the repository
         run: |
+          # The .deb adds packaging/apt/paintbox.sources: its key must be the signing key,
+          # or every installed copy would refuse the repository.
+          shipped=$(sed -n '/BEGIN PGP/,/END PGP/{s/^ //;s/^\.$//;p}' packaging/apt/paintbox.sources | gpg --show-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')
+          if [ "$shipped" != "$KEY_ID" ]; then
+            echo "packaging/apt/paintbox.sources has key $shipped, but the signing key is $KEY_ID." >&2
+            exit 1
+          fi
           ./packaging/apt-repo.sh debs site/apt "$KEY_ID"
+          cp packaging/apt/paintbox.sources site/apt/
           # The site's front page points to the project.
           printf '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=https://github.com/%s"><title>Paintbox</title>\n' "$GITHUB_REPOSITORY" > site/index.html
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5

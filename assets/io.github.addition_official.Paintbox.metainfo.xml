@@ -59,6 +59,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.2" date="2026-11-21">
+      <description>
+        <p>The .deb adds the Paintbox apt repository, so Paintbox updates with the rest of the system.</p>
+      </description>
+    </release>
     <release version="0.5.1" date="2026-11-21">
       <description>
         <p>Fixes a freeze when typing in a number box (Resize, zoom, font size, Edit colors), and the Custom rotate dialog.</p>
