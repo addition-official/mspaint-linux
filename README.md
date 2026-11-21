@@ -58,7 +58,24 @@ styles, Settings is under the **?** button.
 
 ## Install
 
-Download the file for your system from the
+### Ubuntu, Debian, Linux Mint, Pop!_OS, Kubuntu (apt)
+
+Add the Paintbox apt repository once, and Paintbox updates along with the rest of your system
+(`sudo apt upgrade`):
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://addition-official.github.io/paintbox/apt/paintbox.gpg | sudo tee /etc/apt/keyrings/paintbox.gpg > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/paintbox.gpg] https://addition-official.github.io/paintbox/apt stable main" | sudo tee /etc/apt/sources.list.d/paintbox.list
+sudo apt update
+sudo apt install paintbox
+```
+
+To stop getting updates from it: `sudo rm /etc/apt/sources.list.d/paintbox.list /etc/apt/keyrings/paintbox.gpg`.
+
+### Download a package
+
+Or download the file for your system from the
 [latest release](https://github.com/addition-official/paintbox/releases/latest) (64-bit; any
 distribution from about 2022 on, with glibc 2.35 or newer). No Rust needed.
 
